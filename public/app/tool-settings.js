@@ -87,7 +87,14 @@ const FORM_COMPONENT = 'form-renderer';
 export const SHADOW_CSS = [
   ':host .frm { font-family: var(--wc-font); color: var(--wc-fg); }',
   ':host .field > label { color: var(--wc-muted); }',
-  ':host .field > label .req, :host .error { color: var(--wc-rust); }',
+  // The required marker and the error line (U464, K.5 J3, C-EX-2): both are
+  // text, so both read --wc-fg, 11.96:1 or more on --wc-panel-bg in every
+  // pack-mode. --wc-rust is no text ink here: it reads 4.43 earthy light. The
+  // marker needs no colour (the label's weight carries it); the error line
+  // keeps the rust as a non-text mark, a 2px left rule drawn only while it
+  // holds a message, at 3:1 (4.43:1 or more) on every pack-mode.
+  ':host .field > label .req, :host .error { color: var(--wc-fg); }',
+  ':host .error:not(:empty) { border-left: 2px solid var(--wc-rust); padding-left: 6px; }',
   ':host .field input[type=text], :host .field input[type=number], :host .field select {'
     + ' background: var(--wc-content-bg); color: var(--wc-content-fg); border-color: var(--wc-border);'
     + ' border-radius: var(--wc-radius-sm); }',

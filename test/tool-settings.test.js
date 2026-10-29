@@ -34,6 +34,12 @@
 //     on every built-in pack-mode; on hover and focus-visible the border
 //     darkens to --wc-fg beside the tint, so the hover is a visible change on
 //     every pack-mode (U402b, X2/Y2);
+//   - every pair the host's shadow style draws (U464, K.5 J3, C-EX-2): each
+//     text pair (the form's text, the label, the required marker, the error
+//     line, the Save label in both states, the fields' content) reads 4.5:1 and
+//     each non-text pair (the focus outline and border, the checkbox accent,
+//     the Save border, the error line's --wc-rust rule) 3:1 on every built-in
+//     pack-mode; the marker and the error line ink --wc-fg;
 //   - RESERVED_IDS holds the two frame ids and U338's planned ids.
 const test = require('node:test');
 const { before, beforeEach, after } = test;
@@ -538,4 +544,91 @@ test('RESERVED_IDS holds the frame ids and U338\'s planned ids', () => {
     'toolbar', 'tb-pointer', 'tb-slots', 'tb-reveal', 'tb-tray', 'tb-filter', 'bb-tools-reveal', 'bb-tools', 'bb-create']) {
     assert.ok(RESERVED_IDS.has(id), `${id} is reserved`);
   }
+});
+
+// Every pair the host's shadow style draws (U464, K.5 J3 = a, C-EX-2): each
+// TEXT pair reads 4.5:1 and each NON-TEXT pair 3:1 on every built-in
+// pack-mode, with no exception beside the gate. Read from SHADOW_CSS itself: a
+// rule's `color` is a text pair on that rule's own background, else on the
+// frame's --wc-panel-bg (app.css's .popover); the required marker is text
+// (PQ-EX-2, the stricter reading). The non-text pairs are the focus outline
+// and border, the checkbox accent, the Save button's border and the error
+// line's rust rule, each on the panel (the Save border on its fill too). Every
+// colour-bearing declaration is classified here, so a new one cannot slip in
+// unmeasured; the one left out is the fields' rest border (--wc-border, the
+// component's own field edge, outside J3's brief), named below.
+const UNMEASURED = new Set([':host .field input[type=text], :host .field input[type=number], :host .field select|border-color']);
+function shadowPairs(text) {
+  const textPairs = [], uiPairs = [], unclassified = [];
+  const tokenIn = (raw) => { const m = /var\((--wc-[\w-]+)\)/.exec(String(raw || '')); return m && m[1]; };
+  for (const r of parseRules(stripComments(text))) {
+    const d = Object.fromEntries(r.decls);
+    const fill = d.background ? tokenOf(d.background) : null;
+    const bg = fill || '--wc-panel-bg';
+    for (const [prop, raw] of r.decls) {
+      const at = `${r.selector} ${prop}`;
+      if (prop === 'color') textPairs.push({ at, sel: r.selector, fg: tokenOf(raw), bg });
+      else if (prop === 'background') assert.ok(fill, `${at}: a fill is one --wc-* token`);
+      else if (UNMEASURED.has(`${r.selector}|${prop}`)) continue;
+      else if (prop === 'outline-color' || prop === 'accent-color' || prop === 'border-color' || /^border-(left|right|top|bottom)$/.test(prop)) {
+        const fg = tokenIn(raw);
+        uiPairs.push({ at, sel: r.selector, fg, bg: '--wc-panel-bg' });
+        if (fill && fill !== '--wc-panel-bg') uiPairs.push({ at: `${at} (on its fill)`, sel: r.selector, fg, bg: fill });
+      } else if (COLOR_PROPS.test(prop)) unclassified.push(at);
+    }
+  }
+  return { textPairs, uiPairs, unclassified };
+}
+
+test('every pair the host\'s shadow style draws reads >= 4.5:1 (text) and >= 3:1 (non-text) on every built-in pack-mode; the required marker and the error line named (U464, K.5 J3)', () => {
+  const { PACKS } = require('../lib/server/theme-packs');
+  const { flattenTheme, MODES } = require('../lib/server/theme');
+  const { contrastRatio, TEXT_MIN, UI_MIN } = require('../lib/server/answer-surface/palette');
+  const { textPairs, uiPairs, unclassified } = shadowPairs(TS.SHADOW_CSS);
+  assert.deepEqual(unclassified, [], 'every colour-bearing declaration is measured or named');
+  const has = (list, re, what) => assert.ok(list.some((p) => re.test(p.sel)), `${what} is a measured pair`);
+  has(textPairs, /^:host \.frm$/, 'the form\'s text');
+  has(textPairs, /^:host \.field > label$/, 'the label');
+  has(textPairs, /\.req\b/, 'the required marker');
+  has(textPairs, /:host \.error\b/, 'the error line');
+  has(textPairs, /^:host \.submit$/, 'the Save label at rest');
+  has(textPairs, /\.submit:hover/, 'the Save label on hover and focus');
+  has(textPairs, /input\[type=text\]/, 'the fields\' content pair');
+  has(uiPairs, /:focus/, 'the focus outline');
+  has(uiPairs, /checkbox/, 'the checkbox accent');
+  has(uiPairs, /^:host \.submit$/, 'the Save border');
+  const named = (p) => (/\.req\b/.test(p.sel) && /\.error\b/.test(p.sel) ? 'the required marker and the error line'
+    : /\.req\b/.test(p.sel) ? 'the required marker' : /\.error\b/.test(p.sel) ? 'the error line' : p.at);
+  const low = [];
+  let n = 0;
+  for (const pack of PACKS) for (const mode of MODES) {
+    const t = flattenTheme(pack, mode).tokens;
+    for (const [pairs, need] of [[textPairs, TEXT_MIN], [uiPairs, UI_MIN]]) {
+      for (const p of pairs) {
+        assert.ok(p.fg && p.bg, `${p.at}: every drawn colour is one --wc-* token`);
+        assert.ok(t[p.fg] && t[p.bg], `${pack.name} ${mode}: ${p.fg} and ${p.bg} are set`);
+        const r = contrastRatio(t[p.fg], t[p.bg]);
+        n += 1;
+        if (!(r >= need)) low.push(`${pack.name} ${mode}: ${named(p)} (${p.fg} on ${p.bg}) ${r.toFixed(2)} < ${need}`);
+      }
+    }
+  }
+  assert.ok(n >= 6 * 11, `every pair measured on every pack-mode (${n})`);
+  assert.deepEqual(low, []);
+  // The rust the error line no longer inks stays on it as its non-text mark.
+  has(uiPairs, /\.error:not\(:empty\)/, 'the error line\'s rust mark');
+});
+
+test('the required marker and the error line ink --wc-fg; the rust is the error line\'s non-text rule, drawn only with a message (U464)', () => {
+  const rules = parseRules(stripComments(TS.SHADOW_CSS));
+  const sels = (r) => r.selector.split(',').map((x) => x.trim());
+  const ink = rules.filter((r) => sels(r).includes(':host .field > label .req') || sels(r).includes(':host .error'));
+  assert.equal(ink.length, 1, 'one declaration inks both');
+  assert.equal(Object.fromEntries(ink[0].decls).color, 'var(--wc-fg)');
+  const mark = rules.filter((r) => sels(r).includes(':host .error:not(:empty)'));
+  assert.equal(mark.length, 1, 'one rule draws the mark');
+  const m = Object.fromEntries(mark[0].decls);
+  assert.equal(m['border-left'], '2px solid var(--wc-rust)');
+  assert.ok(!('color' in m), 'the mark carries no text ink');
+  assert.ok(!rules.some((r) => /--wc-rust/.test(Object.fromEntries(r.decls).color || '')), 'no text reads --wc-rust');
 });
