@@ -616,8 +616,9 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     ]) {
       const r = await get();
       const body = r.json || r.body;
-      // Every record but the neighbour's (its context has its own test below).
-      const text = JSON.stringify({ ...body, elements: body.elements.filter((x) => x.id !== neighbour.id) });
+      // Every record, the neighbour's included (U415a: its quote context is
+      // masked at read for every reader).
+      const text = JSON.stringify(body);
       const leaks = findLeaks(text, [EMAIL]);
       assert.deepEqual(leaks, [], `${who}: no body holds the email: ${leaks.map((l) => text.slice(Math.max(0, l.at - 200), l.at + 40)).join(' | ')}`);
       const mine = body.elements.find((x) => x.id === made.id);
