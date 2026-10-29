@@ -858,3 +858,61 @@ test('send: a shared chat-comment (a log-only element) answers 200 with its item
   assert.ok(item && item.type === 'chat-comment', 'its item is queued');
   assert.equal((await ok(send(api, pin.id), 'again')).already, true, 'a second send: already queued');
 });
+
+// U415a (DECISIONS K.2-164, D4, GT-13): the page-range twin of
+// test/chat-pin-routes.test.js's 'a passage beside a value learned later'. A
+// range quote's prefix and suffix are cut out of the pane's text, so a value the
+// redactor learns after the write can sit across their edges: the read view
+// masks the fragments there too, never rewriting the stored bytes. Red with
+// lib/server/domain/elements.js's context mask (maskQuoteContext) removed.
+test('a page range pin beside a value learned later: a highlight\'s quote prefix and a comment\'s and a highlight\'s quote suffix hold no fragment of it on GET, and the log bytes are unchanged', async (t) => {
+  const crypto = require('crypto');
+  const { findLeaks } = require('../test-support/fake-secrets');
+  const { marksIn } = require('../lib/core/redact');
+  const { api, anonApi, root } = await withServer(t);
+  const value = `wcctx${crypto.randomBytes(12).toString('hex')}`;
+  const LEARNED = [{ id: 'learned', rule: 'known', secrets: [value] }];
+  const text = `Use ${value} for access to the staging host now.`;
+  await render(api, 'm-ctx', `<p>${text}</p>`);
+  const range = (exact) => {
+    const i = text.indexOf(exact);
+    const quote = { exact, prefix: text.slice(Math.max(0, i - 32), i), suffix: text.slice(i + exact.length, i + exact.length + 32) };
+    return { v: 1, kind: 'range', mount: 'm-ctx', quote, pos: { start: i, end: i + exact.length } };
+  };
+  // A passage 12 characters after the value: its 32-character prefix holds the
+  // value's tail, not the whole value.
+  const beside = range('to the staging host');
+  assert.ok(!beside.quote.prefix.includes(value) && findLeaks(beside.quote.prefix, LEARNED).length, 'precondition: the prefix holds the value\'s tail');
+  // A passage that ends inside the value: its suffix opens with the rest of it.
+  const across = range(`Use ${value.slice(0, 12)}`);
+  assert.ok(findLeaks(across.quote.suffix, LEARNED).length, 'precondition: the suffix holds the value\'s tail');
+  // A passage that ends four characters into the value: no field alone holds
+  // enough of it to mask, the window prefix + exact + suffix holds it whole.
+  const into = range(`Use ${value.slice(0, 4)}`);
+  assert.ok(findLeaks(into.quote.suffix, LEARNED).length, 'precondition: the suffix holds the rest of the value');
+  const h = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor: beside, payload: { note: `the note names ${value}` } }), 'highlight')).element;
+  const c = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: across, payload: { text: 'across it', shared: true } }), 'comment')).element;
+  const h2 = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor: into, payload: { note: 'into it' } }), 'highlight into the value')).element;
+  const before = logBytes(root);
+  assert.ok(before.includes(beside.quote.prefix), 'stored as written');
+  fs.writeFileSync(projectPaths(root).captureToken, value + '\n');
+  // The note holds the value whole: once it is masked, the redactor knows it.
+  const body = await waitUntil(async () => {
+    const b = (await anonApi.get('/api/elements')).json;
+    const note = (b.elements.find((e) => e.id === h.id) || {}).note;
+    return typeof note === 'string' && !note.includes(value) ? b : null;
+  }, { timeout: 6000, what: 'the redactor learned the value' });
+  const leaks = findLeaks(JSON.stringify(body), LEARNED);
+  assert.deepEqual(leaks, [], `no GET body holds a fragment of the value: ${leaks.map((l) => JSON.stringify(body).slice(Math.max(0, l.at - 80), l.at + 40)).join(' | ')}`);
+  const hq = body.elements.find((e) => e.id === h.id).anchor.quote;
+  const cq = body.elements.find((e) => e.id === c.id).anchor.quote;
+  assert.equal(hq.exact, beside.quote.exact, 'the highlight\'s exact is untouched');
+  assert.ok(beside.quote.prefix.endsWith(hq.prefix) && hq.prefix.includes('for access'), `the prefix keeps the words beside the passage: ${JSON.stringify(hq.prefix)}`);
+  assert.equal(hq.suffix, beside.quote.suffix, 'a clean suffix is served as stored');
+  assert.ok(across.quote.suffix.endsWith(cq.suffix) && cq.suffix.includes('for access'), `the suffix keeps the words after the value: ${JSON.stringify(cq.suffix)}`);
+  const iq = body.elements.find((e) => e.id === h2.id).anchor.quote;
+  const rest = into.quote.suffix.slice(value.length - 4);
+  const spelled = marksIn(iq.suffix);
+  assert.ok(spelled.length === 1 && spelled[0].start === 0 && iq.suffix.slice(spelled[0].end) === rest, `the suffix is cut at the value and the mask spelled there: ${JSON.stringify(iq.suffix)}`);
+  assert.equal(logBytes(root), before, 'the log bytes are unchanged');
+});
