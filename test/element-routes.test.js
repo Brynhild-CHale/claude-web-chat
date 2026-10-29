@@ -916,3 +916,76 @@ test('a page range pin beside a value learned later: a highlight\'s quote prefix
   assert.ok(spelled.length === 1 && spelled[0].start === 0 && iq.suffix.slice(spelled[0].end) === rest, `the suffix is cut at the value and the mask spelled there: ${JSON.stringify(iq.suffix)}`);
   assert.equal(logBytes(root), before, 'the log bytes are unchanged');
 });
+
+// U415b (DECISIONS K.2-176, K.2-177): the element:comment frame carries the
+// live pins through the read view (domain/comments emitComments → maskPins,
+// bound by routes/graph), so a value the redactor learns after a pin's write
+// rides no frame — neither whole in the pin's text nor as the fragment cut at
+// its quote prefix's edge. Red with emitComments sending state.comments as
+// they are.
+test('a comment frame after a value is learned holds no fragment of it, the live pins unchanged', async (t) => {
+  const crypto = require('crypto');
+  const { findLeaks } = require('../test-support/fake-secrets');
+  const d = await withServer(t);
+  const { api, anonApi, root } = d;
+  const value = `wcframe${crypto.randomBytes(12).toString('hex')}`;
+  const LEARNED = [{ id: 'learned', rule: 'known', secrets: [value] }];
+  const text = `Use ${value} for access to the staging host now.`;
+  await render(api, 'm-frame', '<p>Use the token for access to the staging host now.</p>');
+  const exact = 'to the staging host';
+  const i = text.indexOf(exact);
+  const quote = { exact, prefix: text.slice(Math.max(0, i - 32), i), suffix: text.slice(i + exact.length, i + exact.length + 32) };
+  assert.ok(findLeaks(quote.prefix, LEARNED).length, 'precondition: the prefix holds the value\'s tail');
+  const anchor = { v: 1, kind: 'range', mount: 'm-frame', quote, pos: { start: i, end: i + exact.length } };
+  const c = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor, payload: { text: `the pin names ${value}`, shared: true } }), 'comment')).element;
+  fs.writeFileSync(projectPaths(root).captureToken, value + '\n');
+  await waitUntil(async () => {
+    const live = ((await anonApi.get('/api/elements')).json.elements || []).find((e) => e.id === c.id);
+    return live && typeof live.text === 'string' && !live.text.includes(value);
+  }, { timeout: 6000, what: 'the redactor learned the value' });
+  const got = await frames(t, d);
+  // Any comment write sends the frame with every live pin: a reply to the pin.
+  await ok(anonApi.post(`/api/elements/${c.id}/reply`, { text: 'a reply' }), 'reply');
+  const frame = await waitUntil(() => got.filter((f) => f.type === 'element:comment').pop(), { timeout: 5000, what: 'the comment frame' });
+  const pin = (frame.elements || []).find((p) => p && p.id === c.id);
+  assert.ok(pin, 'the frame carries the pin');
+  const raw = JSON.stringify(frame);
+  const leaks = findLeaks(raw, LEARNED);
+  assert.deepEqual(leaks, [], `no frame holds a fragment of the value: ${leaks.map((l) => raw.slice(Math.max(0, l.at - 80), l.at + 40)).join(' | ')}`);
+  assert.ok(pin.text.startsWith('the pin names '), `the frame's text is masked, not dropped: ${JSON.stringify(pin.text)}`);
+  assert.ok(quote.prefix.endsWith(pin.anchor.quote.prefix) && pin.anchor.quote.prefix.includes('for access'), `the prefix keeps the words beside the passage: ${JSON.stringify(pin.anchor.quote.prefix)}`);
+  const held = d.srv.state.comments.find((p) => p.id === c.id);
+  assert.equal(held.anchor.quote.prefix, quote.prefix, 'the live pin itself is unchanged');
+});
+
+// U415b: the context mask cuts a prefix's outer edge only where a learned
+// value's tail sits (lib/core/redact knownTailAt). A 32-character prefix that
+// opens on a long word, with no learned value there, is served as stored. Red
+// at aa60492e, where U415a's rule dropped any leading run of 8+ characters.
+test('a clean 32-character prefix that opens on a long word is served as stored, a value learned elsewhere or not', async (t) => {
+  const { api, anonApi, root } = await withServer(t);
+  const text = 'Configuration information about the staging host is kept in the vault.';
+  await render(api, 'm-clean', `<p>${text}</p>`);
+  const exact = 'the staging host';
+  const i = text.indexOf(exact);
+  const quote = { exact, prefix: text.slice(i - 32, i), suffix: text.slice(i + exact.length, i + exact.length + 32) };
+  assert.equal(quote.prefix.length, 32);
+  assert.ok(/^\S{8,}\s/.test(quote.prefix), `precondition: the prefix opens on a run of 8+ characters: ${JSON.stringify(quote.prefix)}`);
+  const anchor = { v: 1, kind: 'range', mount: 'm-clean', quote, pos: { start: i, end: i + exact.length } };
+  const h = (await ok(anonApi.post('/api/elements', { type: 'highlight', anchor, payload: { note: 'clean' } }), 'highlight')).element;
+  const c = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor, payload: { text: 'clean', shared: true } }), 'comment')).element;
+  const served = async () => {
+    const b = (await anonApi.get('/api/elements')).json;
+    return ['highlight', 'comment'].map((k, j) => b.elements.find((e) => e.id === [h.id, c.id][j]).anchor.quote);
+  };
+  for (const q of await served()) assert.deepEqual({ prefix: q.prefix, suffix: q.suffix }, { prefix: quote.prefix, suffix: quote.suffix }, 'nothing learned: served as stored');
+  // A value learned elsewhere: its tail does not open the prefix.
+  const other = `unrelated${'Q7'.repeat(8)}`;
+  fs.writeFileSync(projectPaths(root).captureToken, other + '\n');
+  const marker = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: `names ${other}`, shared: true } }), 'marker')).element;
+  await waitUntil(async () => {
+    const live = ((await anonApi.get('/api/elements')).json.elements || []).find((e) => e.id === marker.id);
+    return live && !live.text.includes(other);
+  }, { timeout: 6000, what: 'the redactor learned the other value' });
+  for (const q of await served()) assert.equal(q.prefix, quote.prefix, 'a value learned elsewhere: the clean prefix is served as stored');
+});
