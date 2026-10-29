@@ -469,3 +469,30 @@ test('transcriptPath() null never removes: a session switched off whose transcri
   await reg.flush();
   assert.deepEqual(savedIds(w).sort(), [S1, S3]);
 });
+
+test('an ended conversation cleaned across two daemon lives: one session gone in the first, the other in the second, and the second boot sweep removes it', async (t) => {
+  let w = null;
+  const h = heard(() => w);
+  w = world(t, { conversations: (ch) => [stored(S1, ch.slug, { sessions: [S1, S2] })], options: h.options });
+  const f1 = w.transcript(S1);
+  const f2 = w.transcript(S2);
+  w.index(S1, ['t-a']);
+  w.index(S2, ['t-b']);
+  fs.unlinkSync(f1);
+  const first = w.make();
+  await first.start();
+  assert.deepEqual(h.removed(), [], 'partly cleaned: it stays');
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] });
+  await first.stop();
+  assert.deepEqual(savedIds(w), [S1]);
+  // The first session's index went in the earlier life (nothing in this one's
+  // memory names it); the record is ended, so the gone check alone decides.
+  fs.unlinkSync(f2);
+  const second = w.make();
+  await second.start();
+  assert.deepEqual(w.has(S2, ['t-b']), { index: false, diffs: [false] });
+  assert.deepEqual(h.removed().map((e) => [e.id, e.reason]), [[S1, GONE_TRIGGER]], 'every transcript gone: it leaves');
+  assert.equal(second.get(S1), null);
+  await second.flush();
+  assert.deepEqual(savedIds(w), [], 'conversations.json loses it');
+});
