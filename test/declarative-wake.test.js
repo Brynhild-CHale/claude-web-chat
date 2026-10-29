@@ -687,3 +687,27 @@ test('a legacy kind \'comment\' item restored from an older draft: delivered wit
   assert.ok(content.includes('- [comment] m1 · "legacy 0"'), content);
   assert.ok(content.includes(RESPOND_HINT), 'the hint rides a legacy comment item');
 });
+
+test('a legacy kind \'comment\' item restored from an older draft refreshes its summary when its shared pin\'s text is edited, with one update frame (K.2-163)', async (t) => {
+  const first = await bootPage(t);
+  const pin = (await ok(first.api.post('/api/elements', commentBody({ text: 'before the edit', shared: true, anchor: { mount: 'm1', selector: 'p', text: 'Hello', ordinal: 0 } })), 'pin')).pin;
+  await turn(first.api);
+  await first.graceful();
+  const file = path.join(first.webChatDir, 'draft.json');
+  const draft = JSON.parse(fs.readFileSync(file, 'utf8'));
+  draft.queue = [{ id: 'q950', kind: 'comment', source: 'browser', comment_id: pin.id, why_wake: 'comment pinned for Claude', summary: 'm1 · "before the edit"', origin_mount: 'm1', seq: 1, staged: true, enqueued_at: 1 }];
+  fs.writeFileSync(file, JSON.stringify(draft));
+
+  const { api, srv } = await withServer(t, { root: first.root });
+  assert.deepStrictEqual(srv.state.queue.map((it) => [it.id, it.kind, it.comment_id]), [['q950', 'comment', pin.id]], 'restored as written');
+  const frames = [];
+  const off = srv.bus.subscribe((ev) => { if (ev && ev.kind === 'queue' && ev.op === 'update' && ev.id === 'q950') frames.push(ev); });
+  t.after(() => { if (typeof off === 'function') off(); });
+  await ok(api.patch(`/api/elements/${pin.id}`, { text: 'after the edit' }), 'edit the pin');
+  const it = srv.state.queue.find((q) => q.id === 'q950');
+  assert.ok(it, 'the legacy item stays queued');
+  assert.ok(it.summary.includes('after the edit') && !it.summary.includes('before the edit'), `the summary follows the edit: ${it.summary}`);
+  assert.equal(frames.length, 1, 'one update frame');
+  assert.equal(frames[0].item.summary, it.summary, 'the frame carries the new summary');
+  assert.equal(srv.state.queue.filter((q) => q.kind === 'element').length, 0, 'an edit never enqueues a second item');
+});
