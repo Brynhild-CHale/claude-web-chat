@@ -530,3 +530,63 @@ test('the well\'s touch-action per state: none only while a strokes tool is arme
   ]);
   assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false);
 });
+
+// U434a (K.2-181, corrective to U434 and U431): a [tabindex="-1"] focus sink
+// inside a registered non-page host's root is that host's scroll box, never a
+// control — the chat's #chat-stream (tabindex -1 for focus, role log) — so a
+// finger's tap on the static text it holds is the armed tool's. A control in
+// the stream stays one, and the page's own sinks read as they did.
+test('isInteractive: a [tabindex="-1"] focus sink inside a host root is no control; a control there stays one; the page\'s sinks unchanged', () => {
+  const d = W.document;
+  const fx = fixtures();
+  const views = d.getElementById('chat-views');
+  const stream = d.getElementById('chat-stream');
+  assert.ok(views && stream && ov.isHostRoot(views), 'the chat host is registered over #chat-views');
+  assert.equal(stream.getAttribute('tabindex'), '-1', '#chat-stream carries tabindex -1');
+  assert.equal(IM.isFocusSink(stream), true, '#chat-stream is a focus sink');
+  const box = d.createElement('div');
+  box.id = 'im-host-sink';
+  box.innerHTML = `
+    <p class="hs-static">reply <em class="hs-deep">text</em></p>
+    <div class="hs-sink" tabindex="-1"><span class="hs-sink-in">inner sink</span></div>
+    <button class="hs-btn" tabindex="-1"><span class="hs-btn-in">x</span></button>
+    <li class="hs-opt" role="option" tabindex="-1">opt</li>
+    <div class="hs-tab0" tabindex="0">focusable</div>
+    <div class="hs-ce" contenteditable="true" tabindex="-1">edit</div>`;
+  stream.appendChild(box);
+  const q = (s) => box.querySelector(s);
+  try {
+    for (const [name, el] of [
+      ['#chat-stream itself', stream],
+      ['static reply text', q('.hs-static')],
+      ['deep static text', q('.hs-deep')],
+      ['a nested [tabindex="-1"] sink', q('.hs-sink')],
+      ['text inside a nested sink', q('.hs-sink-in')],
+    ]) assert.equal(IM.isInteractive(el), false, `${name} is static`);
+    for (const [name, el] of [
+      ['a [tabindex="-1"] button', q('.hs-btn-in')],
+      ['a [tabindex="-1"] role="option" row', q('.hs-opt')],
+      ['a [tabindex="0"] element', q('.hs-tab0')],
+      ['a [tabindex="-1"] contenteditable', q('.hs-ce')],
+    ]) assert.equal(IM.isInteractive(el), true, `${name} is a control`);
+    // The table: a finger's tap on the stream's static text is the tool's.
+    const off = ov.registerType('ita-host-taps', { draw() {}, input: 'taps', create() {} });
+    try {
+      assert.equal(IM.route(evAt('touch', q('.hs-static')), { armed: 'ita-host-taps', input: 'taps' }), 'tool');
+      assert.equal(IM.route(evAt('touch', q('.hs-btn-in')), { armed: 'ita-host-taps', input: 'taps' }), 'page');
+    } finally { off(); }
+  } finally { box.remove(); }
+  // The page's own sinks read as before: a [tabindex="-1"] div in the well
+  // is a control's (the table's '[tabindex]' row), and #stage and the overlay
+  // dialog, outside every host root, keep their tabindex reading.
+  assert.equal(IM.isInteractive(fx.interactive['[tabindex]']), true, 'a <div tabindex="-1"> in the page well');
+  assert.equal(IM.isInteractive(d.getElementById('stage')), true, '#stage (tabindex="0")');
+  assert.equal(IM.isInteractive(d.getElementById('overlay')), true, 'the overlay dialog (tabindex="-1")');
+  const pane = d.createElement('div');
+  d.getElementById('im-fixtures').appendChild(pane);
+  const sr = pane.attachShadow({ mode: 'open' });
+  sr.innerHTML = '<div class="s-sink" tabindex="-1">in a pane</div>';
+  try {
+    assert.equal(IM.isInteractive(sr.querySelector('.s-sink')), true, 'a [tabindex="-1"] div in a pane');
+  } finally { pane.remove(); }
+});
