@@ -93,9 +93,17 @@ export const SHADOW_CSS = [
     + ' border-radius: var(--wc-radius-sm); }',
   ':host .field input:focus, :host .field select:focus { outline-color: var(--wc-accent); border-color: var(--wc-accent); }',
   ':host .field input[type=checkbox] { accent-color: var(--wc-accent); }',
-  ':host .submit { background: var(--wc-accent); border-color: var(--wc-accent); color: var(--wc-accent-fg);'
+  // The Save button (U402a, K.5 J3): its label is --wc-fg on a neutral fill in
+  // every state, and the accent marks the control as its border. No accent
+  // fill carries a label at 4.5:1 on all six pack-modes (--wc-accent-fg on
+  // --wc-accent reads 3.45 earthy light), and this style cannot read the mode.
+  // The hover and focus fill, --wc-header-bg, reads 11.34:1 or more with
+  // --wc-fg on every pack-mode; --wc-accent stays the border there, because
+  // --wc-accent-dark reads 2.32:1 on it in earthy dark.
+  ':host .submit { background: var(--wc-panel-bg); border-color: var(--wc-accent); color: var(--wc-fg);'
     + ' border-radius: var(--wc-radius-sm); }',
-  ':host .submit:hover { background: var(--wc-accent-dark); border-color: var(--wc-accent-dark); }',
+  ':host .submit:hover, :host .submit:focus-visible { background: var(--wc-header-bg); border-color: var(--wc-accent);'
+    + ' color: var(--wc-fg); }',
 ].join('\n');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

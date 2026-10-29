@@ -28,6 +28,10 @@
 //     `life` (if this fails, the host must take mounts.js's release path);
 //   - theming: app.css's U336 block and the host's shadow style spell no colour
 //     (no #hex, rgb(), hsl() or named colour), only --wc-* tokens;
+//   - the Save button (U402a, K.5 J3): its label is --wc-fg on --wc-panel-bg at
+//     rest and on --wc-header-bg on hover and focus-visible, the --wc-accent
+//     border its mark; every pair reads 4.5:1 (label) and 3:1 (border) on every
+//     built-in pack-mode;
 //   - RESERVED_IDS holds the two frame ids and U338's planned ids.
 const test = require('node:test');
 const { before, beforeEach, after } = test;
@@ -444,6 +448,62 @@ test('theming: app.css\'s U336 block and the host\'s shadow style spell no colou
   assert.deepEqual(colourFindings(block), []);
   assert.deepEqual(colourFindings(TS.SHADOW_CSS), []);
   assert.ok(/var\(--wc-/.test(TS.SHADOW_CSS));
+});
+
+// The Save button's drawn pairs (U402a, K.5 J3, C-F-2). Read from the mounted
+// frame's own <style>: the rest rule, and the hover/focus-visible rule over it.
+function saveButtonStates(text) {
+  const rules = parseRules(stripComments(text));
+  const sels = (r) => r.selector.split(',').map((x) => x.trim());
+  const rest = rules.filter((r) => sels(r).includes(':host .submit'));
+  const active = rules.filter((r) => sels(r).includes(':host .submit:hover'));
+  assert.equal(rest.length, 1, 'one rest rule for the Save button');
+  assert.equal(active.length, 1, 'one hover rule for the Save button');
+  assert.ok(sels(active[0]).includes(':host .submit:focus-visible'), 'focus-visible draws as hover does');
+  const at = Object.fromEntries(rest[0].decls);
+  return { rest: at, hover: { ...at, ...Object.fromEntries(active[0].decls) } };
+}
+const tokenOf = (raw) => { const m = /^var\((--wc-[\w-]+)\)$/.exec(String(raw || '').trim()); return m && m[1]; };
+
+test('the Save button\'s ink: --wc-fg on --wc-panel-bg at rest, --wc-fg on --wc-header-bg on hover and focus (U402a)', async () => {
+  await openFixture();
+  const style = rootOf(small()).querySelector('style[data-wc-chrome="tool-settings"]');
+  assert.ok(style, 'the host\'s style is in the root');
+  const { rest, hover } = saveButtonStates(style.textContent);
+  assert.equal(rest.color, 'var(--wc-fg)', 'the label at rest');
+  assert.equal(rest.background, 'var(--wc-panel-bg)', 'the fill at rest: no accent fill carries the label');
+  assert.equal(rest['border-color'], 'var(--wc-accent)', 'the accent marks the control');
+  assert.equal(hover.color, 'var(--wc-fg)', 'the label\'s ink never changes between states');
+  assert.equal(hover.background, 'var(--wc-header-bg)', 'the hover/focus fill is the neutral --wc-header-bg');
+  assert.equal(hover['border-color'], 'var(--wc-accent)');
+  for (const [state, d] of [['rest', rest], ['hover', hover]]) {
+    assert.ok(!/--wc-accent/.test(d.background), `${state}: the label leaves the accent fill`);
+  }
+});
+
+test('the Save button\'s pairs read >= 4.5:1 (label) and >= 3:1 (border) on every built-in pack-mode (U402a, K.5 J3)', () => {
+  const { PACKS } = require('../lib/server/theme-packs');
+  const { flattenTheme, MODES } = require('../lib/server/theme');
+  const { contrastRatio, TEXT_MIN, UI_MIN } = require('../lib/server/answer-surface/palette');
+  const states = saveButtonStates(TS.SHADOW_CSS);
+  const low = [];
+  let n = 0;
+  for (const pack of PACKS) for (const mode of MODES) {
+    const t = flattenTheme(pack, mode).tokens;
+    for (const [state, d] of Object.entries(states)) {
+      const fg = tokenOf(d.color), bg = tokenOf(d.background), edge = tokenOf(d['border-color']);
+      assert.ok(fg && bg && edge, `${state}: every drawn colour is one --wc-* token`);
+      const pairs = [[fg, bg, TEXT_MIN], [edge, bg, UI_MIN], [edge, '--wc-panel-bg', UI_MIN]];
+      for (const [a, b, need] of pairs) {
+        assert.ok(t[a] && t[b], `${pack.name || pack.id} ${mode}: ${a} and ${b} are set`);
+        const r = contrastRatio(t[a], t[b]);
+        n += 1;
+        if (!(r >= need)) low.push(`${pack.name || pack.id} ${mode} ${state}: ${a} on ${b} ${r.toFixed(2)} < ${need}`);
+      }
+    }
+  }
+  assert.ok(n >= 36, `every pack-mode measured (${n})`);
+  assert.deepEqual(low, []);
 });
 
 test('theming: an open frame is a fixed panel on the panel rung, hidden when closed', async () => {
