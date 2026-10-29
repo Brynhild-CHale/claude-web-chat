@@ -839,3 +839,22 @@ test('send, ruling B4: a pane writer sending another pane\'s private element is 
   const own = await ok(send(anonApi, paHl.id, as('pa')), 'its own pane');
   assert.equal(own.element.shared, true);
 });
+
+// U416 (K.2-163 (v)): chat-comment's element.json carries U423's object form
+// of `wake` ({coalesce, respond}), read through lib/packs/elements wakeOf —
+// a `toolbar.wake === true` read would answer 400 'not a type that wakes Claude'.
+test('send: a shared chat-comment (a log-only element) answers 200 with its item', async (t) => {
+  const { api, srv } = await withServer(t);
+  const CHAT = schemaOf('chat-comment');
+  const anchor = {
+    v: 1, kind: 'turn', conversation_id: 'conv-u416', session_id: 'sess-u416', turn_id: 't_1',
+    quote: { exact: 'the prompt', prefix: '', suffix: '' }, fp: { h: '0123456789abcdef', len: 10 }, marks: 0, label: 'turn 1',
+  };
+  const pin = srv.elements.addElement({ type: 'chat-comment', schema: CHAT, payload: { text: 'on the turn', shared: true, replies: [], anchor, chain: [] }, author: 'user' });
+  const r = await ok(send(api, pin.id), 'send a chat pin');
+  assert.equal(typeof r.item.id, 'string', JSON.stringify(r));
+  assert.equal(r.element.id, pin.id);
+  const item = srv.state.queue.find((it) => it.id === r.item.id);
+  assert.ok(item && item.type === 'chat-comment', 'its item is queued');
+  assert.equal((await ok(send(api, pin.id), 'again')).already, true, 'a second send: already queued');
+});
