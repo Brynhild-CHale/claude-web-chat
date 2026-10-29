@@ -817,8 +817,11 @@ test('size (reported, not gated): the compacted factory and its share of a refer
   // range and source sections); raised to 36,864 by U222a, whose planned
   // sections took it to about 33 KB; raised to 37,486 by U403b (RULED U2 (a),
   // 2026-10-28) by exactly the heading rule's measured cost: the compacted
-  // factory 36,781 bytes before, 37,403 after, 622 bytes. Still a tripwire
-  // against an accidental large addition, on the WHOLE factory (every kind);
-  // B3's 5% share is the gate's measurement.
-  assert.ok(len < 37486, `the compacted factory is ${len} bytes — under the 37,486-byte tripwire`);
+  // factory 36,781 bytes before, 37,403 after, 622 bytes; set to 37,570 by
+  // U403c (K.2-176/177), 36,864 plus the rule's cost as it now is (one linear
+  // pass, and only for a pin made on a heading): 37,403 bytes before U403c,
+  // 37,487 after, the rule 706 bytes over the rule-less 36,781. Still a
+  // tripwire against an accidental large addition, on the WHOLE factory
+  // (every kind); B3's 5% share is the gate's measurement.
+  assert.ok(len < 37570, `the compacted factory is ${len} bytes — under the 37,570-byte tripwire`);
 });
