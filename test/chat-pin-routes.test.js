@@ -601,7 +601,7 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     const made = (await ok(w.pin({ kind: 'item-range', item_id: w.reply.id, pos: await w.posOf(SECRET_PASSAGE) }, { text: 'about the contact' }), 'pin the passage')).element;
     assert.equal(made.state, 'exact', 'placed before the value is known');
     neighbour = (await ok(w.pin({ kind: 'item-range', item_id: w.reply.id, pos: await w.posOf(NEIGHBOUR) }, { text: 'next to it' }), 'pin the neighbour')).element;
-    assert.ok(findLeaks(JSON.stringify(neighbour.anchor.quote.prefix), [EMAIL]).length, 'precondition: the neighbour\'s prefix holds the email\'s tail');
+    assert.ok(findLeaks(JSON.stringify(logRecords(w.root).find((x) => x.id === neighbour.id && x.payload).payload.anchor.quote.prefix), [EMAIL]).length, 'precondition: the neighbour\'s stored prefix holds the email\'s tail');
     w.r.sessionContext({ userEmail: E });
     w.ch.writeTranscript(S1, w.r.records);
     const e = await waitUntil(async () => {
@@ -630,7 +630,7 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
   // written only where the WHOLE value occurs, so a passage beside it keeps
   // the value's tail in its quote's 32-character prefix, served at every read.
   // Pinned here as a known gap, not hidden by the fixture.
-  await t.test('a passage beside a value learned later: its quote context still holds the value\'s tail (open finding)', { todo: 'U416@learned-later-context: the masking view leaves a learned value\'s fragment in a neighbour\'s quote prefix' }, async () => {
+  await t.test('a passage beside a value learned later: its quote context holds no fragment of the value', async () => {
     const e = (await w.list('?type=chat-comment', w.anonApi)).find((x) => x.id === neighbour.id);
     assert.deepEqual(findLeaks(JSON.stringify(e), [EMAIL]), [], 'the neighbour\'s record holds no fragment of the email');
   });
