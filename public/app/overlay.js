@@ -54,7 +54,7 @@
 //
 // The hosts (3C.1, R2 §3 'a host registry: one overlay layer per host at its
 // rung'). registerHost(name, {root, well, rung, kinds, place, hidden?,
-// settle?, glyph?}) → unregister. A row whose anchor kind a host lists in
+// settle?, animates?, glyph?}) → unregister. A row whose anchor kind a host lists in
 // `kinds` is that host's, never the page resolver's; one row may be several
 // hosts' (a chat pin drawn in the dock and listed in the turn list), so a
 // host's answers are kept per (host, id), apart from the page's. A host's rows
@@ -64,7 +64,13 @@
 // registration, by its settle and by a mutation under its root; the next draw
 // frame re-places each dirty host's rows ONCE — place(row) (DOM queries only,
 // no box read), then hidden(), then DRAW_RULES — and a scroll or a resize only
-// re-measures. Its layer is #el-layer-<name> (class el-host-layer) at
+// re-measures. THE SETTLE SOURCES (U432a, C-3C-1): what moves a well with no
+// mutation, scroll or resize — an animation or transition of an element the
+// host names in `animates` (the dock's cd-pop and cd-slide, the sheet's pull)
+// re-measures every frame while it runs and re-places the host once when the
+// last one ends, so a marker and its clip-path are read from the at-rest
+// geometry; and a ResizeObserver on every well a group was clipped to (#main
+// the first) asks for one draw when a well's box changes size. Its layer is #el-layer-<name> (class el-host-layer) at
 // var(<rung>), appended to <body> after #stage, so it paints over its host and
 // under every panel; its well (an element, or fn(group) for a host whose rows
 // sit in two scroll boxes) takes #main's place in the clip. THE NEVER-DRAW
@@ -256,7 +262,7 @@ const elTokens = new WeakMap();
 let nextToken = 1;
 const failed = new Map();         // id → {type, error} for a draw that threw
 
-const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0 };
+const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0 };
 const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
 // The page host's record: its pointer state is live from the start (a tool may
 // be armed before initOverlay); initOverlay gives it its layer and registers
@@ -1029,6 +1035,7 @@ function measureGroup(g, fr, read) {
   if (!g.container) return { res: 'unplaced' };
   const well = wellOf(g, fr);
   if (well === undefined) return { res: 'unplaced' };
+  if (well && g.host && g.host !== 'page') observeWell(well, g.host);
   let startEl;
   if (g.range) {
     const sc = g.range.startContainer;
@@ -1106,6 +1113,11 @@ function drawFrame() {
   const t0 = now();
   if (!pass) {
     drawAgain = false;
+    // A followed animation that ended with no end event (its element gone, a
+    // cancel the engine never sent): the host settles here, re-placed below.
+    for (const h of registry.values()) {
+      if (h.animating.length && !stillAnimating(h)) { endFollow(h); if (!h.page) h.dirty = true; }
+    }
     // Each dirty host's rows re-placed ONCE, at the frame's start (DOM queries
     // only: no box read), then every host's groups built — the page's first.
     for (const h of registry.values()) if (!h.page && h.dirty) replace(h);
@@ -1169,11 +1181,13 @@ function drawFrame() {
   if (done) {
     for (const h of registry.values()) if (h.passCount) { Object.assign(h.lastPass, h.passCount); h.passCount = null; }
     pass = null;
+    sweepWells();
   }
   bus.emit('overlay:frame', { frame: totals.frames, ms, box_reads: fr.reads, groups: placed, carried, done,
     anchors: answers.size, budget_ms: budget });
   if (!done) { drawPending = true; cfg.raf(drawFrame); return; }
   if (drawAgain) { drawAgain = false; requestDraw(); }
+  else if (following()) requestDraw();   // a named animation runs: the next frame re-measures
 }
 
 // stats(host?) — with no host, the page host's numbers (the fields they always
@@ -1191,6 +1205,8 @@ export function stats(name) {
       places: h.places,
       listening: !!h.listeningOn,
       layer: h.layer.id,
+      animating: h.animating.length > 0,
+      animation_settles: h.settles,
     };
   }
   const out = {
@@ -1206,6 +1222,7 @@ export function stats(name) {
     anchors: answers.size,
     draw_failed: failed.size,
     listening: !!(pageHost && pageHost.listeningOn),
+    well_resizes: totals.well_resizes,
   };
   if (name === 'page') out.frame_hidden = lastPass.frame_hidden;
   return out;
@@ -1225,6 +1242,11 @@ export function failedDraws() {
 // el?, range?} | null, DOM queries only (null: unplaced, not drawn, not
 // listed); `hidden({row, answer, host})` → a reason (drawn as hidden) or null;
 // `settle(trigger)` → off, a subscription whose trigger marks the host dirty;
+// `animates` an element, a list of them, or fn() → one or a list, read at each
+// animation event: the elements whose animations and transitions (their own
+// and their descendants', bubbling) move the host's well — followed frame by
+// frame while one runs, the host re-placed once when the last one ends (the
+// settle sources below); a static `well` element is observed for its size;
 // `glyph` {dx, dy, w, h} or fn(type) → glyph, sizing its markers (default:
 // the type's glyph). Refused: a name outside HOST_NAMES or already
 // registered, and a root or well that is a frame, inside one, or in another
@@ -1250,6 +1272,11 @@ export function registerHost(name, spec) {
   if (typeof o.place !== 'function') throw new TypeError('registerHost: place(row) is required');
   if (o.hidden != null && typeof o.hidden !== 'function') throw new TypeError('registerHost: hidden must be a function');
   if (o.settle != null && typeof o.settle !== 'function') throw new TypeError('registerHost: settle must be a function');
+  if (o.animates != null && typeof o.animates !== 'function') {
+    const list = Array.isArray(o.animates) ? o.animates : [o.animates];
+    const why = list.map(frameReason).find(Boolean);
+    if (why) throw new TypeError(`registerHost: animates is an element, a list of them or fn() → one; one is ${why}`);
+  }
   let glyph = null;
   if (o.glyph != null) {
     glyph = typeof o.glyph === 'function' ? o.glyph : checkGlyph(o.glyph);
@@ -1262,7 +1289,7 @@ export function registerHost(name, spec) {
   hl.addEventListener('click', onLayerClick);
   document.body.appendChild(hl);
   const h = newHost(name, { root: o.root, well: o.well, rung: o.rung, kinds: Object.freeze(kinds), layer: hl,
-    place: o.place, hidden: o.hidden || null, glyph });
+    place: o.place, hidden: o.hidden || null, glyph, animates: o.animates || null });
   h.onPointer = (e) => pointerIn(h, e);
   registry.set(name, h);
   // Its own layout watch, as #main's: a mutation under its root re-places it.
@@ -1276,12 +1303,15 @@ export function registerHost(name, spec) {
       h.settleOff = typeof off === 'function' ? off : null;
     } catch (err) { console.error(`[web-chat] overlay: the '${name}' host's settle failed`, err); }
   }
+  if (typeof o.well !== 'function') observeWell(o.well, name);
   rehome(kinds);
   markDirty(h);
   syncListening();
   return () => {
     if (registry.get(name) !== h) return;
     registry.delete(name);
+    releaseWells(name);
+    h.animating = [];
     if (h.observer) h.observer.disconnect();
     if (h.settleOff) { try { h.settleOff(); } catch { /* the host's own */ } }
     if (h.listeningOn) for (const t of POINTER_EVENTS) h.listeningOn.removeEventListener(t, h.onPointer, true);
@@ -1296,8 +1326,8 @@ export function registerHost(name, spec) {
 function newHost(name, o) {
   return {
     name, page: name === 'page', root: o.root, well: o.well, rung: o.rung, kinds: o.kinds, layer: o.layer,
-    place: o.place || null, hidden: o.hidden || null, glyph: o.glyph || null,
-    answers: new Map(), dirty: false, places: 0,
+    place: o.place || null, hidden: o.hidden || null, glyph: o.glyph || null, animates: o.animates || null,
+    answers: new Map(), dirty: false, places: 0, animating: [], settles: 0,
     groups: [], lastSig: null, passCount: null,
     lastPass: name === 'page' ? lastPass : { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 },
     listeningOn: null, gestures: new Map(), lastDown: null, onPointer: null, observer: null, settleOff: null,
@@ -1349,6 +1379,132 @@ function replace(h) {
   }
   h.answers = next;
 }
+// ── the settle sources (U432a; C-3C-1) ──────────────────────────────────────
+// (1) A host's named animations. One capture listener per event on the
+// document (initOverlay's) hears every animation and transition start and end;
+// one whose target is an element a host names in `animates`, or inside one,
+// is that host's. A start is followed: every draw frame re-measures while it
+// runs (the glyph and its clip-path follow the moving well). An end, when no
+// followed animation still runs — getAnimations({subtree: true}) on the named
+// elements where the engine has it, else the starts heard with no end, each
+// followed at most ANIMATION_FOLLOW_MAX_MS — re-places the host once
+// (markDirty), so its markers are measured from the at-rest geometry. An
+// infinite animation is never followed, nor a transition that only paints. A
+// host that names nothing gets no draw from it.
+// (2) A well's box. One ResizeObserver watches every well a group was clipped
+// to (#main, a host's static well, and each one a per-group well returned at a
+// draw); a change of a watched box's size (never its first observation) asks
+// for a draw, which requestDraw coalesces into one per frame. A well no longer
+// in the document is let go at the end of a pass.
+const ANIM_STARTS = Object.freeze(['animationstart', 'transitionrun']);
+const ANIM_ENDS = Object.freeze(['animationend', 'animationcancel', 'transitionend', 'transitioncancel']);
+export const ANIMATION_FOLLOW_MAX_MS = 1000;
+const PAINT_ONLY = /^(?:color|background(?:-color|-image|-position)?|opacity|box-shadow|text-shadow|outline(?:-color|-offset)?|border(?:-(?:top|right|bottom|left))?-color|fill|stroke|filter|backdrop-filter|caret-color|text-decoration-color)$/;
+let wellRO = null;
+const wellUsers = new Map();      // a watched well → the names of the hosts it clips
+const wellSizes = new WeakMap();  // a watched well → its last observed [inline, block] size
+function animRootsOf(h) {
+  let v = h.animates;
+  if (typeof v === 'function') {
+    try { v = v(); } catch (err) {
+      console.error(`[web-chat] overlay: the '${h.name}' host's animates failed`, err);
+      return [];
+    }
+  }
+  return (Array.isArray(v) ? v : [v]).filter((el) => !frameReason(el));
+}
+function paintsOnly(e) {
+  return e.type.startsWith('transition') && PAINT_ONLY.test(String(e.propertyName || ''));
+}
+function onAnimEvent(e) {
+  const t = e.target;
+  if (!t || t.nodeType !== 1 || paintsOnly(e)) return;
+  const start = ANIM_STARTS.includes(e.type);
+  const key = e.type.startsWith('transition') ? `t:${e.propertyName || ''}` : `a:${e.animationName || ''}`;
+  for (const h of registry.values()) {
+    if (!h.animates || registry.get(h.name) !== h) continue;
+    if (!animRootsOf(h).some((r) => r === t || r.contains(t))) continue;
+    h.animating = h.animating.filter((a) => !(a.el === t && a.key === key));
+    if (start) {
+      h.animating.push({ el: t, key, until: cfg.now() + ANIMATION_FOLLOW_MAX_MS });
+      requestDraw();
+    } else if (!stillAnimating(h)) {
+      endFollow(h);
+      markDirty(h);
+    }
+  }
+}
+// Whether a followed animation of the host still runs.
+function stillAnimating(h) {
+  const roots = animRootsOf(h);
+  if (roots.length && roots.every((r) => typeof r.getAnimations === 'function')) {
+    for (const r of roots) {
+      let list = [];
+      try { list = r.getAnimations({ subtree: true }); } catch { list = []; }
+      for (const a of list) if (runsFinite(a)) return true;
+    }
+    return false;
+  }
+  const now = cfg.now();
+  h.animating = h.animating.filter((a) => a.until > now && a.el.isConnected);
+  return h.animating.length > 0;
+}
+function runsFinite(a) {
+  if (!a || a.playState !== 'running') return false;
+  if (a.transitionProperty && PAINT_ONLY.test(String(a.transitionProperty))) return false;
+  let end = Infinity;
+  try { end = a.effect ? a.effect.getComputedTiming().endTime : Infinity; } catch { end = Infinity; }
+  return Number.isFinite(end);
+}
+function endFollow(h) {
+  h.animating = [];
+  h.settles++;
+}
+function following() {
+  for (const h of registry.values()) if (h.animating.length) return true;
+  return false;
+}
+function observeWell(el, name) {
+  if (!wellRO || !el || el.nodeType !== 1) return;
+  let users = wellUsers.get(el);
+  if (!users) {
+    users = new Set();
+    wellUsers.set(el, users);
+    try { wellRO.observe(el); } catch { wellUsers.delete(el); return; }
+  }
+  users.add(name);
+}
+function unobserveWell(el) {
+  wellUsers.delete(el);
+  wellSizes.delete(el);
+  try { wellRO.unobserve(el); } catch { /* already gone */ }
+}
+function releaseWells(name) {
+  for (const [el, users] of [...wellUsers]) {
+    users.delete(name);
+    if (!users.size) unobserveWell(el);
+  }
+}
+function sweepWells() {
+  for (const el of [...wellUsers.keys()]) if (!el.isConnected) unobserveWell(el);
+}
+function onWellResize(entries) {
+  let moved = false;
+  for (const en of entries || []) {
+    if (!wellUsers.has(en.target)) continue;
+    const b = en.borderBoxSize && en.borderBoxSize[0];
+    const r = en.contentRect || {};
+    const size = b ? [b.inlineSize, b.blockSize] : [r.width, r.height];
+    const prev = wellSizes.get(en.target);
+    wellSizes.set(en.target, size);
+    if (prev && (prev[0] !== size[0] || prev[1] !== size[1])) moved = true;
+  }
+  if (moved) {
+    totals.well_resizes++;
+    requestDraw();
+  }
+}
+
 // hosts() → [{name, layer, rung, root, kinds}], the page first: each host's
 // layer id, its rung (a ladder token's name) and root (GT-07's host half).
 export function hosts() {
@@ -1911,6 +2067,12 @@ export function initOverlay(opts = {}) {
   if (M && typeof M.onSettle === 'function') M.onSettle(() => requestDraw());
   window.addEventListener('scroll', requestDraw, { capture: true, passive: true });
   window.addEventListener('resize', requestDraw, { passive: true });
+  // The settle sources: the hosts' named animations, and every well's box.
+  for (const t of [...ANIM_STARTS, ...ANIM_ENDS]) document.addEventListener(t, onAnimEvent, { capture: true, passive: true });
+  if (typeof ResizeObserver === 'function') {
+    wellRO = new ResizeObserver(onWellResize);
+    observeWell($('main'), 'page');
+  }
   // A layout change of the well moves a pane with no settle, scroll or resize
   // (mounts.js layoutPage: a drag, a resize handle's drop, a run cut by a
   // markdown item, a remote pane:state): one observer asks for a draw while
