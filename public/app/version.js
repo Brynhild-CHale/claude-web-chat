@@ -13,6 +13,11 @@
 // closes it until this tab is opened fresh. Session, not local, storage is what
 // makes "session" mean session — through storage.js, which is the one home for
 // the private-window guard every such access needs.
+// EMBEDDED (U470, form 6 V2): inside the hub's chat view the shell shows the
+// version, so app.css's embedded block hides #update-banner — by CSS alone.
+// Nothing here changes: checkVersion still runs at boot, on every reconnect and
+// on its interval, and its reload-on-new-build (reloadIfBuildChanged) still
+// reloads a framed page the daemon's update left on old modules.
 import { $ } from './state.js';
 import { getSession, setSession, removeSession } from './storage.js';
 

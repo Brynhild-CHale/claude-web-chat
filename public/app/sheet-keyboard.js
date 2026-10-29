@@ -5,6 +5,10 @@
 //                                  a browser without one, where nothing happens)
 //   stopSheetKeyboard()            stop: every listener, the frame, keyboard mode
 //
+// EMBEDDED (U470): framed in the hub's chat view, the inset is unchanged and
+// still read from THIS frame's visualViewport — the hub shell sizes the frame
+// to its own visual viewport, so the frame's viewport is the keyboard-aware one.
+//
 // iOS Safari, and Chrome on Android since 108, shrink only the VISUAL viewport
 // when the keyboard rises, so a sheet placed in the layout viewport (U68's pull
 // rides the bottom bar) ends up under the keyboard. KEYBOARD MODE pins the pull

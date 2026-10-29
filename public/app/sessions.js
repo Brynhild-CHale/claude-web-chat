@@ -26,11 +26,19 @@
 // versionNote) under a ⚠: after an `update` that is how the user finds the
 // Claude Code sessions still running the old tools.
 //
+// EMBEDDED (U470, form 6 V2): inside the hub's chat view the shell provides
+// Sessions, so the panel never opens there — openSessions does nothing while
+// remote.js shellHidden() says so (embedded, or framed with health unanswered),
+// whichever opener asked; shell.js hides the ⋯ row and the ⌘K row and disables
+// S, and app.css's embedded block hides the panel itself. (The panel's data
+// route is refused to a remote viewer already.)
+//
 // Every string that came from the registry — a project title, a root path — is
 // a directory name somebody chose, so it is set as textContent, never parsed.
 import { $ } from './state.js';
 import { copyText } from './drawer.js';
 import { ago } from './labels.js';
+import { shellHidden } from './remote.js';
 
 // `ago` lives in labels.js now — the chat chrome words its times with the same
 // phrase — and stays importable from here.
@@ -242,6 +250,7 @@ function schedule() {
 }
 
 export function openSessions() {
+  if (shellHidden()) return;
   const p = $(PANEL); if (!p) return;
   window.dispatchEvent(new CustomEvent('wc:close-popovers', { detail: { keep: p } }));
   p.classList.remove('hidden');
