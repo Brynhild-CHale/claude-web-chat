@@ -3520,3 +3520,22 @@ textarea.rail-add { height: auto; min-height: 30px; max-height: 120px; resize: n
 .chat-pin-list .ptr-text { white-space: normal; }
 .chat-pin-list .ptr-quote { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wc-fg); }
 .chat-pin-list .ptr-explain { display: block; font: 11px var(--wc-font); color: var(--wc-muted); }
+
+/* ============ the turn list's chat pins (U433, 3C.1: the 'turns' host) ======
+   public/app/graph-turns.js ends each turn row of the graph inspector's
+   #gi-turns in one empty slot (.gi-turn-pins, the row's third column, 18 × 16)
+   and registers the overlay's 'turns' host over #gv-inspector: chat-pins.js
+   draws the chat-comment's pin and count into #el-layer-turns, one badge per
+   row, the slot's size and over it (graph-turns TURNS_GLYPH). The badge's look
+   — a compact pin with a small count, the L4 states as the chat layer's — is a
+   STAND-IN, the maintainer's to style; the inspector is otherwise unchanged. */
+#gi-turns .gi-turn-pins { grid-column: 3; grid-row: 1; align-self: start; width: 18px; height: 16px; }
+#el-layer-turns .el-marker.pin-marker { filter: none; display: flex; align-items: center; justify-content: flex-start; }
+#el-layer-turns .el-marker.pin-marker svg { filter: drop-shadow(0 1px 1px rgba(0,0,0,.45)); }
+#el-layer-turns .el-marker.pin-marker .pin-count {
+  right: 0; bottom: 0; min-width: 11px; height: 11px; padding: 0 2px; border-width: 1px; font: 700 7.5px var(--wc-mono);
+}
+#el-layer-turns .el-marker.el-superseded,
+#el-layer-turns .el-marker.el-unavailable { color: var(--wc-muted); opacity: .6; }
+#el-layer-turns .el-marker.el-masked { border: 1px dashed currentColor; border-radius: var(--wc-radius-sm); }
+#el-layer-turns .el-marker.el-indexing { border: 1px dotted currentColor; border-radius: var(--wc-radius-sm); opacity: .8; }
