@@ -354,7 +354,8 @@ test('docked: a press on a .dl line of the turn\'s open diff view posts diff-lin
   const added = lines.find((l) => l.textContent === '+added');
   const gone = lines.find((l) => l.textContent === '-gone');
   const hunk = lines.find((l) => l.classList.contains('dl-hunk'));
-  assert.ok(added && gone && hunk);
+  const ctx = lines.find((l) => l.textContent === ' line2');
+  assert.ok(added && gone && hunk && ctx);
   arm();
   try {
     press(added);
@@ -365,6 +366,12 @@ test('docked: a press on a .dl line of the turn\'s open diff view posts diff-lin
     press(gone);
     const b2 = await pinIt('on a deleted line');
     assert.deepEqual([b2.anchor.side, b2.anchor.line], ['old', 2]);
+    // A context line carries both numbers: the new side's (data-new) is the one.
+    arm();
+    press(ctx);
+    assert.equal(pinPop().querySelector('.pin-anchor').textContent, 'lib/x.js:3');
+    const b3 = await pinIt('on a context line');
+    assert.deepEqual([b3.anchor.side, b3.anchor.line], ['new', 3]);
     // A hunk header has no line number: nothing is pinned.
     arm();
     const n = posts.length;
