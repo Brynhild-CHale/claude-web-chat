@@ -444,12 +444,21 @@ test('the whole document copy, its compacted copy, the element kind\'s and the b
 });
 
 // The factory's text with the api object and resolveAll's range arm (and the
-// whole-line comments above each) masked: what U307 may change. Everything
-// else is byte-identical to ae/int 39b52f8's createAnchors.toString().
-const UNCHANGED_SHA256 = '4633fc65cd2b0d7ac6153a6ea516872ed5907a6f2191dd2f45fb406b47260a98';
+// whole-line comments above each) masked: what U307 may change; and U403b's
+// heading rule (RULED U2 (a), 2026-10-28) masked too: the CONFIG.source_heading
+// line, the source section's header comment (up to its bare '//' line, so
+// alignBlock's own comment stays held), headingAt and resolveSource (each
+// with the whole-line comments above it). Everything else is byte-identical to
+// ae/int 39b52f8's createAnchors.toString(): the same masks over 39b52f8's
+// text give this digest (4633fc65… was the digest with U307's masks alone).
+const UNCHANGED_SHA256 = 'e0701d341e8ffd9e0898b6b501d5d132ba6b6043f16dbd35bc74d1b0b030569b';
 const maskEdits = (t) => t
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}var api = \{[\s\S]*?\n {2}\};/, '\n  /* api */')
-  .replace(/(\n {2}\/\/[^\n]*)*\n {2}function isRange\(rec\) \{[^\n]*/, '\n  /* isRange */');
+  .replace(/(\n {2}\/\/[^\n]*)*\n {2}function isRange\(rec\) \{[^\n]*/, '\n  /* isRange */')
+  .replace(/\n {4}source_heading: true,/, '')
+  .replace(/(\n {2}\/\/ ── source ──)(\n {2}\/\/ [^\n]*)*/, '$1\n  /* source header */')
+  .replace(/(\n {2}\/\/[^\n]*)*\n {2}function headingAt\([\s\S]*?\n {2}\}/, '')
+  .replace(/(\n {2}\/\/[^\n]*)*\n {2}function resolveSource\([\s\S]*?\n {2}\}/, '\n  /* resolveSource */');
 
 test('the whole copies keep every section; outside the api object and resolveAll\'s range arm the factory is 39b52f8\'s byte for byte', async () => {
   const src = anchors.createAnchors.toString();
@@ -806,8 +815,10 @@ test('size (reported, not gated): the compacted factory and its share of a refer
   }
   // 32,768 at U225 (the factory then 18 KB, before U224's chunker and U222a's
   // range and source sections); raised to 36,864 by U222a, whose planned
-  // sections took it to about 33 KB. Still a tripwire against an accidental
-  // large addition, on the WHOLE factory (every kind); B3's 5% share is the
-  // gate's measurement.
-  assert.ok(len < 36864, `the compacted factory is ${len} bytes — under the 36,864-byte tripwire`);
+  // sections took it to about 33 KB; raised to 37,486 by U403b (RULED U2 (a),
+  // 2026-10-28) by exactly the heading rule's measured cost: the compacted
+  // factory 36,781 bytes before, 37,403 after, 622 bytes. Still a tripwire
+  // against an accidental large addition, on the WHOLE factory (every kind);
+  // B3's 5% share is the gate's measurement.
+  assert.ok(len < 37486, `the compacted factory is ${len} bytes — under the 37,486-byte tripwire`);
 });

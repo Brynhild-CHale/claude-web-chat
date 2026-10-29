@@ -364,7 +364,7 @@ test('CONFIG and LIMITS: the pinned values, frozen', () => {
   assert.ok(Object.isFrozen(anchors.CONFIG) && Object.isFrozen(anchors.LIMITS));
   assert.deepStrictEqual({ ...anchors.CONFIG }, {
     tol: 0.8, margin: 0.05, row_tol: 0.6, row_margin: 0.05, key_w: 0.7, gate: true, tiebreak: true, head_n: 128, head_floor: true, ordinal: true,
-    ctx_n: 32, quote_max: 2000, fuzzy_tol: 0.75, source_bracket: true, source_section: true,
+    ctx_n: 32, quote_max: 2000, fuzzy_tol: 0.75, source_heading: true, source_bracket: true, source_section: true,
   });
   assert.deepStrictEqual({ ...anchors.LIMITS }, { fp_head: 64, row_head: 128, key: 32 });
 });
