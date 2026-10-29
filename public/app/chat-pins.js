@@ -669,13 +669,22 @@ function settle(trigger) {
     observers.clear();
   };
 }
+// The elements whose animations move the stream with no mutation, scroll or
+// resize (U432a, C-3C-1): the dock (cd-slide docked, cd-pop windowed: app.css)
+// and the phone's pull (its stops' transitions). Read at each animation event,
+// as the settle's observers re-read them, so a re-built dock or pull is the
+// one named. The overlay follows them frame by frame while one runs and
+// re-places the host when the last one ends (registerHost's settle sources).
+function animates() {
+  return [$('chat-dock'), $('chat-pull')].filter(Boolean);
+}
 function registerChatHost() {
   if (hostOff) return true;
   const root = $('chat-views');
   if (!root) return false;
   hostOff = registerHost(HOST, {
     root, well: wellOf, rung: '--z-chat-pins', kinds: [...KINDS], glyph: CHAT_GLYPH,
-    place: placeRow, hidden: hiddenRow, settle,
+    place: placeRow, hidden: hiddenRow, settle, animates,
   });
   return true;
 }

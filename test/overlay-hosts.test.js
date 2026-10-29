@@ -682,3 +682,139 @@ test('pick() resolves only from #main; elementsAt keeps its page answers and rea
     await settle();
   }
 });
+
+// ── the settle sources (U432a; the 3C gate's C-3C-1) ────────────────────────
+// A host may name the elements whose animations move its well (`animates`):
+// a start is followed frame by frame, the last end re-places the host once. A
+// host that names none — the page, or a fixture registered without it — gets
+// no draw from an animation under its root (the counter: overlay:frame and
+// the pending frames).
+function animEvent(type, el, name, extra = {}) {
+  const e = new W.Event(type, { bubbles: true });
+  Object.defineProperty(e, type.startsWith('transition') ? 'propertyName' : 'animationName', { value: name });
+  for (const [k, v] of Object.entries(extra)) Object.defineProperty(e, k, { value: v });
+  el.dispatchEvent(e);
+}
+
+test('settle sources: a host\'s named animation end re-places it once; a host that names none draws no more than today', async () => {
+  const fx2 = buildFixture('fx-turns-anim');
+  for (let i = 0; i < ITEMS; i++) rectFns.set(fx2.item(i), () => ({ ...itemBox(i), left: 760 }));
+  rectFns.set(fx2.well, () => WELL);
+  const off = register('chat', { animates: () => [fx.root] });
+  const off2 = register('turns', { fixture: fx2 });
+  const frames = [];
+  const offF = bus.on('overlay:frame', (d) => frames.push(d));
+  try {
+    ov.upsertElements('live', [row('an1', 2)]);
+    await settle();
+    assert.equal(queue.length, 0, 'settled');
+    // The host with no animations named, and the page: nothing at all.
+    frames.length = 0;
+    const turns0 = ov.stats('turns');
+    for (const el of [fx2.root, fx2.item(3), W.document.getElementById('main')]) {
+      for (const t of ['animationstart', 'animationend', 'animationcancel']) animEvent(t, el, 'cd-pop');
+      for (const t of ['transitionrun', 'transitionend']) animEvent(t, el, 'transform');
+    }
+    await shell.tick();
+    assert.equal(queue.length, 0, 'no frame asked for');
+    flush();
+    assert.equal(frames.length, 0, 'no extra draw');
+    assert.equal(ov.stats('turns').places, turns0.places, 'never re-placed');
+    assert.equal(ov.stats('turns').animation_settles, 0);
+    assert.equal(ov.stats('chat').animation_settles, 0, 'an animation off the chat\'s named elements is not its');
+    // The named host: a descendant's end (bubbling) re-places it once.
+    const p0 = ov.stats('chat').places;
+    animEvent('animationend', fx.item(5), 'fade');
+    assert.equal(queue.length, 1, 'one frame asked for');
+    flush();
+    assert.equal(frames.length, 1, 'one draw');
+    assert.equal(ov.stats('chat').places, p0 + 1, 're-placed once');
+    assert.equal(ov.stats('chat').animation_settles, 1);
+    assert.equal(ov.stats('turns').places, turns0.places, 'the other host is not re-placed');
+    // A burst of ends in one frame: one draw.
+    frames.length = 0;
+    for (let i = 0; i < 4; i++) animEvent('transitionend', fx.root, 'transform');
+    flush();
+    assert.equal(frames.length, 1, 'four ends, one frame');
+    assert.equal(ov.stats('chat').places, p0 + 2, 'one re-place');
+    // A transition that only paints is no settle source.
+    const s1 = ov.stats('chat').animation_settles;
+    animEvent('transitionrun', fx.root, 'background-color');
+    animEvent('transitionend', fx.root, 'opacity');
+    assert.equal(queue.length, 0, 'a paint-only transition asks for nothing');
+    assert.equal(ov.stats('chat').animation_settles, s1);
+  } finally {
+    offF();
+    ov.removeElements('live', ['an1']);
+    off2(); off();
+    fx2.root.remove();
+    await settle();
+  }
+});
+
+test('settle sources: a named animation is followed frame by frame while it runs, then settles; getAnimations tells the last', async () => {
+  const off = register('chat', { animates: [fx.root] });
+  try {
+    ov.upsertElements('live', [row('an2', 3)]);
+    await settle();
+    animEvent('animationstart', fx.root, 'cd-pop');
+    assert.equal(ov.stats('chat').animating, true);
+    const p0 = ov.stats('chat').places;
+    for (let i = 1; i <= 4; i++) {
+      geo.scroll = i * 7;   // the well moves under the animation
+      assert.equal(queue.length, 1, `frame ${i}: one frame pending`);
+      queue.shift()(clock);
+      assert.equal(parseFloat(markersIn('chat', 'an2')[0].style.top), itemBox(3).top, `frame ${i}: the marker followed the well`);
+    }
+    assert.equal(ov.stats('chat').places, p0, 'a followed frame re-measures, never re-places');
+    animEvent('animationend', fx.root, 'cd-pop');
+    assert.equal(ov.stats('chat').animating, false, 'the last end stops the follow');
+    flush();
+    assert.equal(queue.length, 0, 'no frame after the follow');
+    assert.equal(ov.stats('chat').places, p0 + 1, 'the end re-placed the host once');
+    // getAnimations, where the engine has it, says whether one still runs: a
+    // finite one running keeps the host waiting; an infinite one never does.
+    let list = [{ playState: 'running', effect: { getComputedTiming: () => ({ endTime: 260 }) } }];
+    fx.root.getAnimations = () => list;
+    const s0 = ov.stats('chat').animation_settles;
+    animEvent('animationend', fx.root, 'cd-slide');
+    assert.equal(ov.stats('chat').animation_settles, s0, 'another finite animation still runs: no settle yet');
+    list = [{ playState: 'running', effect: { getComputedTiming: () => ({ endTime: Infinity }) } },
+      { playState: 'finished', effect: { getComputedTiming: () => ({ endTime: 260 }) } }];
+    animEvent('animationend', fx.root, 'cd-pop');
+    assert.equal(ov.stats('chat').animation_settles, s0 + 1, 'only an infinite one left: settled');
+    flush();
+    // An infinite animation's start is heard but never keeps the frames going.
+    animEvent('animationstart', fx.root, 'spin');
+    assert.equal(queue.length, 1);
+    flush();
+    assert.equal(ov.stats('chat').animating, false, 'getAnimations shows no finite one running: the follow ends');
+    assert.equal(queue.length, 0);
+    delete fx.root.getAnimations;
+    // No getAnimations and no end event: the follow stops after ANIMATION_FOLLOW_MAX_MS and re-places once.
+    animEvent('animationstart', fx.root, 'cd-pop');
+    queue.shift()(clock);
+    const p1 = ov.stats('chat').places;
+    clock += ov.ANIMATION_FOLLOW_MAX_MS + 1;
+    flush();
+    assert.equal(ov.stats('chat').animating, false, 'a start with no end is followed at most ANIMATION_FOLLOW_MAX_MS');
+    assert.equal(ov.stats('chat').places, p1 + 1, 'and settles with one re-place');
+    // Unregistering while one runs ends the follow.
+    animEvent('animationstart', fx.root, 'cd-pop');
+    off();
+    flush();
+    assert.equal(queue.length, 0, 'an unregistered host is followed no further');
+  } finally {
+    delete fx.root.getAnimations;
+    geo.scroll = 0;
+    ov.removeElements('live', ['an2']);
+    off();
+    await settle();
+  }
+  const ifr = W.document.createElement('iframe');
+  W.document.body.appendChild(ifr);
+  try {
+    assert.throws(() => register('chat', { animates: ifr }), TypeError, 'a frame is never a settle source');
+    assert.throws(() => register('chat', { animates: [fx.root, 'x'] }), TypeError, 'an element, a list of them or fn()');
+  } finally { ifr.remove(); }
+});
