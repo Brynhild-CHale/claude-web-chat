@@ -599,7 +599,9 @@ test('records: one GET per hello and per reset; a frame applied with no GET; a f
   let n = chatGets;
   await shell.frame(helloFrame());
   await settle();
-  assert.equal(chatGets, n + 1, 'one GET per hello');
+  // The hello's own GET, then the single-flight re-reads its hydrate's 'stream'
+  // changes ask for while the followed conversation has pins (K.2-177 g3).
+  assert.ok(chatGets - n >= 1 && chatGets - n <= 3, `a GET per hello, plus at most the hydrate's stream re-reads: ${chatGets - n}`);
   n = chatGets;
   await shell.frame({ ...helloFrame(), type: 'reset', elements: [] });
   await settle();
@@ -696,11 +698,67 @@ test('indexing → placed: one more GET after a bus mirror {what: [all]}; two bu
   hold = null;
   release();
   await settle();
-  assert.equal(chatGets, n + 1, 'placed now: no further read');
+  // The 'stream' burst heard during the read asks for one more once it lands:
+  // the followed conversation has pins (K.2-177 g3); then nothing further.
+  assert.equal(chatGets, n + 2, 'placed now: the burst\'s one re-read, no further read');
   assert.ok(markerOf('k3').classList.contains('el-hit'), 'placed');
   bus.emit('mirror', { what: ['all'] });
   await settle();
-  assert.equal(chatGets, n + 1, 'no pin indexing: a mirror change asks for nothing');
+  assert.equal(chatGets, n + 2, 'no pin indexing: an \'all\' change asks for nothing');
+  pinList = BASE();
+  await CP.refreshChatPins();
+  await settle();
+});
+
+test('a superseded answer after a terminal rewind: a bus mirror {what: [stream]} re-reads the followed conversation\'s pins, so the pin stops drawing el-hit before the next hello (K.2-177 g3)', async () => {
+  pinList = QUIET();
+  await CP.refreshChatPins();
+  await settle();
+  assert.ok(markerOf('k1').classList.contains('el-hit'), 'placed first');
+  const n = chatGets;
+  pinList = QUIET().map((p) => (p.id === 'k1' ? { ...p, ...A('superseded') } : p));
+  bus.emit('mirror', { what: ['stream'] });
+  await settle();
+  assert.equal(chatGets, n + 1, 'one re-read for the stream change');
+  assert.ok(!markerOf('k1').classList.contains('el-hit'), 'no longer el-hit');
+  assert.ok(markerOf('k1').classList.contains('el-superseded'), 'drawn superseded');
+  bus.emit('mirror', { what: ['conversations'] });
+  await settle();
+  assert.equal(chatGets, n + 1, 'a change naming neither stream nor all asks for nothing');
+  pinList = BASE();
+  await CP.refreshChatPins();
+  await settle();
+});
+
+test('an indexing pin of a non-followed conversation that the inspector\'s turn list lists moves to placed on a bus mirror {what: [stream]} (K.2-181 g7)', async () => {
+  const only = (answer) => [pin('k16', { kind: 'item', conversation_id: 'cB', turn_id: 'b2', item_id: 'r_b2', field: 'text' }, answer)];
+  assert.equal(S.followed(), 'cA');
+  pinList = only(A('indexing'));
+  await CP.refreshChatPins();
+  await settle();
+  assert.equal(CP.chatPinOf('k16').row.answer.state, 'indexing');
+  // Not listed by any other host: a stream change asks for nothing (no pin of the followed conversation either).
+  let n = chatGets;
+  bus.emit('mirror', { what: ['stream'] });
+  await settle();
+  assert.equal(chatGets, n, 'nothing lists b2: no read');
+  // The inspector's turn list (the 'turns' host) lists b2.
+  const host = ov.hosts().find((h) => h.name === 'turns');
+  assert.ok(host && host.root, 'the turns host is registered');
+  const li = doc.createElement('li');
+  li.className = 'gi-turn';
+  li.dataset.turnId = 'b2';
+  host.root.appendChild(li);
+  try {
+    n = chatGets;
+    pinList = only(A('exact'));
+    bus.emit('mirror', { what: ['stream'] });
+    await settle();
+    assert.equal(chatGets, n + 1, 'one re-read');
+    assert.equal(CP.chatPinOf('k16').row.answer.state, 'exact', 'placed without waiting for a frame');
+  } finally {
+    li.remove();
+  }
   pinList = BASE();
   await CP.refreshChatPins();
   await settle();
@@ -732,6 +790,41 @@ test('reveal: chat:open {view: turn} on another conversation follows it and scro
   assert.ok(shown(markerOf('k16')), 'its pin drawn now');
   assert.ok(markerOf('k16').classList.contains(CP.FLASH_CLASS), 'flashed once');
   await follow('cA');
+});
+
+test('reveal: a turn the stream does not draw — the first chat:drawn of its conversation without it ends the reveal, so a later draw with it never scrolls (K.2-177 g4)', async () => {
+  assert.equal(S.followed(), 'cA');
+  const at = shell.scrolls.length;
+  assert.equal(CP.revealTurn({ conversation_id: 'cA', turn_id: 't-late' }), false, 'not drawn: waiting');
+  bus.emit('chat:drawn', { conversationId: 'cA', turnIds: ['t1', 't2'] });
+  const fake = doc.createElement('article');
+  fake.className = 'ct-turn';
+  fake.dataset.turnId = 't-late';
+  $('chat-stream').appendChild(fake);
+  try {
+    bus.emit('chat:drawn', { conversationId: 'cA', turnIds: ['t1', 't-late'] });
+    await settle();
+  } finally {
+    fake.remove();
+  }
+  await settle();
+  assert.equal(shell.scrolls.length, at, 'shell.scrolls gains no entry');
+  // A later chat:open of another view ends a waiting reveal too.
+  assert.equal(CP.revealTurn({ conversation_id: 'cA', turn_id: 't-later' }), false);
+  bus.emit('chat:open', { view: 'chat' });
+  await settle();
+  const fake2 = doc.createElement('article');
+  fake2.className = 'ct-turn';
+  fake2.dataset.turnId = 't-later';
+  $('chat-stream').appendChild(fake2);
+  try {
+    bus.emit('chat:drawn', { conversationId: 'cA', turnIds: ['t-later'] });
+    await settle();
+  } finally {
+    fake2.remove();
+  }
+  await settle();
+  assert.equal(shell.scrolls.length, at, 'still none');
 });
 
 test('Q4: pins whose conversation left the mirror: one ⌘K row \'Chat pins no longer in a chat (2)\' opening the list; none, no row', async () => {
@@ -821,6 +914,7 @@ test('source: no element id, no state literal outside the vocabulary, overlay ex
   assert.ok(!/createTreeWalker|SHOW_TEXT|nextNode\(/.test(code), 'no runs walker of its own: the offsets are anchors.resolveSource');
   assert.ok(/anchors\.resolveSource\(/.test(code) && /sourceMap\(text, \{ flavor: 'chat' \}\)/.test(code));
   assert.ok(!/\bsetInterval\(|\bsetTimeout\(|requestAnimationFrame\(/.test(code), 'no timer');
+  assert.ok(!/\bmarks\b/.test(code), 'no `marks` Set: draw() keeps no detached marker div (K.2-177 g2)');
   assert.ok(!/\bfetch\(/.test(code), 'every request through http.js');
   const serverFiles = [];
   const walk = (d) => {

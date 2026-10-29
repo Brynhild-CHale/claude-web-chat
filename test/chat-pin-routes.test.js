@@ -332,6 +332,11 @@ test('chat pins through the element routes, end to end', { timeout: 180000 }, as
     const r = await none('POST', '/api/elements', { type: 'chat-comment', anchor: { kind: 'turn', turn_id: 'cp-1' }, payload: { text: 'x' } });
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.equal(r.body.error, 'mirror unavailable');
+    // A fault inside a kind's impl (chat-anchors.js answers {unavailable, rule: 'error'}): the mirror's, 503 — never 404 (K.2-177 g1).
+    const faulty = await spyApp(t, w, { ...spy, recordAnchor: async () => ({ unavailable: true, rule: 'error' }) });
+    const f = await faulty('POST', '/api/elements', { type: 'chat-comment', anchor: { kind: 'turn', turn_id: 'cp-1' }, payload: { text: 'x' } });
+    assert.equal(f.status, 503, JSON.stringify(f.body));
+    assert.equal(f.body.error, 'mirror unavailable');
   });
 
   await t.test('served states: a pin on a turn the mirror never had is unavailable, its quote kept', async () => {

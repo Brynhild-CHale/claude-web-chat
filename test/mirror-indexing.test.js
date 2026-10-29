@@ -504,3 +504,44 @@ test('GET /api/mirror/turns/:turnId of a turn the budget unloaded carries indexi
   assert.equal(r.body.turn.id, 'u-2', 'the turn, once parsed again');
   assert.ok(!('indexing' in r.body));
 });
+
+test('the bound is the route\'s alone (K.2-164): mod resumeCheck on a turn the budget unloaded waits for the parse past the bound and refuses no \'unknown\', while GET /api/mirror/turns/:turnId stays bounded', async (t) => {
+  const { installModControl } = require('../lib/server/control/mod');
+  const w = world(t, { nodes: 1 });
+  const [a, b] = [sid(1, 8), sid(2, 8)];
+  const at = Date.now() - 3 * DAY;
+  transcript(w, a, ['u-1', 'u-2'], at);
+  transcript(w, b, ['v-1'], at);
+  writeRegistry(w, [stored(w, { id: a, lastActivity: at }), stored(w, { id: b, lastActivity: at })]);
+  const h = boot(t, w, { parsedMax: 1 });
+  await h.mirror.start();
+  const get = await routes(t, h.mirror);
+  assert.deepEqual(await h.ids(a), ['u-1', 'u-2']);
+  assert.deepEqual(await h.ids(b), ['v-1']);
+  assert.deepEqual(h.mirror.snapshot({}).diagnostics.lazy, { listed: 1, parsed: 1, indexing: 0 }, 'a unloaded at parsedMax 1');
+
+  // The control domain's resume row, as the daemon installs it (the experimental
+  // flag on, a fork seam present, no mod attached).
+  const actions = new Map();
+  const control = { action: (name, spec) => { actions.set(name, spec); return () => {}; } };
+  const off = installModControl(control, { mirror: h.mirror, forkTurn: async () => ({}), env: { WEB_CHAT_REWIND_IN_PLACE: '1' } });
+  t.after(() => { if (off && typeof off.remove === 'function') off.remove(); });
+  const resume = actions.get('resume');
+  assert.ok(resume && typeof resume.check === 'function', 'the resume row');
+
+  const release = h.store.hold(a);
+  t.after(release);
+  const checked = resume.check({ turn_id: 'u-2' });
+  // The route's read of the same turn, meanwhile, answers indexing at the bound.
+  const r = await get('/api/mirror/turns/u-2');
+  assert.deepEqual({ indexing: r.body.indexing, explain: r.body.explain }, { indexing: true, explain: EXPLAIN.indexing }, 'the route stays bounded');
+  await settle(BOUND_MS * 5);
+  let settled = false;
+  checked.then(() => { settled = true; });
+  await settle(20);
+  assert.equal(settled, false, 'resumeCheck still waits for the parse past the bound');
+  release();
+  const answer = await checked;
+  assert.ok(answer && answer.refused !== 'unknown', `no 'unknown' refusal: ${JSON.stringify(answer)}`);
+  assert.equal(answer.refused, 'no-mod', 'it got the turn and stopped at the next check (no mod attached)');
+});

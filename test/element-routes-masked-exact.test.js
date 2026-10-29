@@ -318,3 +318,27 @@ test('maskQuoteContext step 4: a plain redact leaves exact; a check that throws 
   assert.deepEqual(maskQuoteContext(clean, red), clean);
   assert.equal(quoteMasked({ quote: clean }), false);
 });
+
+// K.2-182 g10: a queue item quotes its pin's words as queued; served now.
+test('a shared pin queued, then its value learned: GET /api/events\' queue entry and GET /api/queue hold no fragment of it; the stored item is unchanged', async (t) => {
+  const d = await withServer(t);
+  const { api, anonApi, srv } = d;
+  const value = `wcqueue${crypto.randomBytes(12).toString('hex')}`;
+  const LEARNED = learned(value);
+  await ok(api.post('/api/render', { id: 'm-q', html: '<p class="lead">The pin names the token here.</p>' }), 'render');
+  const anchor = rangeIn('m-q', 'The pin names the token here.', 'the token');
+  const pin = (await ok(anonApi.post('/api/elements', { type: 'comment', anchor, payload: { text: `the pin names ${value}`, shared: true } }), 'pin')).element;
+  const queued = srv.state.queue.find((it) => it.kind === 'element' && (it.element_ids || [it.element_id]).includes(pin.id));
+  assert.ok(queued && JSON.stringify(queued).includes(value), 'precondition: the queued item quotes the value as written');
+  const ringBefore = (await ok(api.get('/api/events?since=0'), 'events before')).events.filter((e) => e.kind === 'queue');
+  assert.ok(ringBefore.some((e) => JSON.stringify(e).includes(value)), 'precondition: the ring\'s queue entry quotes it before it is learned');
+  await learn(d, value, pin.id);
+  const ring = (await ok(api.get('/api/events?since=0'), 'events')).events;
+  const entries = ring.filter((e) => e.kind === 'queue' && e.item);
+  assert.ok(entries.length >= 1, 'a queue entry');
+  for (const e of entries) noLeaks(e, LEARNED, `the queue entry ${e.id}`);
+  const q = await ok(api.get('/api/queue'), 'GET /api/queue');
+  assert.ok(q.items.some((it) => (it.element_ids || [it.element_id]).includes(pin.id)), 'the item is still queued');
+  noLeaks(q, LEARNED, 'GET /api/queue');
+  assert.ok(JSON.stringify(srv.state.queue).includes(value), 'the stored item is unchanged (masked at serve only)');
+});

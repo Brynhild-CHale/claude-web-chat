@@ -736,3 +736,30 @@ test('through the daemon: a no-process conversation cleaned across two withServe
   await waitUntil(() => marksOnDisk() === null, { ...WAIT, what: 'conversations.json loses S1' });
   assert.equal(fs.existsSync(p.mirrorIndex(S2)), false, 'S2\'s index deleted');
 });
+
+test('a failed save of the gone marks deletes nothing: the index waits for the next sweep, which marks, saves and deletes (K.2-181 g9)', async (t) => {
+  const fsjson = require('../lib/core/fsjson');
+  const w = world(t, { conversations: (ch) => [stored(S1, ch.slug)] });
+  const file = w.transcript(S1);
+  w.index(S1, ['t-a']);
+  fs.unlinkSync(file);
+  const real = fsjson.writeJsonAtomic;
+  let refused = 0;
+  fsjson.writeJsonAtomic = (f, ...rest) => {
+    if (path.resolve(String(f)) === path.resolve(w.p.mirrorConversations)) { refused += 1; throw new Error('disk full'); }
+    return real(f, ...rest);
+  };
+  t.after(() => { fsjson.writeJsonAtomic = real; });
+  const reg = w.make();
+  await reg.start();
+  assert.ok(refused >= 1, 'the save before the unlink was refused');
+  assert.deepEqual(w.has(S1, ['t-a']), { index: true, diffs: [true] }, 'nothing deleted');
+  assert.equal(w.cleanups().length, 0, 'no cleanup line');
+  assert.ok(reg.get(S1), 'the record stays');
+  assert.ok(reg.get(S1).sessions.every((s) => s.gone_at == null), 'no mark held in memory');
+  fsjson.writeJsonAtomic = real;
+  reg.sweepGone();
+  assert.deepEqual(w.has(S1, ['t-a']), { index: false, diffs: [false] }, 'the next sweep deletes them');
+  assert.equal(w.cleanups().length, 1);
+  assert.equal(reg.get(S1), null, 'and the record leaves (its only transcript gone)');
+});
