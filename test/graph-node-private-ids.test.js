@@ -25,7 +25,7 @@ const path = require('path');
 const { withServer, tmpRoot, commentBody } = require('../test-support/helpers');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths, projectPaths } = require('../lib/core/paths');
-const { putRef } = require('../lib/server/domain/element-refs');
+const { putRef, refsOf, setRefs } = require('../lib/server/domain/element-refs');
 const client = require('../lib/client');
 
 const TUNNEL = Object.freeze({
@@ -40,6 +40,9 @@ const RANGE = { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefi
 const LOC = { mount: 'm1', selector: 'p', text: 'p', ordinal: 0 };
 // An element reference the log has no record of (fail closed).
 const UNREAD = 'h999@1';
+// An entry element-refs keeps (a non-empty string holding an '@') that parsePin
+// cannot read: no id@v at all, so it is dropped too (fail closed).
+const UNPARSED = 'h998@01';
 
 async function ok(p, what) {
   const r = await p;
@@ -78,12 +81,13 @@ async function boot(t) {
     // record): put on the live surface as element-refs puts one, so the
     // commit carries it in node.elements.
     putRef(d.srv.state, 'h999', 1);
+    setRefs(d.srv.state, [...refsOf(d.srv.state), UNPARSED]);
     await ok(d.api.post('/api/turn-begin', { message: 'u584 node' }), 'turn-begin');
     d.nodeId = (await ok(d.api.post('/api/turn-end', { author: 'claude', summary: 'u584 node' }), 'turn-end')).node_id;
     assert.ok(d.nodeId, `${level}: a node was committed`);
     d.stored = fs.readFileSync(nodeFile(d.root, d.nodeId), 'utf8');
     const file = JSON.parse(d.stored);
-    for (const ref of [`${d.hShared}@1`, `${d.hPrivate}@1`, UNREAD]) {
+    for (const ref of [`${d.hShared}@1`, `${d.hPrivate}@1`, UNREAD, UNPARSED]) {
       assert.ok(file.elements.includes(ref), `${level}: precondition: the node carries ${ref} (${JSON.stringify(file.elements)})`);
     }
     out[level] = d;
@@ -110,6 +114,7 @@ test('GET /api/graph/node/:id: no id@v of a private highlight (nor one the log c
       assert.ok(!carriesRef(r.body, d.hPrivate), `${level} ${who}: the private highlight's id@v is nowhere in the body`);
       assert.ok(!textOf(r.body).includes(`"${d.hPrivate}"`), `${level} ${who}: nor its bare id`);
       assert.ok(!textOf(r.body).includes(UNREAD), `${level} ${who}: a reference the log cannot read is dropped (fail closed)`);
+      assert.ok(!textOf(r.body).includes(UNPARSED), `${level} ${who}: an entry parsePin cannot read is dropped (fail closed)`);
       assert.deepStrictEqual(r.body.elements, [`${d.hShared}@1`], `${level} ${who}: the shared highlight's id@v is kept`);
       // comments[] and lean_elements keep their own projection (dropPrivate):
       // the private pin nulled, the shared one as the local browser has it.
@@ -128,7 +133,7 @@ test('GET /preview/node/:id: the document holds no id@v of a private highlight (
     d.level = level;
     const bp = await d.anonApi.get(`/preview/node/${d.nodeId}`);
     assert.equal(bp.status, 200, `${level}: browser preview`);
-    for (const ref of [`${d.hShared}@1`, `${d.hPrivate}@1`, UNREAD]) {
+    for (const ref of [`${d.hShared}@1`, `${d.hPrivate}@1`, UNREAD, UNPARSED]) {
       assert.ok(bp.text.includes(`"${ref}"`), `${level}: the local browser's document keeps ${ref}`);
     }
     for (const [who, headers] of readers(d)) {
@@ -138,6 +143,7 @@ test('GET /preview/node/:id: the document holds no id@v of a private highlight (
       assert.ok(html.includes(`"${d.hShared}@1"`), `${level} ${who} preview: the shared highlight's id@v is kept`);
       assert.ok(!carriesRef(html, d.hPrivate), `${level} ${who} preview: the private highlight's id@v is nowhere in the document`);
       assert.ok(!html.includes(UNREAD), `${level} ${who} preview: a reference the log cannot read is dropped (fail closed)`);
+      assert.ok(!html.includes(UNPARSED), `${level} ${who} preview: an entry parsePin cannot read is dropped (fail closed)`);
     }
     assert.equal(fs.readFileSync(nodeFile(d.root, d.nodeId), 'utf8'), d.stored, `${level}: the node file is never rewritten`);
   }
