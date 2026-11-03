@@ -14,7 +14,9 @@
 //     target resizes at three widths (1,280, 900 and 390 px) the marker
 //     follows and ctx.box reads the new rect, with no second draw call;
 //   - a target half outside the well: the marker keeps the target's rect and
-//     is clipped by its inset; wholly outside: not drawn (clipped);
+//     is clipped by its inset, and a displayed frame over the clipped-away
+//     part only hides nothing (the rule reads the painted box); wholly
+//     outside: not drawn (clipped);
 //   - a displayed iframe overlapping the target: not drawn (framed,
 //     stats('page').frame_hidden 1) — never drawn over a frame;
 //   - a glyph type's marker over the same fixture is byte-identical with and
@@ -184,6 +186,7 @@ test('a place:\'box\' marker is its svg target\'s rect, and follows a resize at 
 test('a target half outside the well is clipped by its inset; wholly outside, it is not drawn', async () => {
   const log = [];
   const off = boxType('scribble', log);
+  const edgeFrame = W.document.createElement('iframe');
   try {
     // Half above the well's top edge (the well clips at WELL_TOP; the host is
     // given room above it so the well is the clip that bites).
@@ -195,6 +198,16 @@ test('a target half outside the well is clipped by its inset; wholly outside, it
     assert.deepStrictEqual([px(m.style.left), px(m.style.top), px(m.style.width), px(m.style.height)], [48, WELL_TOP - 50, 200, 100],
       'the marker keeps the whole target rect');
     assert.equal(m.style.clipPath, 'inset(50px 0px 0px 0px)', 'the part above the well is inset away');
+    // A displayed frame over the clipped-away part only (above the well) meets
+    // the target's rect but not its painted box: the box is still drawn (the
+    // never-draw rule reads the painted box, as the glyph's does).
+    W.document.body.appendChild(edgeFrame);
+    rectFns.set(edgeFrame, () => ({ left: 48, top: 0, width: 200, height: WELL_TOP - 10 }));
+    ov.requestDraw();
+    flush();
+    assert.ok(shown(m), 'a frame over the clipped-away part only hides nothing');
+    assert.equal(ov.stats('page').frame_hidden, 0, 'not counted frame_hidden');
+    edgeFrame.remove();
     // Past the well's right edge by half: inset from the right.
     geo.svg = () => ({ left: vw() - 100, top: WELL_TOP + 300, width: 200, height: 100 });
     rectFns.set(M.itemEl(W.document, 'box-pane').el, () => ({ left: 32, top: 0, width: vw() + 400, height: 900 }));
@@ -211,6 +224,8 @@ test('a target half outside the well is clipped by its inset; wholly outside, it
     assert.deepStrictEqual([ov.stats().clipped, ov.stats().drawn], [1, 0], 'counted clipped');
     assert.equal(log.length, 1, 'the draw ran once, at its first drawn placement');
   } finally {
+    edgeFrame.remove();
+    rectFns.delete(edgeFrame);
     geo.svg = null;
     rectFns.set(M.itemEl(W.document, 'box-pane').el, hostBox);
     rectFns.set(W.document.getElementById('main'), mainBox);
