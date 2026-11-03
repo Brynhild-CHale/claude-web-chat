@@ -43,7 +43,9 @@ const { withServer, commentBody } = require('../test-support/helpers');
 const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'anchors', 'element-cases.json'), 'utf8'));
 const FROZEN = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'anchors', 'step2-answers.json'), 'utf8'));
 // The kind-sets a document copy can be cut to, closed under KIND_SECTIONS.
-const KIND_SETS = [['element'], ['element', 'range'], ['element', 'range', 'source']];
+const KIND_SETS = [['element'], ['element', 'point'], ['element', 'range'], ['element', 'range', 'source']];
+// Every resolver kind, the whole factory: KIND_SECTIONS' keys, sorted.
+const ALL_KINDS = ['element', 'point', 'range', 'source'];
 const RUNTIME = fs.readFileSync(path.join(PUBLIC_DIR, 'mount-runtime.js'), 'utf8');
 const FLAGS = ['gate', 'tiebreak', 'head_floor', 'ordinal'];
 // The text the factory's IIFE opens its factory with — one per copy in a document.
@@ -74,7 +76,7 @@ test('the served module exposes the api: record, resolve, restamp, index, instal
   const mod = await importSource(anchors.browserModuleSource());
   for (const n of ['record', 'resolve', 'restamp', 'index', 'install',
     'resolveAll', 'invalidate', 'watch', 'recordRange', 'resolveRange', 'recordSource', 'resolveSource',
-    'quoteText', 'quoteOf']) {
+    'quoteText', 'quoteOf', 'targetFrame', 'recordPoint', 'resolvePoint', 'pointAt']) {
     assert.equal(typeof mod[n], 'function', n);
   }
   assert.equal(typeof mod.default.resolve, 'function');
@@ -108,7 +110,7 @@ test('anchors-src: no work at require time, then memoised', () => {
 });
 
 test('anchors-src: compacted — no whole-line comment, blank line or indentation; no script, style or comment opener', () => {
-  assert.strictEqual(anchorsSrc.source(), anchorsSrc.source({ kinds: ['element', 'range', 'source'] }), 'no argument: every kind');
+  assert.strictEqual(anchorsSrc.source(), anchorsSrc.source({ kinds: ALL_KINDS }), 'no argument: every kind');
   for (const kinds of [undefined, ...KIND_SETS]) {
     const src = anchorsSrc.source(kinds && { kinds });
     assert.ok(src.length < anchors.documentSource(kinds && { kinds }).length, 'smaller than the full copy');
@@ -192,12 +194,12 @@ test('anchors-src: installs window.__wcMount.anchor after the runtime, and answe
 // ── the per-kind cut (U307, PLAN.md 2A.7) ────────────────────────────────
 
 // The factory's text by section, cut at its banners as documentSource cuts it.
-const SECTIONS = ['element', 'resolveAll', 'range', 'source'];
+const SECTIONS = ['element', 'resolveAll', 'range', 'source', 'point'];
 function factorySections() {
   const src = anchors.createAnchors.toString();
   const at = SECTIONS.map((n) => src.indexOf(`  // ── ${n} ──\n`));
   at.push(src.indexOf('\n  var api = {'));
-  const out = { tail: src.slice(at[4]) };
+  const out = { tail: src.slice(at[SECTIONS.length]) };
   SECTIONS.forEach((n, k) => { out[n] = src.slice(at[k], at[k + 1]); });
   return out;
 }
@@ -209,11 +211,16 @@ const declsOf = (text) => [...text.matchAll(/^ {2}(?:function|var) ([A-Za-z_$][\
 // isRange, which asks `typeof rangeIn === 'function'` (both are the range
 // section's, so they are present or absent together).
 const RANGE_ARM = { section: 'resolveAll', from: 'range', names: ['rangeIn', 'textTable'], guard: "function isRange(rec) { return !!rec && rec.kind === 'range' && typeof rangeIn === 'function'; }" };
+// And resolve()'s point arm (4C.1): the element section reaches resolvePoint
+// only through isPoint, which asks `typeof resolvePoint === 'function'`.
+const POINT_ARM = { section: 'element', from: 'point', names: ['resolvePoint'], guard: "function isPoint(rec) { return !!rec && rec.kind === 'point' && typeof resolvePoint === 'function'; }" };
+const ARMS = [RANGE_ARM, POINT_ARM];
 
 test('KIND_SECTIONS: frozen, and the closure of the factory\'s cross-section references', () => {
   assert.ok(Object.isFrozen(anchors.KIND_SECTIONS));
   assert.deepStrictEqual(JSON.parse(JSON.stringify(anchors.KIND_SECTIONS)), {
     element: ['element', 'resolveAll'],
+    point: ['element', 'resolveAll', 'point'],
     range: ['element', 'resolveAll', 'range'],
     source: ['element', 'resolveAll', 'range', 'source'],
   });
@@ -222,15 +229,18 @@ test('KIND_SECTIONS: frozen, and the closure of the factory\'s cross-section ref
   // Each kept section (and the api tail) names an omitted section's declaration
   // only under `typeof`: nothing in a cut copy reaches a name it does not hold.
   const sec = factorySections();
-  assert.ok(sec.resolveAll.includes(RANGE_ARM.guard), 'the range arm asks for its section');
-  for (const n of RANGE_ARM.names) assert.ok(declsOf(sec.range).includes(n), `${n} is the range section's`);
+  for (const arm of ARMS) {
+    assert.ok(sec[arm.section].includes(arm.guard), `the ${arm.from} arm asks for its section`);
+    for (const n of arm.names) assert.ok(declsOf(sec[arm.from]).includes(n), `${n} is the ${arm.from} section's`);
+  }
+  assert.ok(sec.element.includes('    if (isPoint(rec)) return resolvePoint(root, rec, cfg, ix);\n'), 'resolve() routes a point through isPoint');
   for (const [kind, kept] of Object.entries(anchors.KIND_SECTIONS)) {
     const omitted = SECTIONS.filter((n) => !kept.includes(n));
     const names = omitted.flatMap((n) => declsOf(sec[n]));
     for (const part of [...kept, 'tail']) {
       const code = codeOf(sec[part]);
       for (const name of names) {
-        if (part === RANGE_ARM.section && RANGE_ARM.names.includes(name)) continue;
+        if (ARMS.some((arm) => part === arm.section && arm.names.includes(name))) continue;
         // Allowed: `typeof name === 'function' ? name : undefined`, a bare
         // `typeof name`, and `name:` as an object key; nothing else.
         const rest = code
@@ -245,14 +255,18 @@ test('KIND_SECTIONS: frozen, and the closure of the factory\'s cross-section ref
 });
 
 test('documentSource({kinds}): each kind-set evaluates in jsdom and installs; an omitted section\'s api entries are undefined', () => {
-  assert.strictEqual(anchors.documentSource(), anchors.documentSource({ kinds: ['source', 'element', 'range'] }), 'every kind is the whole copy');
+  assert.strictEqual(anchors.documentSource(), anchors.documentSource({ kinds: ['source', 'point', 'element', 'range'] }), 'every kind is the whole copy');
+  assert.strictEqual(anchors.documentSource({ kinds: ['point'] }), anchors.documentSource({ kinds: ['element', 'point'] }), 'point closes over element');
   assert.strictEqual(anchors.documentSource({ kinds: ['range'] }), anchors.documentSource({ kinds: ['element', 'range'] }), 'range closes over element');
   assert.strictEqual(anchors.documentSource({ kinds: [] }), '', 'no kind: nothing');
   assert.throws(() => anchors.documentSource({ kinds: ['page'] }), /no resolver kind page/);
+  const POINT_OFF = { targetFrame: false, recordPoint: false, resolvePoint: false, pointAt: false };
   const want = {
-    element: { recordRange: false, resolveRange: false, recordSource: false, resolveSource: false, quoteText: false, quoteOf: false },
-    range: { recordRange: true, resolveRange: true, recordSource: false, resolveSource: false, quoteText: true, quoteOf: true },
-    source: { recordRange: true, resolveRange: true, recordSource: true, resolveSource: true, quoteText: true, quoteOf: true },
+    element: { recordRange: false, resolveRange: false, recordSource: false, resolveSource: false, quoteText: false, quoteOf: false, ...POINT_OFF },
+    point: { recordRange: false, resolveRange: false, recordSource: false, resolveSource: false, quoteText: false, quoteOf: false,
+      targetFrame: true, recordPoint: true, resolvePoint: true, pointAt: true },
+    range: { recordRange: true, resolveRange: true, recordSource: false, resolveSource: false, quoteText: true, quoteOf: true, ...POINT_OFF },
+    source: { recordRange: true, resolveRange: true, recordSource: true, resolveSource: true, quoteText: true, quoteOf: true, ...POINT_OFF },
   };
   for (const kinds of KIND_SETS) {
     const top = kinds[kinds.length - 1];
@@ -269,6 +283,7 @@ test('documentSource({kinds}): each kind-set evaluates in jsdom and installs; an
       // Sections are whole or absent: a cut copy holds only its kinds' bodies.
       assert.equal(src.includes('function rangeIn('), kinds.includes('range'), `${kinds}: the range section`);
       assert.equal(src.includes('function resolveSource('), kinds.includes('source'), `${kinds}: the source section`);
+      assert.equal(src.includes('function resolvePoint('), kinds.includes('point'), `${kinds}: the point section`);
     }
   }
 });
@@ -451,9 +466,15 @@ test('the whole document copy, its compacted copy, the element kind\'s and the b
 // with the whole-line comments above it). Everything else is byte-identical to
 // ae/int 39b52f8's createAnchors.toString(): the same masks over 39b52f8's
 // text give this digest (4633fc65… was the digest with U307's masks alone).
+// U531 (4C.1) adds three masks and leaves the digest as it was: the point
+// section (its banner to the api object's head comment), isPoint (with the
+// whole-line comments above it) and resolve()'s point arm.
 const UNCHANGED_SHA256 = 'e0701d341e8ffd9e0898b6b501d5d132ba6b6043f16dbd35bc74d1b0b030569b';
 const maskEdits = (t) => t
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}var api = \{[\s\S]*?\n {2}\};/, '\n  /* api */')
+  .replace(/\n {2}\/\/ ── point ──\n[\s\S]*?\n(?=\n {2}\/\* api \*\/)/, '')
+  .replace(/(\n {2}\/\/[^\n]*)*\n {2}function isPoint\(rec\) \{[^\n]*/, '')
+  .replace(/(\n {4}\/\/[^\n]*)*\n {4}if \(isPoint\(rec\)\) return resolvePoint\(root, rec, cfg, ix\);/, '')
   .replace(/(\n {2}\/\/[^\n]*)*\n {2}function isRange\(rec\) \{[^\n]*/, '\n  /* isRange */')
   .replace(/\n {4}source_heading: true,/, '')
   .replace(/(\n {2}\/\/ ── source ──)(\n {2}\/\/ [^\n]*)*/, '$1\n  /* source header */')
@@ -491,10 +512,12 @@ const KIND_FIXTURES = [
   ['a ref, kindOf source', { elements: ['h3@1'] }, { kindOf: () => 'source' }, ['element', 'range', 'source']],
   ['a source-kind copy', { comments: [{ id: 'c5', anchor: { v: 1, kind: 'source', md: 'md-1' } }] }, {}, ['element', 'range', 'source']],
   ['a range-kind copy', { comments: [{ id: 'c6', anchor: { v: 1, kind: 'range', mount: 'm1' } }] }, {}, ['element', 'range']],
-  ['refs with no kindOf', { elements: ['h3@1', 'c1@1'] }, {}, ['element', 'range', 'source']],
-  ['a ref kindOf cannot answer', { elements: ['h3@1'] }, { kindOf: () => null }, ['element', 'range', 'source']],
+  ['refs with no kindOf', { elements: ['h3@1', 'c1@1'] }, {}, ALL_KINDS],
+  ['a ref kindOf cannot answer', { elements: ['h3@1'] }, { kindOf: () => null }, ALL_KINDS],
   ['a box grab only (page anchor)', { elements: ['g2@1'] }, { kindOf: () => 'page' }, []],
-  ['a point anchor', { elements: ['g2@1'] }, { kindOf: () => 'point' }, []],
+  ['a point anchor', { elements: ['g2@1'] }, { kindOf: () => 'point' }, ['element', 'point']],
+  ['a point-kind copy', { comments: [{ id: 'c7', anchor: { v: 1, kind: 'point', mount: 'm1' } }] }, {}, ['element', 'point']],
+  ['a point beside a range copy', { comments: [{ id: 'c8', anchor: { v: 1, kind: 'range', mount: 'm1' } }], elements: ['p1@1'] }, { kindOf: () => 'point' }, ['element', 'point', 'range']],
   ['a box grab beside a comment', { comments: [LEGACY], elements: ['g2@1'] }, { kindOf: () => 'page' }, ['element']],
   ['elements: []', { elements: [] }, {}, []],
 ];
@@ -661,7 +684,7 @@ test('export: buildExportHtml splices the factory for a pinned node and not for 
 
 // A highlight's node: one id@v ref (E-STORE (a)); no kindOf is bound yet, so
 // every resolver kind (never under-spliced).
-const HIGHLIGHT_KINDS = ['element', 'range', 'source'];
+const HIGHLIGHT_KINDS = ALL_KINDS;
 
 test('replay: one script per distinct kind-set rides as payload data; each step names its key and its filled frame is its node\'s preview', async () => {
   const step = (id, mounts, extra) => ({
@@ -682,9 +705,9 @@ test('replay: one script per distinct kind-set rides as payload data; each step 
   for (const piece of payload.frame) assert.equal(count(piece, MARK), 0, 'no template piece carries the factory');
   assert.deepStrictEqual(payload.anchors, {
     element: anchorsSrc.scriptElement({ kinds: ['element'] }),
-    'element+range+source': anchorsSrc.scriptElement({ kinds: HIGHLIGHT_KINDS }),
+    'element+point+range+source': anchorsSrc.scriptElement({ kinds: HIGHLIGHT_KINDS }),
   }, 'each distinct kind-set\'s <script> once, as data, keyed by its sorted kinds');
-  assert.deepStrictEqual(payload.steps.map((s) => s.anchors), ['', 'element', 'element+range+source']);
+  assert.deepStrictEqual(payload.steps.map((s) => s.anchors), ['', 'element', 'element+point+range+source']);
   for (const s of payload.steps) {
     assert.equal(count(s.node, MARK), 0, 'no step carries its own copy');
     assert.equal(JSON.parse(s.node).comments, undefined, 'the frame node carries no pin');
@@ -775,7 +798,7 @@ test('assembleExport: three <script> tags and no factory by default; with elemen
   // true: every kind (the whole factory, as before the per-kind splice).
   const html = assembleExport({ ...input, elements: true });
   assert.equal(count(html, '<script'), 4, 'the payload, the runtime, the resolver, the shell');
-  assertSpliced(html, 'export', ['element', 'range', 'source']);
+  assertSpliced(html, 'export', ALL_KINDS);
   assert.strictEqual(html.replace(anchorsSrc.scriptElement(), ''), bare, 'the one script element is the only difference');
   const w = scripted(html);
   resolvesExact(w, 'm1', 'li:nth-child(2) > b', 'export');
@@ -820,8 +843,14 @@ test('size (reported, not gated): the compacted factory and its share of a refer
   // factory 36,781 bytes before, 37,403 after, 622 bytes; set to 37,570 by
   // U403c (K.2-176/177), 36,864 plus the rule's cost as it now is (one linear
   // pass, and only for a pin made on a heading): 37,403 bytes before U403c,
-  // 37,487 after, the rule 706 bytes over the rule-less 36,781. Still a
+  // 37,487 after, the rule 706 bytes over the rule-less 36,781. Raised to
+  // 40,392 by U531 (4C.1, the point section; C-05-1 and C-2C-2's tripwire) by
+  // exactly its measured cost: the compacted factory 37,487 bytes before,
+  // 40,309 after, 2,822 bytes (the point section 2,368; the element section's
+  // isPoint and resolve() arm with the api's four entries 454, which is also
+  // what the element-only cut, a comment-only document, gains: 26,566 bytes
+  // before, 27,020 after; the element+point cut is 29,388). Still a
   // tripwire against an accidental large addition, on the WHOLE factory
   // (every kind); B3's 5% share is the gate's measurement.
-  assert.ok(len < 37570, `the compacted factory is ${len} bytes — under the 37,570-byte tripwire`);
+  assert.ok(len < 40392, `the compacted factory is ${len} bytes — under the 40,392-byte tripwire`);
 });
