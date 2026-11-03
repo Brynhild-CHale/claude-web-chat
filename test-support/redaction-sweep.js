@@ -339,6 +339,9 @@ const FILL = {
   '/api/captures/:id/simplified': () => ['/api/captures/sweep-none/simplified'],
   // A box grab's picture (U328b): PNG bytes, no text of its own; the scenario draws none.
   '/api/elements/:id/grab': () => ['/api/elements/g-sweep-none/grab'],
+  // A stroke group's picture (U564): PNG bytes and the strokes' numbers, no
+  // text of its own; the scenario draws no stroke, so both answer 404.
+  '/api/elements/:id/picture': () => ['/api/elements/p-sweep-none/picture', '/api/elements/p-sweep-none/picture?as=json'],
   // A listed tool's icon (U337): the built-in comment's SVG files, no text of their own.
   '/api/toolbar/icon/:type': () => ['/api/toolbar/icon/comment', '/api/toolbar/icon/comment?mode=dark'],
   // A listed plug-in type's draw module and assets (U511): a reviewed pack's
