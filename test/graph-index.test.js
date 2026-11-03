@@ -185,7 +185,7 @@ test('graph index: a first boot hashes every key and writes the index after the 
   const graphBefore = fs.readdirSync(graphDir).sort();
 
   assert.deepEqual(s1.srv.graph.loadReport.index,
-    { present: false, reason: 'absent', entries: 0, taken: 0, hashed: 5 });
+    { present: false, reason: 'absent', entries: 0, taken: 0, hashed: 5, headers: 0, read_whole: 5 });
   const indexFile = projectPaths(s1.root).graphIndex;
   assert.equal(path.dirname(indexFile), path.join(s1.root, '.web-chat'), 'the index sits in .web-chat/, outside graph/');
   await waitUntil(() => fs.existsSync(indexFile), { what: 'the after-listen index write' });
@@ -213,7 +213,7 @@ test('graph index: a first boot hashes every key and writes the index after the 
   await s1.graceful(); await s1.stop();
   const s2 = await withServer(t, { root: s1.root });
   assert.deepEqual(s2.srv.graph.loadReport.index,
-    { present: true, reason: null, entries: 5, taken: 5, hashed: 0 });
+    { present: true, reason: null, entries: 5, taken: 5, hashed: 0, headers: 5, read_whole: 0 });
   assert.deepEqual(new Map(s2.srv.graph.viewKeys), keys1, 'the stored keys, entry for entry');
   assert.deepEqual(new Map(s2.srv.graph.viewKeys), fullRehash(s2.srv.graph), 'and they equal a full re-hash');
   const g2 = await s2.api.get('/api/graph');
@@ -238,7 +238,7 @@ test('graph index: a bookmark rewrites the node; its new stat reaches the index 
   await s1.graceful(); await s1.stop();
   const s2 = await withServer(t, { root: s1.root });
   assert.deepEqual(s2.srv.graph.loadReport.index,
-    { present: true, reason: null, entries: 5, taken: 4, hashed: 1 }, 'the bookmarked node is read whole');
+    { present: true, reason: null, entries: 5, taken: 4, hashed: 1, headers: 4, read_whole: 1 }, 'the bookmarked node is read whole');
   assert.equal(s2.srv.graph.viewKeys.get('n1'), s2.srv.graph.viewKeys.get('n0'), 'the bookmark is not a projected field');
   await waitUntil(() => readIndex(s2.root).nodes['n1.json'].size === stBookmarked.size, { what: 'the refreshed entry' });
   const e = readIndex(s2.root).nodes['n1.json'];
@@ -248,7 +248,7 @@ test('graph index: a bookmark rewrites the node; its new stat reaches the index 
   await s2.graceful(); await s2.stop();
   const s3 = await withServer(t, { root: s1.root });
   assert.deepEqual(s3.srv.graph.loadReport.index,
-    { present: true, reason: null, entries: 5, taken: 5, hashed: 0 });
+    { present: true, reason: null, entries: 5, taken: 5, hashed: 0, headers: 5, read_whole: 0 });
   const n1 = (await s3.api.get('/api/graph')).json.nodes.find((n) => n.id === 'n1');
   assert.equal(n1.collapsed, undefined, 'still drawn: bookmarked');
   assert.equal(n1.bookmarked, true);
@@ -274,7 +274,7 @@ test('graph index: a different pv or v, a torn or non-object index only costs th
         fs.writeFileSync(projectPaths(root).graphIndex, bytes(good(root)));
       },
     });
-    assert.deepEqual(s.srv.graph.loadReport.index, { ...expect, taken: 0, hashed: 5 }, `${name}: every key hashed`);
+    assert.deepEqual(s.srv.graph.loadReport.index, { ...expect, taken: 0, hashed: 5, headers: 0, read_whole: 5 }, `${name}: every key hashed`);
     assert.deepEqual(new Map(s.srv.graph.viewKeys), fullRehash(s.srv.graph), `${name}: the keys are right`);
     assert.equal((await s.api.get('/api/graph')).status, 200, `${name}: the boot did not fail`);
     await waitUntil(() => {
@@ -297,7 +297,7 @@ test('graph index: a stat mismatch re-hashes that one node; a removed file loses
   assert.equal(g0.flushIndex(), false, 'nothing changed since: no write');
 
   const clean = loadGraph(root);
-  assert.deepEqual(clean.loadReport.index, { present: true, reason: null, entries: 5, taken: 5, hashed: 0 });
+  assert.deepEqual(clean.loadReport.index, { present: true, reason: null, entries: 5, taken: 5, hashed: 0, headers: 5, read_whole: 0 });
   assert.equal(clean.flushIndex(), false, 'every entry taken as it was: the index is not dirty');
 
   // Touched: same bytes, mtime forward.
@@ -305,7 +305,7 @@ test('graph index: a stat mismatch re-hashes that one node; a removed file loses
   const later = new Date(PAST.getTime() + 60_000);
   fs.utimesSync(path.join(dir, 'n2.json'), later, later);
   const touched = loadGraph(root);
-  assert.deepEqual(touched.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 1 });
+  assert.deepEqual(touched.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 1, headers: 4, read_whole: 1 });
   assert.deepEqual(new Map(touched.viewKeys), fullRehash(touched));
   assert.equal(touched.flushIndex(), true, 'the hashed entry marks the index dirty');
   assert.equal(readIndex(root).nodes['n2.json'].mtime_ms, fs.statSync(path.join(dir, 'n2.json')).mtimeMs);
@@ -316,7 +316,7 @@ test('graph index: a stat mismatch re-hashes that one node; a removed file loses
   fs.writeFileSync(path.join(dir, 'n3.json'), JSON.stringify(n3, null, 2));
   fs.utimesSync(path.join(dir, 'n3.json'), PAST, PAST);
   const resized = loadGraph(root);
-  assert.deepEqual(resized.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 1 });
+  assert.deepEqual(resized.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 1, headers: 4, read_whole: 1 });
   assert.equal(resized.viewKeys.get('n3'), nodeViewKey(n3), 'the new bytes, not the stored key');
   assert.notEqual(resized.viewKeys.get('n3'), resized.viewKeys.get('n2'));
   assert.equal(resized.flushIndex(), true);
@@ -324,7 +324,7 @@ test('graph index: a stat mismatch re-hashes that one node; a removed file loses
   // Removed since the index was written.
   fs.rmSync(path.join(dir, 'n4.json'));
   const removed = loadGraph(root);
-  assert.deepEqual(removed.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 0 });
+  assert.deepEqual(removed.loadReport.index, { present: true, reason: null, entries: 5, taken: 4, hashed: 0, headers: 4, read_whole: 0 });
   assert.equal(removed.flushIndex(), true, 'a stale entry makes the index dirty');
   assert.deepEqual(Object.keys(readIndex(root).nodes).sort(), ['n0.json', 'n1.json', 'n2.json', 'n3.json']);
 });
@@ -338,7 +338,7 @@ test('graph index: an entry whose id disagrees with its node is not taken', (t) 
   idx.nodes['n3.json'].view_key = 'not a key';
   fs.writeFileSync(projectPaths(root).graphIndex, JSON.stringify(idx));
   const g = loadGraph(root);
-  assert.deepEqual(g.loadReport.index, { present: true, reason: null, entries: 5, taken: 3, hashed: 2 });
+  assert.deepEqual(g.loadReport.index, { present: true, reason: null, entries: 5, taken: 3, hashed: 2, headers: 3, read_whole: 2 });
   assert.deepEqual(new Map(g.viewKeys), fullRehash(g));
 });
 
@@ -372,7 +372,7 @@ test('graph index: writeNode and registerNode keep the entries current', (t) => 
   assert.equal(idx.nodes[newFile].view_key, g.viewKeys.get(newFile.replace(/\.json$/, '')), 'registerNode recorded its key');
 
   const next = loadGraph(root);
-  assert.deepEqual(next.loadReport.index, { present: true, reason: null, entries: 6, taken: 6, hashed: 0 });
+  assert.deepEqual(next.loadReport.index, { present: true, reason: null, entries: 6, taken: 6, hashed: 0, headers: 6, read_whole: 0 });
   assert.deepEqual(new Map(next.viewKeys), fullRehash(next));
 });
 
@@ -394,7 +394,7 @@ test('graph index: a preserveTimestamps copy of a primed project keeps every ent
   t.after(() => { try { fs.rmSync(kept, { recursive: true, force: true }); } catch {} });
   fs.cpSync(src, kept, { recursive: true, preserveTimestamps: true });
   const g = loadGraph(kept);
-  assert.deepEqual(g.loadReport.index, { present: true, reason: null, entries: 5, taken: 5, hashed: 0 },
+  assert.deepEqual(g.loadReport.index, { present: true, reason: null, entries: 5, taken: 5, hashed: 0, headers: 5, read_whole: 0 },
     `on ${process.version}`);
   assert.deepEqual(new Map(g.viewKeys), fullRehash(g));
 
@@ -408,7 +408,7 @@ test('graph index: a preserveTimestamps copy of a primed project keeps every ent
   t.after(() => { try { fs.rmSync(plain, { recursive: true, force: true }); } catch {} });
   fs.cpSync(src, plain, { recursive: true });
   const p = loadGraph(plain);
-  assert.deepEqual(p.loadReport.index, { present: true, reason: null, entries: 5, taken: 0, hashed: 5 });
+  assert.deepEqual(p.loadReport.index, { present: true, reason: null, entries: 5, taken: 0, hashed: 5, headers: 0, read_whole: 5 });
   assert.deepEqual(new Map(p.viewKeys), fullRehash(p));
   assert.equal(p.active, 'n4');
 });
