@@ -450,3 +450,35 @@ test('fieldEntries: the field table\'s walk as a list, the records kindsOf reads
   assert.deepStrictEqual(fieldEntries({ comments: 'no' }), []);
   assert.ok(kindsOf(node).length > 0, 'the same records kindsOf reads');
 });
+
+// U415e's documents' half: a value the redactor learns after the commit is in
+// no document — the draw fields come from the log's masked view, the anchors
+// through the read view — and the item whose pinned words held it is served
+// masked (state, visible, explain), which the document draws el-masked.
+test('a value learned after the commit: no fragment of it in the payload, and the item it touched rides masked', async (t) => {
+  const { waitUntil } = require('../test-support/helpers');
+  const { findLeaks } = require('../test-support/fake-secrets');
+  const d = await withServer(t);
+  const value = `wcdoc${crypto.randomBytes(12).toString('hex')}`;
+  const text = `Use ${value} for access to the staging host now.`;
+  await ok(d.api.post('/api/render', { id: 'pa', html: `<p>${text}</p>` }), 'render');
+  const at = text.indexOf(value) + 4;
+  const exact = `${value.slice(4)} for access`;
+  const range = { v: 1, kind: 'range', mount: 'pa', quote: { exact, prefix: text.slice(Math.max(0, at - 32), at), suffix: text.slice(at + exact.length, at + exact.length + 32) }, pos: { start: at, end: at + exact.length } };
+  const hl = (await post(d.api, { type: 'highlight', anchor: range, payload: { note: `see ${value}` } }, 'highlight')).element;
+  const probe = (await post(d.api, { type: 'comment', anchor: range, payload: { text: `names ${value}`, shared: true } }, 'comment')).pin;
+  const node = await commit(d.api, 'before the value is learned');
+  const learned = [{ id: 'learned', rule: 'known', secrets: [value] }];
+  const reader = readerOf(createAudience({ configFile: null }), REQ.browser);
+  assert.ok(findLeaks(JSON.stringify(build(d, node, reader)), learned).length > 0, 'precondition: the payload names the value before it is learned');
+  fs.writeFileSync(projectPaths(d.root).captureToken, `${value}\n`);
+  await waitUntil(() => !JSON.stringify(build(d, node, reader)).includes(value), { timeout: 6000, what: 'the redactor learned the value' });
+  const p = build(d, node, reader);
+  assert.equal(validatePayload(p), null, JSON.stringify(p));
+  assert.deepStrictEqual(findLeaks(JSON.stringify(p), learned), [], 'no fragment of the value');
+  for (const id of [hl.id, probe.id]) {
+    const it = p.items.find((x) => x.id === id);
+    assert.ok(it, `${id} rides`);
+    assert.equal(it.state, 'masked', `${id}: served masked`);
+  }
+});
