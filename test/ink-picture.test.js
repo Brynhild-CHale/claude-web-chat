@@ -461,6 +461,61 @@ test('inspect_capture: the picture\'s capture returns [text, image]; capture_id 
   assert.equal(calls.length, 1);
 });
 
+test('a member made private withdraws every picture showing it: the queued item\'s image is no longer the ready picture, the picture route answers no data and no private id, inspect_capture gives no image, and GET /api/captures names neither the member nor its count', async (t) => {
+  const b = await boot(t);
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  const mid = await b.post({ dx: 0.05 });
+  const last = await b.post({ dx: 0.1 });
+  await b.push();
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  assert.equal((await settled(srv, cap.id)).state, 'ready');
+  assert.deepEqual(cap.distilled.elements, [`${a.id}@1`, `${mid.id}@1`, `${last.id}@1`]);
+  assert.equal(elementItems(srv)[0].image.capture, cap.id);
+  assert.equal(elementItems(srv)[0].image.state, 'ready');
+  const pngFile = path.join(d.root, '.web-chat', 'captures', `${cap.id}.png`);
+  assert.ok(fs.existsSync(pngFile));
+
+  // The middle stroke is made private.
+  await ok(d.anonApi.patch(`/api/elements/${mid.id}`, { shared: false }), 'un-share the middle stroke');
+  await settle(10);
+  const privateRef = (text) => text.includes(`"${mid.id}"`) || new RegExp(`\\b${mid.id}@\\d`).test(text) || text.includes(`element:${mid.id}"`);
+
+  // (a) the queued item's image no longer names a ready picture.
+  const items = elementItems(srv);
+  assert.equal(items.length, 1, JSON.stringify(items));
+  assert.ok(!(items[0].image && items[0].image.state === 'ready' && items[0].image.capture === cap.id), JSON.stringify(items[0].image));
+  assert.ok(!items[0].element_ids.includes(mid.id), 'the private member left the item');
+  assert.ok(!fs.existsSync(pngFile), 'the PNG is deleted');
+
+  // (b) the picture route, through another member, answers no data and no private id.
+  const viaOther = await client.request(d.port, 'GET', `/api/elements/${last.id}/picture?as=json&capture=${cap.id}`);
+  assert.notEqual(viaOther.status, 200, JSON.stringify(viaOther.body));
+  assert.equal(viaOther.body.data, undefined, 'no PNG bytes');
+  assert.equal(viaOther.body.image.state, 'withdrawn');
+  assert.ok(!privateRef(JSON.stringify(viaOther.body)), JSON.stringify(viaOther.body));
+  const bytes = await client.request(d.port, 'GET', `/api/elements/${a.id}/picture?capture=${cap.id}`);
+  assert.equal(bytes.status, 404, 'no PNG through the first member either');
+
+  // (c) inspect_capture on the picture's capture: no image block.
+  const mcp = await launchMcp(t, { WEB_CHAT_PORT: String(d.port) });
+  const read = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: cap.id } });
+  assert.ok(!(read.content || []).some((c) => c.type === 'image'), 'no image block');
+  assert.ok(!privateRef(JSON.stringify(read)), JSON.stringify(read));
+
+  // (d) the capture list names neither the private member nor the group's count.
+  const listed = await client.request(d.port, 'GET', '/api/captures');
+  assert.equal(listed.status, 200);
+  const rec = listed.body.captures.find((c) => c.id === cap.id);
+  assert.ok(rec, 'the capture is still listed');
+  assert.ok(!privateRef(JSON.stringify(listed.body)), JSON.stringify(rec));
+  assert.deepEqual(rec.distilled.elements, [`${a.id}@1`, `${last.id}@1`]);
+  assert.equal(rec.distilled.describe, undefined, 'the describe (its count of 3 and extent) is gone');
+  assert.equal(rec.image.state, 'withdrawn');
+});
+
 test('inspect_capture: the url\'s element is read by the element log\'s own id test — a plug-in type\'s id as U513 mints it and a box grab\'s — and the description and inputSchema are 503b8f2f\'s', async (t) => {
   const b = await boot(t);
   const minted = await b.post({});
