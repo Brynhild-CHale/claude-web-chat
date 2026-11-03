@@ -48,7 +48,17 @@
 //     the pane's button before the pan) delivers its own pointerup or
 //     pointercancel to the pane, its moves and its click stopped, nothing
 //     created; a tool-routed finger's lift, and that of a finger landing on
-//     the button during the pan, stay the pan's.
+//     the button during the pan, stay the pan's;
+//   - the strokes input policy on a target (U515; annotation engine 4A.2; AD1,
+//     AD4, AJ5): any strokes tool armed (the box grab too), finger-draws off,
+//     sets html.strokes-armed, marks every .mount-host data-wc-strokes and
+//     has its shadow root take the strokes sheet once (adoptedStyleSheets
+//     stubbed: jsdom has none); a pane rendered while armed is marked; disarm
+//     clears every mark; a taps tool arms none; the sheet's rule gives an svg,
+//     an img, a canvas and a [data-fixed-aspect] in a pane touch-action none
+//     with selection and the callout off, a paragraph none of it, and app.css
+//     a light-DOM [data-fixed-aspect] the same; with the box grab armed and
+//     finger-draws off, two fingers from an svg in a pane scroll the well.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -372,6 +382,7 @@ test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and 
     '.chat-tab => none',
     '#main => manipulation',
     'html.finger-strokes #main => none',
+    'html.strokes-armed #main [data-fixed-aspect] => none',
   ]);
 });
 
@@ -748,4 +759,167 @@ test('the pan cancels a stroke through the overlay\'s cancelGesture and dispatch
   const src = fs.readFileSync(path.join(REPO, 'public/app/input-mode.js'), 'utf8');
   assert.match(src, /import \{[^}]*\bcancelGesture\b[^}]*\} from '\.\/overlay\.js'/);
   assert.doesNotMatch(src, /dispatchEvent\(|new (Pointer|Mouse|Touch)?Event\(/, 'no synthetic event a pane could see');
+});
+
+// ── the strokes input policy on a target (U515; annotation engine 4A.2) ──────
+// jsdom has no adoptedStyleSheets: a per-root stub, as highlight-chrome's.
+let adopted = null;
+function installAdopted() {
+  adopted = new WeakMap();
+  Object.defineProperty(W.ShadowRoot.prototype, 'adoptedStyleSheets', {
+    configurable: true, get() { return adopted.get(this) || []; }, set(v) { adopted.set(this, [...v]); },
+  });
+}
+function removeAdopted() {
+  delete W.ShadowRoot.prototype.adoptedStyleSheets;
+  adopted = null;
+}
+const strokesSheets = (root) => root.adoptedStyleSheets
+  .filter((sh) => [...sh.cssRules].some((r) => r.cssText.includes('data-wc-strokes')));
+const hosts = () => [...W.document.querySelectorAll('#main .mount-host')];
+const marked = () => hosts().filter((h) => h.hasAttribute('data-wc-strokes')).map((h) => h.dataset.mountId);
+const TARGETS_HTML = '<svg class="t-svg" viewBox="0 0 10 10"><rect class="t-rect" width="10" height="10"></rect></svg>'
+  + '<img class="t-img" alt="x"><canvas class="t-canvas"></canvas><div class="t-sheet" data-fixed-aspect><span class="t-in">s</span></div>'
+  + '<p class="t-p">prose</p>';
+async function targetsPane() {
+  if (!M.itemEl(W.document, 'imt1')) {
+    await shell.frame({ type: 'render', id: 'imt1', target: 'main', html: TARGETS_HTML, params: {}, gen: 1 });
+    await shell.tick();
+  }
+  return M.itemEl(W.document, 'imt1').el;
+}
+
+test('a strokes tool armed, finger-draws off: html.strokes-armed, every mount host marked and its root given the strokes sheet once; a pane rendered while armed is marked; disarm clears every mark; a taps tool arms none', async () => {
+  const html = W.document.documentElement;
+  installAdopted();
+  try {
+    ov.setArmed(null);
+    IM.setFingerDraws('off');
+    assert.equal(html.classList.contains('strokes-armed'), false);
+    assert.deepEqual(marked(), [], 'nothing marked while nothing is armed');
+    const paneDom = rootOf().innerHTML;
+    ov.setArmed('box-grab');
+    assert.equal(html.classList.contains('strokes-armed'), true, 'the box grab is a strokes tool (AJ5)');
+    assert.equal(html.classList.contains('finger-strokes'), false, 'finger-draws off: the well keeps its pan');
+    assert.equal(IM.strokesArmed(), true);
+    assert.equal(IM.fingerStrokes(), false);
+    assert.ok(hosts().length > 0);
+    assert.deepEqual(marked(), hosts().map((h) => h.dataset.mountId), 'every mount host carries data-wc-strokes');
+    for (const h of hosts()) assert.equal(strokesSheets(h.shadowRoot).length, 1, `${h.dataset.mountId}: the strokes sheet adopted once`);
+    // Re-syncs (another strokes tool, finger-draws flips) adopt nothing twice.
+    ov.setArmed('im-strokes');
+    IM.setFingerDraws('on');
+    IM.setFingerDraws('off');
+    for (const h of hosts()) assert.equal(strokesSheets(h.shadowRoot).length, 1, 'still once');
+    assert.equal(rootOf().innerHTML, paneDom, 'the pane\'s own DOM is untouched');
+    // A pane rendered while armed: a new host, marked by the observer.
+    await shell.frame({ type: 'render', id: 'imt1', target: 'main', html: TARGETS_HTML, params: {}, gen: 1 });
+    await shell.tick();
+    assert.ok(marked().includes('imt1'), 'the new host is marked');
+    const r1 = M.itemEl(W.document, 'imt1').el.shadowRoot;
+    assert.equal(strokesSheets(r1).length, 1);
+    // A re-render makes a new host: it is marked too.
+    const before = M.itemEl(W.document, 'imt1').el;
+    await shell.frame({ type: 'render', id: 'imt1', target: 'main', html: TARGETS_HTML + '<p>again</p>', params: {}, gen: 2 });
+    await shell.tick();
+    const after = M.itemEl(W.document, 'imt1').el;
+    assert.notEqual(after, before, 'a re-render makes a new host');
+    assert.equal(after.hasAttribute('data-wc-strokes'), true);
+    assert.equal(strokesSheets(after.shadowRoot).length, 1);
+    // Disarm: the class and every mark go, and the observer with them.
+    ov.setArmed(null);
+    assert.equal(html.classList.contains('strokes-armed'), false);
+    assert.deepEqual(marked(), [], 'every mark removed');
+    await shell.frame({ type: 'render', id: 'imt2', target: 'main', html: '<svg></svg>', params: {}, gen: 1 });
+    await shell.tick();
+    assert.deepEqual(marked(), [], 'a pane rendered after the disarm is not marked');
+    // A taps tool (and a selection tool) arms none of it.
+    for (const t of ['im-taps', 'im-selection']) {
+      ov.setArmed(t);
+      assert.equal(html.classList.contains('strokes-armed'), false, t);
+      assert.deepEqual(marked(), [], t);
+    }
+  } finally {
+    ov.setArmed(null);
+    IM.setFingerDraws('off');
+    removeAdopted();
+    await shell.frame({ type: 'clear', id: 'imt2' });
+    await shell.tick();
+  }
+});
+
+test('the strokes sheet: an svg, an img, a canvas and a [data-fixed-aspect] in a pane take touch-action none with selection and the callout off; a paragraph none of it; app.css gives a light-DOM sheet the same', async () => {
+  const css = createCascade(IM.STROKES_SHEET, { win: () => W });
+  installAdopted();
+  try {
+    assert.equal(IM.STROKES_TARGETS, 'svg, img, canvas, [data-fixed-aspect]', 'the set C5 and targetFrame name');
+    const host = await targetsPane();
+    ov.setArmed('box-grab');
+    const r = host.shadowRoot;
+    const row = (sel) => ['touch-action', 'user-select', '-webkit-user-select', '-webkit-touch-callout'].map((p) => css.value(r.querySelector(sel), p));
+    for (const sel of ['.t-svg', '.t-img', '.t-canvas', '.t-sheet']) assert.deepEqual(row(sel), ['none', 'none', 'none', 'none'], sel);
+    assert.deepEqual(row('.t-p'), [null, null, null, null], 'a paragraph: none of it');
+    host.removeAttribute('data-wc-strokes');
+    assert.deepEqual(row('.t-svg'), [null, null, null, null], 'keyed by the host\'s mark');
+    host.toggleAttribute('data-wc-strokes', true);
+    // The light-DOM rule: a [data-fixed-aspect] under #main, while armed.
+    const app = createCascade(CSS, { win: () => W });
+    const sheetEl = W.document.createElement('div');
+    sheetEl.setAttribute('data-fixed-aspect', '');
+    shell.$('main').appendChild(sheetEl);
+    try {
+      const lrow = () => ['touch-action', 'user-select', '-webkit-user-select', '-webkit-touch-callout'].map((p) => app.value(sheetEl, p));
+      assert.deepEqual(lrow(), ['none', 'none', 'none', 'none']);
+      ov.setArmed(null);
+      assert.deepEqual(lrow(), [null, null, null, null], 'disarmed: the page\'s');
+    } finally { sheetEl.remove(); }
+  } finally {
+    ov.setArmed(null);
+    removeAdopted();
+  }
+});
+
+test('the box grab armed, finger-draws off: two fingers from an svg in a pane scroll the well and create nothing; one finger there is the page\'s', async () => {
+  installAdopted();
+  try {
+    const r = (await targetsPane()).shadowRoot;
+    await grabArmed('off');
+    const rect = r.querySelector('.t-rect');
+    // One finger on the svg: the page's (the named limit: no native pan there).
+    finger(rect, 'pointerdown', 121, 30, 300, { isPrimary: true });
+    finger(rect, 'pointermove', 121, 30, 260);
+    finger(rect, 'pointerup', 121, 30, 260);
+    await shell.tick();
+    assert.deepEqual(scrollCalls, [], 'one finger: no pan here');
+    assert.equal(grabPosts().length, 0, 'and no grab (finger-draws off)');
+    // Two fingers from the svg: the pan.
+    finger(rect, 'pointerdown', 122, 100, 300, { isPrimary: true });
+    finger(rect, 'pointerdown', 123, 200, 300);
+    for (const y of [290, 280]) {
+      finger(rect, 'pointermove', 122, 100, y);
+      finger(rect, 'pointermove', 123, 200, y);
+    }
+    assert.equal(scroller().scrollTop, 20, 'the well scrolled by the fingers\' travel');
+    finger(rect, 'pointerup', 122, 100, 280);
+    finger(rect, 'pointerup', 123, 200, 280);
+    tapClick(rect, 122);
+    tapClick(rect, 123);
+    await shell.tick();
+    assert.equal(grabPosts().length, 0, 'the pan created nothing');
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    // Two fingers from the pane's paragraph: the browser's, as before.
+    scrollCalls.length = 0;
+    finger(r.querySelector('.t-p'), 'pointerdown', 124, 100, 300, { isPrimary: true });
+    finger(r.querySelector('.t-p'), 'pointerdown', 125, 200, 300);
+    finger(r.querySelector('.t-p'), 'pointermove', 124, 100, 280);
+    finger(r.querySelector('.t-p'), 'pointermove', 125, 200, 280);
+    finger(r.querySelector('.t-p'), 'pointercancel', 124, 100, 280);
+    finger(r.querySelector('.t-p'), 'pointercancel', 125, 200, 280);
+    assert.deepEqual(scrollCalls, [], 'off a target: no scrollBy');
+  } finally {
+    removeAdopted();
+    await settle();
+    await shell.frame({ type: 'clear', id: 'imt1' });
+    await shell.tick();
+  }
 });
