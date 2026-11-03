@@ -141,6 +141,16 @@ test('thresholds.json: mirror_parsed\'s bound is read from lib/server/mirror/ret
   assert.equal('max' in RAW.mirror_parsed, false, 'no literal bound in the file');
   assert.equal(RAW.mirror_parsed._max_from, 'retention:parsed-conversations-max');
   assert.equal(RESOLVED.mirror_parsed.max, valueOf('parsed-conversations-max'));
+  // Through the table's own lookup at resolve time, not a number lib.js carries
+  // that merely equals today's row: a changed row moves the bound.
+  const retention = require('../lib/server/mirror/retention');
+  const real = retention.valueOf;
+  retention.valueOf = (id) => (id === 'parsed-conversations-max' ? 4242 : real(id));
+  try {
+    assert.equal(lib.resolveThresholds(RAW).mirror_parsed.max, 4242, 'the bound follows retention.valueOf');
+  } finally {
+    retention.valueOf = real;
+  }
   assert.equal('max' in RAW.viewers, false);
   assert.equal(RESOLVED.viewers.max, lib.DRIVE_SOCKETS);
   assert.equal('max' in RAW.mirror_watchers, false);
