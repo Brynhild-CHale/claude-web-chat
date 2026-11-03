@@ -639,6 +639,24 @@ test('classify: Send to Claude (POST /api/elements/:id/send, F.5, U405) is decid
   assert.deepStrictEqual(RULES.filter((r) => /\/send\b/.test(r.path)).map(keyOf), [], 'no RULES row of its own');
 });
 
+test('classify: a type\'s draw.js and assets/ (GET /api/elements/types/:type/draw.js, /assets/*, U511) are the element floor\'s — read to GET, full to write — and no RULES row names them (PROTO@none)', () => {
+  const paths = ['/api/elements/types/ink/draw.js', '/api/elements/types/ink/assets/a/b.png'];
+  for (const u of paths) {
+    for (const optIn of OPT_INS) {
+      const g = classify('GET', u, { mirror: optIn });
+      assert.equal(g.key, 'GET /api/elements/*', `GET ${u}: the floor's read row at ${optIn}`);
+      assert.equal(g.allow, optIn !== 'off', `GET ${u} at ${optIn}`);
+      if (optIn === 'off') assert.equal(g.reason, 'mirror', `GET ${u}: refused at basic`);
+      const w = classify('POST', u, { mirror: optIn });
+      assert.equal(w.key, 'POST|PATCH|DELETE /api/elements/*', `POST ${u}: the floor's write row at ${optIn}`);
+      assert.equal(w.allow, optIn === 'full', `POST ${u}: full only (at ${optIn})`);
+      if (optIn !== 'full') assert.equal(w.reason, 'mirror');
+    }
+  }
+  assert.deepStrictEqual(RULES.filter((r) => /\/api\/elements\/types|draw\.js|\/assets\//.test(r.path)).map(keyOf), [], 'no RULES row of their own');
+  assert.equal(PORTAL_PROTOCOL_VERSION, 12, 'no protocol bump');
+});
+
 test('protocol 11: the surface\'s other rows are 0.8.5\'s — the queue, capture and store (signal) rows byte for byte', () => {
   // Pinned on their own (RULES at f3c4a7f, measured 2026-10-17 with digest()),
   // not against before11(RULES), which holds these very rows unchanged. Read
