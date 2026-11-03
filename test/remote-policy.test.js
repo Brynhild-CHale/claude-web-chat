@@ -678,7 +678,7 @@ test('rollback: portals on protocol 10 and 8 refuse every new route by the defau
   // Protocol 10's table as 0.8.5 ships it, byte for byte (RULES at f3c4a7f,
   // measured 2026-10-17): protocol 11 added rows and changed only the comment
   // row, which before11 folds back; protocol 12's rows (before12) go first.
-  const p10 = before11(before12(RULES));
+  const p10 = before11(before12(lessNoBump(RULES)));
   assert.equal(p10.length, 100);
   assert.equal(digest(p10), 'b23087d38123db27', PIN);
   // Protocol 8's: 0.8.5 added rows (SPEC_ROWS) and changed none.
@@ -805,6 +805,42 @@ function before12(rules) {
   return out;
 }
 
+// Refusal rows a later tranche adds WITHOUT a protocol bump (PROTO@none): each
+// refuses a host-only route that a portal without the row refuses by its
+// default deny, so a portal on any protocol decides every request the same way
+// (fail-safe; the daemon's own requireHost refuses it again). The
+// byte-for-byte pins read RULES less these rows; the test below holds each one
+// a refusal, as written, in its place. A row here that ALLOWS anything is a
+// protocol bump, never an entry.
+const NO_BUMP_REFUSALS = [
+  // U541 (tranche 4, 4D.1; notes-D D2): the C4 form-shift counter's read, GET
+  // /api/forms/shifts — the route ratchet wants an explicit row.
+  { methods: '*', path: '/api/forms/*', allow: false, hint: SPEC_HOST_ONLY },
+];
+function lessNoBump(rules) {
+  const keys = new Set(NO_BUMP_REFUSALS.map(keyOf));
+  return rules.filter((r) => !keys.has(keyOf(r)));
+}
+
+test('PROTO@none: every no-bump row is a refusal in RULES as written, and a portal without it refuses the same routes by its default deny', () => {
+  const byKey = new Map(RULES.map((r) => [keyOf(r), r]));
+  for (const want of NO_BUMP_REFUSALS) {
+    assert.equal(want.allow, false, `${keyOf(want)}: a no-bump row only refuses`);
+    assert.deepStrictEqual(byKey.get(keyOf(want)), want, keyOf(want));
+  }
+  const at = (k) => RULES.findIndex((r) => keyOf(r) === k);
+  assert.equal(at('* /api/forms/*'), at('* /api/events/*') + 1, 'the counter\'s row directly after the event ring\'s');
+  const without = classifier(lessNoBump(RULES));
+  for (const m of ['GET', 'POST', 'DELETE']) {
+    for (const optIn of [undefined, ...OPT_INS]) {
+      assert.deepStrictEqual([classify(m, '/api/forms/shifts', { mirror: optIn }).reason, classify(m, '/api/forms/shifts', { mirror: optIn }).hint],
+        ['refused', SPEC_HOST_ONLY], `${m} /api/forms/shifts at ${optIn}`);
+      assert.deepStrictEqual([without(m, '/api/forms/shifts', { mirror: optIn }).allow, without(m, '/api/forms/shifts', { mirror: optIn }).reason],
+        [false, 'unknown'], `a portal without the row: ${m} at ${optIn}`);
+    }
+  }
+});
+
 test('protocol 12: PORTAL_PROTOCOL_VERSION is 12, and every row tranche 2 adds is in RULES exactly as written, where it belongs', () => {
   assert.equal(PORTAL_PROTOCOL_VERSION, 12);
   const byKey = new Map(RULES.map((r) => [keyOf(r), r]));
@@ -825,7 +861,7 @@ test('protocol 12: PORTAL_PROTOCOL_VERSION is 12, and every row tranche 2 adds i
 test('protocol 12: RULES less T2_ROWS is protocol 11\'s table byte for byte', () => {
   // Measured at ae/int 39b52f8 (tranche 1's exit) on 2026-10-23, before this
   // bump, with digest() over RULES; ae/int 33859ea's RULES measured the same.
-  const p11 = before12(RULES);
+  const p11 = before12(lessNoBump(RULES));
   assert.equal(p11.length, 107);
   assert.equal(digest(p11), '63e5b38de47f48c8',
     'a row a protocol-11 portal also has has changed — that is a portal protocol change: bump PORTAL_PROTOCOL_VERSION (lib/core/versions) and update this pin');
@@ -2317,7 +2353,7 @@ test('U441 C6: PROTO@none — PORTAL_PROTOCOL_VERSION is 12 and RULES and ANSWER
   // so tranche 3 adds no portal row.
   const STOP = 'a tranche-3 RULES or ANSWER_RULES row is a protocol-13 bump: stop and ask (PROTO@none, L.4 A0 = a)';
   assert.equal(PORTAL_PROTOCOL_VERSION, 12, STOP);
-  assert.equal(digest(RULES), '431329a71300f4a5', STOP);
+  assert.equal(digest(lessNoBump(RULES)), '431329a71300f4a5', STOP);
   assert.equal(digest(ANSWER_RULES), 'dfa80f57e66ac433', STOP);
 });
 

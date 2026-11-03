@@ -809,8 +809,18 @@ function mountPane(m) {
   const mounted = panes.get(id);
   if (form_state) {
     mounted._applyingForm = true;
-    try { window.__wcMount.applyFormState(root, form_state); }
+    let tally = null;
+    try { tally = window.__wcMount.applyFormState(root, form_state); }
     finally { mounted._applyingForm = false; }
+    // The C4 counter (lib/server/domain/form-shifts): how the stored keys met
+    // this DOM — counts only, never a key name or a value — on the existing
+    // pane:form frame with no form_state, which the daemon reads as counts
+    // alone. A live mount only: never in a preview, never from
+    // applyRemoteFormState (another tab's snapshot of the same html). While the
+    // socket is down ws.js drops it (pane:form is never queued): a sample.
+    if (!view.previewing && tally && (tally.kept + tally.shifted + tally.missing) > 0) {
+      send({ type: 'pane:form', id, shifts: { kept: tally.kept, shifted: tally.shifted, missing: tally.missing } });
+    }
   }
   // The "server has this" baseline is what the pane shows NOW — its rendered
   // defaults, plus any restored values — whether or not a form_state was stored.

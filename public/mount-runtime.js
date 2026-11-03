@@ -432,9 +432,36 @@
   // on each element whose value actually changed, so pane scripts that mirror
   // fields into local state resync — dispatch is guarded per element so one
   // throwing listener doesn't abort the rest.
+  //
+  // It returns X-11's tally of the snapshot's keys against the DOM it was
+  // applied to, {kept, shifted, missing} (DECISIONS.md C4; the counter the
+  // daemon keeps, lib/server/domain/form-shifts — the live chrome sends it,
+  // the documents ignore it). A key K's base is K before its LAST ':' (an id
+  // may hold one). kept: some field's key now equals K. shifted: K's base is
+  // '#id' or '@name' and some field now carries that base at another index —
+  // a real positional shift, whose value the exact-key lookup below does NOT
+  // apply. missing: anything else (a base-less key that moved is missing).
+  // The lookup stays the exact key: A2 (a re-key by element) is not built.
   function applyFormState(root, form_state) {
     if (!form_state) return;
-    formElements(root).forEach(function (el, i) {
+    var els = formElements(root);
+    var keysNow = Object.create(null);
+    var basesNow = Object.create(null);
+    els.forEach(function (el, i) {
+      var k = formKey(el, i);
+      keysNow[k] = true;
+      var b = k.slice(0, k.lastIndexOf(':'));
+      if (b) basesNow[b] = true;
+    });
+    var tally = { kept: 0, shifted: 0, missing: 0 };
+    Object.keys(form_state).forEach(function (k) {
+      if (keysNow[k] === true) { tally.kept++; return; }
+      var c = k.lastIndexOf(':');
+      var b = c >= 0 ? k.slice(0, c) : '';
+      if (b && basesNow[b] === true) tally.shifted++;
+      else tally.missing++;
+    });
+    els.forEach(function (el, i) {
       var rec = form_state[formKey(el, i)];
       if (!rec || typeof rec !== 'object') return;
       var changed = false;
@@ -458,6 +485,7 @@
         }
       } catch (e) { console.error('applyFormState', e); }
     });
+    return tally;
   }
 
   // ── the settle sync point ─────────────────────────────────────────────────
