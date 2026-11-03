@@ -157,6 +157,9 @@ test('a document draws the fixture: the comment pin at its target, the highlight
   assert.equal(box.calls, 1, 'the draw ran once for its group');
   assert.ok(b1.querySelector('svg[viewBox="0 0 1 1"]'), 'the type drew in the normalised viewBox');
   assert.deepEqual({ ...box.ctx.box }, { w: 200, h: 100 }, 'ctx.box: the target\'s rect');
+  const bg = box.groups[0];
+  assert.deepEqual({ place: bg.place, drawn: bg.drawn, boxW: bg.boxW, boxH: bg.boxH }, { place: 'box', drawn: true, boxW: box.ctx.box.w, boxH: box.ctx.box.h },
+    'the group carries the live box group\'s fields (U516: place, drawn, boxW, boxH), equal to ctx.box');
   assert.equal(box.ctx.document, true);
   assert.equal(box.ctx.previewing, true);
   assert.equal(box.ctx.host, 'page');
@@ -167,6 +170,7 @@ test('a document draws the fixture: the comment pin at its target, the highlight
   assert.deepEqual([b1.style.left, b1.style.width, b1.style.height], ['75px', '300px', '100px'], 'the second width: rescaled');
   assert.equal(box.calls, 1, 'with no redraw');
   assert.deepEqual({ ...box.ctx.box }, { w: 300, h: 100 }, 'ctx.box read live');
+  assert.deepEqual([bg.boxW, bg.boxH], [300, 100], 'the group\'s boxW and boxH follow the resize');
   win.__scale = 1;
   win.dispatchEvent(new win.Event('resize'));
 
