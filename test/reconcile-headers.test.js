@@ -177,8 +177,11 @@ async function bootPair(t, root) {
   assert.equal(b.atListen.headers, 0, 'the index-less boot read every node whole');
   assert.equal(a.atListen.headers, TURNS, 'the indexed boot built every node from its header');
   assert.deepStrictEqual(a.report, b.report, 'GT-10: the boot report is the one a full read gives');
-  return { a, b };
+  return { a, b, withIndex, without };
 }
+// A log's version lines for one element version, less the time each was written.
+const verLines = (root, id, v) => logLines(root).map((l) => JSON.parse(l))
+  .filter((r) => r.t === 'ver' && r.id === id && r.v === v).map(({ at, ...r }) => r);
 
 // ── THE PROOF ───────────────────────────────────────────────────────────────
 
@@ -218,12 +221,40 @@ test('an unclean node the index cannot see (its record pins a version the log lo
   assert.equal(kept.length, lines.length - 1);
   writeLog(root, kept);
 
-  const { a } = await bootPair(t, root);
+  const { a, withIndex, without } = await bootPair(t, root);
   assert.deepEqual(a.atListen.faulted_ids, [f.qNode, f.active], 'the missing version\'s node, then the active one');
+  // The repair re-appended the version from the node's copy (its body, never
+  // the header's {id, v}): the same line a full read's repair writes.
+  const repaired = verLines(withIndex, f.q, 2);
+  assert.equal(repaired.length, 1, 'the lost version re-appended once');
+  assert.ok(JSON.stringify(repaired[0].payload).includes('and gone'), 'the copy\'s content, not its {id, v}');
+  assert.deepStrictEqual(repaired, verLines(without, f.q, 2));
   assert.deepEqual(a.after.faulted_ids, [f.qNode, f.active]);
   assert.deepEqual(a.report.states['node-pins-missing-version'], {
     count: 1, examples: [`${f.qNode}:${f.q}@2`], detail: [{ node: f.qNode, pin: `${f.q}@2`, repaired: true }],
   });
+});
+
+test('the proof, with an index flush that writes: a boot whose index lacks one node\'s entry rewrites it after the listen and still reads only the active body', async (t) => {
+  const f = await getFixture(t);
+  const root = copyRoot(f.root);
+  const X = pickPinnedNode(f);
+  const ix = projectPaths(root).graphIndex;
+  const doc = JSON.parse(fs.readFileSync(ix, 'utf8'));
+  assert.ok(doc.nodes[`${X}.json`], 'the index holds the node');
+  delete doc.nodes[`${X}.json`];
+  fs.writeFileSync(ix, JSON.stringify(doc));
+  const indexAt = fs.statSync(ix).mtimeMs;
+  const s = await withServer(t, { root });
+  const atListen = s.srv.graph.lazyStats();
+  assert.equal(atListen.headers, TURNS - 1, 'the node without an entry read whole, the rest from headers');
+  assert.deepEqual(atListen.faulted_ids, [f.active]);
+  await waitUntil(() => fs.statSync(ix).mtimeMs !== indexAt, { what: 'the after-listen index flush' });
+  await s.srv.mirror.ready;
+  await new Promise((r) => setImmediate(r));
+  assert.ok(JSON.parse(fs.readFileSync(ix, 'utf8')).nodes[`${X}.json`], 'the flush wrote the missing entry');
+  assert.deepEqual(s.srv.graph.lazyStats().faulted_ids, [f.active], 'the flush and the mirror\'s start read no lazy body');
+  assert.equal(reportOf(root).clean, true, JSON.stringify(reportOf(root).states));
 });
 
 // ── GT-10: the report with and without the index ────────────────────────────
