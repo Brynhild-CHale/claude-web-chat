@@ -393,3 +393,68 @@ test('main.js inits the wet layer once, after the overlay', () => {
   assert.equal((src.match(/initWetLayer\(\);/g) || []).length, 1);
   assert.ok(src.indexOf('initWetLayer();') > src.indexOf('initOverlay();'));
 });
+
+test('a scroll inside the pane\'s shadow root (no window event) moves the canvas at the next frame; the push after it reads the new rect (U517a)', () => {
+  const root = rootOf('wet-pane');
+  const r = { left: 40, top: 100, width: 300, height: 200 };
+  rects.set(sheet(), r);
+  // Count the stroke's listeners on the shadow root: one added at the begin, removed at the detach.
+  const added = [];
+  const removed = [];
+  root.addEventListener = function add(type, fn, o) { added.push(type); return W.ShadowRoot.prototype.addEventListener.call(this, type, fn, o); };
+  root.removeEventListener = function rm(type, fn, o) { removed.push(type); return W.ShadowRoot.prototype.removeEventListener.call(this, type, fn, o); };
+  try {
+    assert.ok(wet.begin(sheet(), { pointerId: 18 }));
+    const c = wetCanvases()[0];
+    wet.push([sample(50, 110, 1)]);
+    wet.paint(() => {});
+    flush();
+    const before = rafCalls;
+    assert.equal(flush(), 0, 'the pen still: no frame runs (never an idle loop)');
+    r.top = 60;
+    r.left = 30;
+    let windowHeard = 0;
+    const onWin = () => { windowHeard++; };
+    W.addEventListener('scroll', onWin, true);
+    try {
+      root.querySelector('p.cap').dispatchEvent(new W.Event('scroll'));
+    } finally {
+      W.removeEventListener('scroll', onWin, true);
+    }
+    assert.equal(windowHeard, 0, 'a scroll inside a shadow root never reaches the window');
+    assert.equal(c.style.top, '100px', 'nothing moves before the frame');
+    assert.equal(rafCalls - before, 1, 'the shadow-root scroll asks for one frame');
+    assert.equal(flush(), 1);
+    assert.deepStrictEqual([c.style.left, c.style.top], ['30px', '60px'], 'the canvas follows the target\'s new rect');
+    wet.push([sample(50, 110, 2)]);
+    let seen = null;
+    wet.paint((x, view) => { seen = [view.x(1), view.y(1)]; });
+    flush();
+    assert.deepStrictEqual(seen, [20, 50], 'the push after the frame stores x/y against the new rect');
+    assert.equal(flush(), 0, 'and no frame runs after it');
+    wet.end();
+    flush();
+    assert.deepStrictEqual(added.filter((t) => t === 'scroll').length, 1, 'one scroll listener for the stroke');
+    assert.deepStrictEqual(removed.filter((t) => t === 'scroll').length, 1, 'removed at the detach');
+    const idle = rafCalls;
+    root.querySelector('p.cap').dispatchEvent(new W.Event('scroll'));
+    assert.equal(rafCalls, idle, 'no frame while no stroke is active');
+    // A cancel removes it too; a begin over a light-DOM target adds none.
+    assert.ok(wet.begin(sheet(), { pointerId: 19 }));
+    wet.cancel();
+    assert.equal(removed.filter((t) => t === 'scroll').length, 2, 'a cancel removes it');
+    const light = W.document.createElement('div');
+    W.document.body.appendChild(light);
+    try {
+      assert.ok(wet.begin(light, { pointerId: 20 }));
+      assert.equal(added.filter((t) => t === 'scroll').length, 2, 'a target in the document: no shadow-root listener');
+      wet.cancel();
+    } finally {
+      light.remove();
+    }
+  } finally {
+    delete root.addEventListener;
+    delete root.removeEventListener;
+    rects.set(sheet(), { left: 40, top: 100, width: 300, height: 200 });
+  }
+});

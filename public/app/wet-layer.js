@@ -47,9 +47,13 @@
 //
 // NO ALLOCATION PER SAMPLE OR PER PUSH: push and the frame create no array,
 // object, closure or typed-array view; the frame writes the canvas's style
-// only when the target's rect changed. The rect is re-read once per animation
-// frame while a stroke is active, and a scroll or resize asks for that frame,
-// so a scroll mid-stroke keeps the canvas on the target.
+// only when the target's rect changed. The rect is re-read at each frame a
+// stroke asks for, and a scroll or resize asks for one, so a scroll mid-stroke
+// keeps the canvas on the target. A scroll is not composed: one inside a
+// pane's shadow root never reaches the window's listener, so a stroke whose
+// target is in a shadow root also listens there (capture) from its begin to
+// its detach (U517a) — never an idle loop: no frame runs while the pen is
+// still and nothing scrolls, and none while no stroke is active.
 //
 // WHERE IT PAINTS. In the chrome's own document body, position fixed,
 // pointer-events none, at the overlay's page layer's rung (--z-pins; appended
@@ -98,6 +102,8 @@ let height = -1;
 let dpr = 1;
 let pending = null;     // the newest paint fn
 let scheduled = false;
+let scrollRoot = null;  // the target's shadow root, listened on for its scrolls while a stroke holds it
+const SCROLL_OPTS = { capture: true, passive: true };
 
 const keptCount = () => (total < WET_RING ? total : WET_RING);
 const slot = (i) => (head - keptCount() + i + WET_RING) % WET_RING;
@@ -169,7 +175,25 @@ function schedule() {
   cfg.raf(onWetFrame);
 }
 
+// A scroll inside the target's shadow root never reaches the window (it is
+// not composed): listen on that root for the stroke's life.
+function watchRoot(el) {
+  unwatchRoot();
+  const r = el.getRootNode();
+  if (r && r !== document && r.nodeType === 11 && r.host) {
+    r.addEventListener('scroll', onViewportChange, SCROLL_OPTS);
+    scrollRoot = r;
+  }
+}
+
+function unwatchRoot() {
+  if (!scrollRoot) return;
+  scrollRoot.removeEventListener('scroll', onViewportChange, SCROLL_OPTS);
+  scrollRoot = null;
+}
+
 function detach() {
+  unwatchRoot();
   view.clear();
   if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
   state = 'idle';
@@ -217,6 +241,7 @@ function begin(el, opts) {
   place(true);
   view.clear();
   if (canvas.parentNode !== document.body || canvas.nextSibling) document.body.appendChild(canvas);
+  watchRoot(el);
   state = 'active';
   return true;
 }
