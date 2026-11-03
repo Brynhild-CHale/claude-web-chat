@@ -145,7 +145,13 @@ function treesnapRepo(t, { files = { 'a.txt': 'alpha\n' }, sub = '', objectForma
       for (const e of ents) if (e.isDirectory()) open(path.join(d, e.name));
     };
     open(top);
-    fs.rmSync(top, { recursive: true, force: true });
+    // Never throw: a test registers this hook before its daemon's stop, and
+    // node:test runs a test's after hooks in order and skips the rest once
+    // one throws, so an ENOTEMPTY here (the live daemon still writing its
+    // .web-chat/ under load) left the daemon listening and the file hung
+    // until the run was killed (chat-pin-boot-state, the U565 relaunch).
+    // Retry, then leave what is left to the sandbox HOME's exit cleanup.
+    try { fs.rmSync(top, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* the sandbox's */ }
   });
   gitIn(top, ['init', '-q', ...(objectFormat ? [`--object-format=${objectFormat}`] : [])]);
   const abs = (rel) => path.join(top, rel);
