@@ -288,6 +288,7 @@ test('a module that breaks the draw contract or cannot be spliced rides as no mo
     [`${MARK_DRAW}// </script><script>alert(1)\n`, 'unsafe-splice'],
     [`${MARK_DRAW}// <!-- a comment opener\n`, 'unsafe-splice'],
     [`import x from './x.js';\n${MARK_DRAW}`, 'draw-contract'],
+    [`/**/import x from "https://e/x.js";\n${MARK_DRAW}`, 'draw-contract'],
     [`${MARK_DRAW}export default function draw(g) {}\n`, 'draw-contract'],
   ]) {
     const real = documentDeps(ctxOf(d));
