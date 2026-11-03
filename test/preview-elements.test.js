@@ -389,3 +389,55 @@ test('renderPreviewHtml with no payload: a pinless node\'s bytes as before; a pi
   assert.ok(!('comments' in parsed) && !('elements' in parsed), 'no comments or elements key');
   assert.ok(node.comments.length === 1 && node.elements.length === 1, 'the node itself is untouched');
 });
+
+// A committed picture entry is projected by the reader's element payload
+// (U525c; GT-22 F9 at 06f4023f): a reference rides only when the payload
+// carries that id; the describe (whose bbox covers every member) goes with
+// any member; a null payload drops every reference; the entry's id, seq, ts,
+// source and image stay; any other capture is byte-for-byte as committed; the
+// node is never rewritten.
+test('previewNodeJson: a picture entry keeps only the element references the payload carries; a null payload keeps none; other captures and the node untouched', () => {
+  const picture = {
+    id: 'cap4', seq: 4, ts: 1700000000000, url: 'element:p5', title: '', profile: 'element-picture', source: 'element:scribble',
+    kind: 'element-picture',
+    distilled: {
+      kind: 'element-picture', type: 'scribble', elements: ['p1@1', 'p2@1', 'p5@1'],
+      describe: { shape: 'underline', confidence: 0.8, count: 3, bbox: { x: 0.1, y: 0.2, w: 0.3, h: 0.04 } },
+      previous: 'cap2', new: ['p5'],
+    },
+    image: { state: 'ready', capture: 'cap4', path: 'captures/cap4.png', sha256: 'ab'.repeat(32), width: 40, height: 30, bytes: 120 },
+  };
+  const grab = { id: 'cap1', seq: 1, url: 'element:p9', kind: 'box-grab', distilled: { kind: 'box-grab', element: 'p9', v: 1 } };
+  const tab = { id: 'cap2', seq: 2, url: 'https://example.com/', kind: 'page', distilled: { title: 'x' } };
+  const node = { id: 'n1', mounts: [], store: {}, captures: [grab, tab, picture] };
+  const frozen = JSON.stringify(node);
+  const embedded = (elements) => JSON.parse(previewNodeJson(node, { elements })).captures;
+  const items = (...ids) => ({ v: 1, builtins: [], types: [], removed: [], items: ids.map((id) => ({ id, v: 1, type: 'scribble' })) });
+
+  // Every member in the payload: the entry as committed.
+  assert.deepEqual(embedded(items('p1', 'p2', 'p5')), [grab, tab, picture], 'a reader whose payload carries every member');
+
+  // p5 (the newest member) not in the payload.
+  const [g1, t1, p1] = embedded(items('p1', 'p2'));
+  assert.deepEqual([g1, t1], [grab, tab], 'the box grab and the tab capture untouched');
+  assert.deepEqual(p1.distilled.elements, ['p1@1', 'p2@1']);
+  assert.deepEqual(p1.distilled.new, []);
+  assert.equal(p1.distilled.describe, undefined, 'no describe: its bbox covers p5');
+  assert.equal(p1.url, 'element:p2', 'the url names the newest kept member');
+  for (const k of ['id', 'seq', 'ts', 'title', 'profile', 'source', 'kind', 'image']) assert.deepEqual(p1[k], picture[k], k);
+  assert.equal(p1.distilled.previous, 'cap2', 'a capture id, not an element reference');
+  assert.ok(!/p5/.test(JSON.stringify(p1)), JSON.stringify(p1));
+
+  // A null payload, and an empty one: no element reference at all.
+  for (const elements of [null, undefined, items()]) {
+    const p = embedded(elements)[2];
+    assert.deepEqual(p.distilled.elements, []);
+    assert.equal(p.url, '');
+    assert.equal(p.distilled.describe, undefined);
+    assert.ok(!/\bp\d@\d|element:p\d/.test(JSON.stringify(p)), JSON.stringify(p));
+    assert.equal(p.image.sha256, picture.image.sha256, 'the digest stays');
+  }
+  // The replay frame's call (no payload) and renderPreviewHtml's (with one) agree.
+  assert.equal(previewNodeJson(node), previewNodeJson(node, { elements: null }));
+  assert.equal(JSON.stringify(node), frozen, 'the node itself is untouched');
+});
