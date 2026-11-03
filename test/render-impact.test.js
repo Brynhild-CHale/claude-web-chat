@@ -173,15 +173,24 @@ test('a bulk clear answers the total over the removed panes only — a pinned ke
   sock.send(JSON.stringify({ type: 'pane:state', id: 'm2', pane_state: { pinned: true } }));
   await waitUntil(() => d.srv.state.mounts.get('m2').pane_state?.pinned === true, { timeout: T, what: 'm2 pinned' });
 
+  // Markdown in a page-wide clear: the caption directly above the pinned m2
+  // stays (page.markdownAbove) and is not counted; one at the bottom goes and is.
+  await ok(d.call('POST', '/api/markdown', { id: 'md-cap', text: '## Kept caption', after: 'm1' }), 'md-cap');
+  await ok(d.call('POST', '/api/markdown', { id: 'md-end', text: '## Hello end' }), 'md-end');
+  const mdHighlight = (id) => ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: { ...RANGE(id), mount: id }, payload: {} }), `highlight on ${id}`);
+  await mdHighlight('md-cap');
+  await mdHighlight('md-end');
+
   const r = await ok(d.call('POST', '/api/clear', {}), 'bulk clear');
   assert.deepStrictEqual(r.kept, ['m2']);
-  assert.deepStrictEqual(r.annotations, { items: ['m1'], total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 });
+  assert.ok(d.srv.state.markdown.has('md-cap') && !d.srv.state.markdown.has('md-end'), 'the caption above the pinned pane stays, the bottom item goes');
+  assert.deepStrictEqual(r.annotations, { items: ['m1', 'md-end'], total: 5, by_type: { comment: 1, highlight: 4 }, shared: 4, private: 1 });
   assert.ok(d.srv.state.mounts.has('m2') && !d.srv.state.mounts.has('m1') && !d.srv.state.mounts.has('m3'));
 
-  // A bulk clear over nothing annotated answers as it always did.
+  // force takes the pinned m2 and the caption above it, both counted.
   await render(d, 'm4');
   assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', { force: true }), 'forced bulk clear'), {
-    ok: true, annotations: { items: ['m2'], total: 2, by_type: { highlight: 2 }, shared: 2, private: 0 },
+    ok: true, annotations: { items: ['m2', 'md-cap'], total: 3, by_type: { highlight: 3 }, shared: 3, private: 0 },
   });
   await render(d, 'm5');
   assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', {}), 'plain bulk clear'), { ok: true });
