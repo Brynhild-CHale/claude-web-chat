@@ -290,10 +290,11 @@ test('the reads gate refuses before the module\'s draw runs; the liar control (a
 });
 
 test('ctx.record(id): the GET\'s record for this viewer, then the element:<type> frame\'s, the type re-registered', async () => {
-  records = { elements: [{ id: 'p1', v: 1, type: 'sticker', shared: true, payload: { text: 'hello' } }], next_cursor: 1 };
+  // The GET's shape, FLAT: the payload's keys beside id and v (U522b).
+  records = { elements: [{ id: 'p1', v: 1, type: 'sticker', shared: true, anchor: { kind: 'el', mount: 'm1' }, text: 'hello' }], next_cursor: 1 };
   const read = [];
   modules.set(ET.drawPath('sticker', SHA), {
-    default: (g, ctx) => { for (const it of g.items) { const r = ctx.record(it.id); read.push(r ? r.payload.text : null); } },
+    default: (g, ctx) => { for (const it of g.items) { const r = ctx.record(it.id); read.push(r ? r.text : null); } },
   });
   imported.length = 0;
   await relist([plugRow('sticker')]);
@@ -302,24 +303,24 @@ test('ctx.record(id): the GET\'s record for this viewer, then the element:<type>
   const first = regs.get('sticker');
   first.draw(group('sticker', [item('sticker', 'p1'), item('sticker', 'p9')]), {});
   assert.deepStrictEqual(read, ['hello', null], 'the record, and null for an id it does not hold');
-  assert.equal(ET.recordOf('sticker', 'p1').payload.text, 'hello');
-  assert.ok(Object.isFrozen(ET.recordOf('sticker', 'p1').payload), 'a draw cannot edit what it reads');
+  assert.equal(ET.recordOf('sticker', 'p1').text, 'hello');
+  assert.ok(Object.isFrozen(ET.recordOf('sticker', 'p1')) && Object.isFrozen(ET.recordOf('sticker', 'p1').anchor), 'a draw cannot edit what it reads');
   // The type's frame: the records change, the type is registered again.
-  await shell.frame({ type: 'element:sticker', elements: [{ id: 'p1', v: 2, type: 'sticker', shared: true, payload: { text: 'changed' } }] });
+  await shell.frame({ type: 'element:sticker', elements: [{ id: 'p1', v: 2, type: 'sticker', shared: true, text: 'changed' }] });
   const second = regs.get('sticker');
   assert.notEqual(second, first, 're-registered, so the overlay redraws');
   read.length = 0;
   second.draw(group('sticker', [item('sticker', 'p1', null, 2)]), {});
   assert.deepStrictEqual(read, ['changed']);
   // The same records again redraw nothing.
-  await shell.frame({ type: 'element:sticker', elements: [{ id: 'p1', v: 2, type: 'sticker', shared: true, payload: { text: 'changed' } }] });
+  await shell.frame({ type: 'element:sticker', elements: [{ id: 'p1', v: 2, type: 'sticker', shared: true, text: 'changed' }] });
   assert.equal(regs.get('sticker'), second);
   // A hello re-reads them (the GET answers the daemon's view again).
   const n = gets();
   await shell.frame(helloFrame({ active: 'n1', mounts: [] }));
   await waitUntil(() => gets() > n, { what: 'the hello\'s read' });
   await ET.loadPluginTypes();
-  assert.equal(ET.recordOf('sticker', 'p1').payload.text, 'hello');
+  assert.equal(ET.recordOf('sticker', 'p1').text, 'hello');
   assert.equal(imported.length, 1, 'the records move; the module is imported once');
   await relist([]);
   assert.equal(ET.recordOf('sticker', 'p1'), null, 'a type that leaves the listing keeps no records');
