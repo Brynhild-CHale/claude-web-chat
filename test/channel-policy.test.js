@@ -430,7 +430,8 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     const a = elementItem(ev('p1'), { wake: true, label: 'Ink', describe: { ...DESC, count: 1 } });
     const group = mergeElement({ ...a, element_ids: [], excerpt: undefined }, a);
     assert.deepStrictEqual(group.describe, { ...DESC, count: 1 });
-    const b = elementItem(ev('p2'), { wake: true, label: 'Ink', describe: { ...DESC, shape: 'underline', count: 2 } });
+    // The daemon names the group a describe is of (U562a: its shared member ids).
+    const b = elementItem(ev('p2'), { wake: true, label: 'Ink', describe: { ...DESC, shape: 'underline', count: 2, element_ids: ['p1', 'p2'] } });
     mergeElement(group, b);
     assert.deepStrictEqual(group.describe, { ...DESC, shape: 'underline', count: 2 }, 'the newest wins');
     assert.deepStrictEqual(group.element_ids, ['p1', 'p2']);
@@ -438,5 +439,128 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     mergeElement(group, c);
     assert.equal('describe' in group, false, 'the newest has none');
     assert.equal(group.count, 3);
+  });
+}
+
+// ── a folded item keeps every group's describe (U562a, PQ-4F-3) ─────────────
+{
+  const { elementItem, mergeElement, DESCRIBE_GROUPS_MAX } = require('../lib/channel/policy');
+  const ev = (id) => ({ kind: 'element', type: 'ink', op: 'add', id, v: 1, shared: true, has: true, mount: 'm1' });
+  const raise = (id, describe) => elementItem(ev(id), { wake: true, label: 'Ink', describe });
+  const start = (a) => mergeElement({ ...a, element_ids: [], excerpt: undefined }, a);
+  const CIRCLE = { shape: 'circle', confidence: 0.82, count: 1, bbox: [0.1, 0.1, 0.2, 0.2] };
+  const LINE = { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05] };
+
+  test('two groups folded: groups of 2 in fold order, count summed, bbox the union, the top-level shape the newest\'s', () => {
+    const group = start(raise('p1', CIRCLE));
+    mergeElement(group, raise('p2', LINE));
+    assert.deepStrictEqual(group.describe, {
+      shape: 'underline', confidence: 0.9, count: 2, bbox: [0.1, 0.1, 0.7, 0.55],
+      groups: [{ ...CIRCLE, element_ids: ['p1'] }, { ...LINE, element_ids: ['p2'] }],
+    });
+    // The summary is the newest raise's, as before.
+    assert.equal(group.summary, 'Ink · underline · 1 stroke · p2@1');
+  });
+
+  test('a group growing a stroke at a time stays one entry; six groups of seven strokes give six guesses', () => {
+    const shapes = ['circle', 'underline', 'strike', 'arrow', 'check'];
+    const group = start(raise('p11', { ...CIRCLE, bbox: [0.0, 0.0, 0.05, 0.05] }));
+    shapes.slice(1).forEach((shape, i) => mergeElement(group, raise(`p1${i + 2}`, { shape, confidence: 0.7, count: 1, bbox: [0.1 * (i + 1), 0.1, 0.05, 0.05] })));
+    // The cross: its first stroke, then the second (the group so far: count 2, the daemon naming both members).
+    mergeElement(group, raise('p16', { shape: 'strike', confidence: 0.6, count: 1, bbox: [0.6, 0.3, 0.1, 0.06], element_ids: ['p16'] }));
+    mergeElement(group, raise('p17', { shape: 'cross', confidence: 0.79, count: 2, bbox: [0.6, 0.3, 0.1, 0.06], element_ids: ['p16', 'p17'] }));
+    const d = group.describe;
+    assert.deepStrictEqual(d.groups.map((g) => g.shape), [...shapes, 'cross']);
+    assert.deepStrictEqual(d.groups[5].element_ids, ['p16', 'p17']);
+    assert.equal(d.count, 7, 'every stroke once');
+    assert.equal(d.shape, 'cross');
+    assert.equal(d.confidence, 0.79);
+    assert.equal('groups_dropped' in d, false);
+  });
+
+  test('a single group\'s item is byte-equal to the U562 describe', () => {
+    const a = raise('p1', CIRCLE);
+    const group = start(a);
+    assert.equal(JSON.stringify(group.describe), JSON.stringify(CIRCLE));
+    const grown = { ...CIRCLE, shape: 'check', count: 2, bbox: [0.1, 0.1, 0.25, 0.2] };
+    // The daemon's raise names the group (its ids); the delivered one-group describe is the four fields alone.
+    mergeElement(group, raise('p2', { ...grown, element_ids: ['p1', 'p2'] }));
+    assert.equal(JSON.stringify(group.describe), JSON.stringify(grown));
+    // A member re-raised (a Send of one already queued) replaces its own group's entry.
+    mergeElement(group, raise('p1', { ...grown, element_ids: ['p1', 'p2'] }));
+    assert.equal(JSON.stringify(group.describe), JSON.stringify(grown));
+    // A kept one-group item re-sent folds as itself.
+    const again = start({ ...group, element_ids: ['p1', 'p2'] });
+    assert.equal(JSON.stringify(again.describe), JSON.stringify(grown));
+  });
+
+  test('the group identity is its ids, never a box: interleaved groups on two targets keep each guess', () => {
+    // A1 on svg1, B1 on svg2, then A2 (A's second stroke): each box is in its own target's frame.
+    const group = start(raise('p1', { shape: 'strike', confidence: 0.6, count: 1, bbox: [0.1, 0.1, 0.2, 0.2], element_ids: ['p1'] }));
+    mergeElement(group, raise('p2', { shape: 'circle', confidence: 0.8, count: 1, bbox: [0.3, 0.3, 0.1, 0.1], element_ids: ['p2'] }));
+    mergeElement(group, raise('p3', { shape: 'cross', confidence: 0.79, count: 2, bbox: [0.1, 0.1, 0.4, 0.4], element_ids: ['p1', 'p3'] }));
+    const d = group.describe;
+    assert.deepStrictEqual(d.groups.map((g) => [g.shape, g.element_ids]), [['circle', ['p2']], ['cross', ['p1', 'p3']]]);
+    assert.equal(d.count, 3);
+    assert.equal(d.shape, 'cross');
+    // A count-2 raise whose box holds an older listed group's swallows nothing.
+    const g2 = start(raise('p4', { ...CIRCLE, bbox: [0.2, 0.2, 0.1, 0.1], element_ids: ['p4'] }));
+    mergeElement(g2, raise('p5', { ...LINE, element_ids: ['p5'] }));
+    mergeElement(g2, raise('p7', { shape: 'other', confidence: 0.5, count: 2, bbox: [0, 0, 1, 1], element_ids: ['p6', 'p7'] }));
+    assert.deepStrictEqual(g2.describe.groups.map((g) => g.shape), ['circle', 'underline', 'other']);
+    assert.equal(g2.describe.count, 4);
+    // A malformed group id list drops the describe, as any malformed field does.
+    assert.equal('describe' in raise('p8', { ...LINE, element_ids: [] }), false);
+    assert.equal('describe' in raise('p8', { ...LINE, element_ids: ['p8', 3] }), false);
+  });
+
+  test('a raise whose group joins two listed groups folds them into one entry (a private stroke between them shared later)', () => {
+    // A [p1] and B [p3] were two groups while p2 sat private between them; once p2 is shared the daemon's
+    // group is [p1, p2, p3], so both entries go and one takes their place: every stroke counted once.
+    const group = start(raise('p1', { ...CIRCLE, element_ids: ['p1'] }));
+    mergeElement(group, raise('p3', { ...LINE, element_ids: ['p3'] }));
+    assert.equal(group.describe.groups.length, 2);
+    const joined = { shape: 'other', confidence: 0.5, count: 3, bbox: [0.1, 0.1, 0.7, 0.55] };
+    mergeElement(group, raise('p2', { ...joined, element_ids: ['p1', 'p2', 'p3'] }));
+    assert.equal(JSON.stringify(group.describe), JSON.stringify(joined), 'one group left: its describe alone');
+  });
+
+  test('a malformed groups entry or groups_dropped drops the describe', () => {
+    const good = { ...LINE, element_ids: ['p1'] };
+    const bad = [
+      { groups: 'x' }, { groups: [] }, { groups: [{ ...good, shape: 'Revenue' }] }, { groups: [{ ...good, element_ids: [] }] },
+      { groups: [{ ...good, element_ids: [3] }] }, { groups: [{ ...good, count: 0 }] }, { groups: [{ ...good, bbox: [0, 0, 1] }] },
+      { groups: Array.from({ length: DESCRIBE_GROUPS_MAX + 1 }, () => good) },
+      { groups: [good], groups_dropped: 0 }, { groups: [good], groups_dropped: 1.5 }, { groups_dropped: 1 },
+    ];
+    for (const extra of bad) {
+      const it = raise('p3', { ...LINE, ...extra });
+      assert.equal('describe' in it, false, JSON.stringify(extra));
+      assert.equal(it.summary, 'Ink · p3@1', JSON.stringify(extra));
+    }
+    // The well-formed list passes whole.
+    assert.deepStrictEqual(raise('p3', { ...LINE, groups: [good], groups_dropped: 2 }).describe, { ...LINE, groups: [good], groups_dropped: 2 });
+  });
+
+  test('the 17th group drops the oldest, counted in groups_dropped; an undescribed raise leaves the list as it is', () => {
+    const box = (i) => [0.05 * i, 0, 0.01, 0.01];
+    const group = start(raise('p0', { ...CIRCLE, bbox: box(0) }));
+    for (let i = 1; i < DESCRIBE_GROUPS_MAX; i++) mergeElement(group, raise(`p${i}`, { ...CIRCLE, bbox: box(i) }));
+    assert.equal(group.describe.groups.length, DESCRIBE_GROUPS_MAX);
+    assert.equal('groups_dropped' in group.describe, false);
+    mergeElement(group, raise('p16', { ...LINE, bbox: box(16) }));
+    const d = group.describe;
+    assert.equal(d.groups.length, DESCRIBE_GROUPS_MAX);
+    assert.equal(d.groups_dropped, 1);
+    assert.deepStrictEqual(d.groups[0].element_ids, ['p1'], 'the oldest went');
+    assert.equal(d.count, DESCRIBE_GROUPS_MAX);
+    assert.deepStrictEqual(d.bbox, [0.05, 0, 0.76, 0.01]);
+    const before = JSON.stringify(group.describe);
+    mergeElement(group, raise('p17'));
+    assert.equal(JSON.stringify(group.describe), before, 'no entry added, the list unchanged');
+    // A kept item re-sent (resendElement → a fresh fold) keeps its dropped count.
+    const resent = start({ ...group, element_ids: [...group.element_ids], describe: d });
+    assert.equal(resent.describe.groups_dropped, 1, 'the re-sent fold still says one group went');
+    assert.equal(resent.describe.groups.length, DESCRIBE_GROUPS_MAX);
   });
 }

@@ -179,7 +179,12 @@ test('a stroke on another target is its own group', async (t) => {
   const o = await stroke(d, { sib: 1, y: 0.3, text: 'Other' });
   const [it] = itemsOf(d);
   assert.equal(it.element_id, o.id, 'the newest member');
-  assert.equal(it.describe.count, 1, 'the other svg\'s group of one');
+  // The item folds both groups (U562a, PQ-4F-3): each keeps its own guess,
+  // newest last; the top-level count sums them, the summary is the newest's.
+  assert.deepStrictEqual(it.describe.groups.map((g) => g.count), [2, 1], 'the first svg\'s two, then the other svg\'s group of one');
+  assert.deepStrictEqual(it.describe.groups[1].element_ids, [o.id]);
+  assert.equal(it.describe.shape, it.describe.groups[1].shape, 'the newest group\'s shape on top');
+  assert.equal(it.describe.count, 3);
   assert.match(it.summary, / · 1 stroke · /);
 });
 

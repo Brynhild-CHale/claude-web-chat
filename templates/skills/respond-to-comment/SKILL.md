@@ -63,7 +63,8 @@ made over a shared stroke group names it in its `chain` (`on ink p12 › pane m1
 ask for a picture of the strokes, read what they already say in words: the group's queue
 item and its records describe it — `shape` (circle, underline, strike, arrow, check, cross
 or other) with its `confidence`, `count` (how many strokes), `bbox` (where they sit in the
-target, 0 to 1) and `text_under`, the words the strokes were drawn over. A circle round
+target, 0 to 1) and `text_under`, the words the strokes were drawn over. A folded item lists
+each group's guess under `describe.groups`, newest last. A circle round
 "Q3" with a note asking "why?" needs no picture. Ask for one only when the words and the
 shape do not answer: `inspect_capture({capture_id: 'element:<id>'})` on one of the group's
 elements draws it and returns it beside the clipped HTML. A private stroke never reaches
