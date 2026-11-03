@@ -170,6 +170,29 @@ function fiveGroup() {
   return state.queue[0];
 }
 
+// The group's order is its own (oldest → newest by the last touch), never a
+// sort: a member raised again becomes the newest, so c2 ends the list.
+test('(2b) a parked group keeps its element_ids in the group\'s order, not sorted', () => {
+  const state = {
+    queue: [], queueSeq: 0, mounts: new Map([['m1', { id: 'm1', gen: 0 }]]), markdown: new Map(), store: {},
+    signals: {}, wakeConsumers: 0, wakeConsumerSeenAt: 0, pendingAck: null, pendingWake: null, pendingWakeSeq: 0,
+  };
+  const bus = createBus();
+  for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c2']) {
+    const c = classify({ kind: 'comment', op: 'add', pin: { id, seq: 1, shared: true, text: `note ${id}`, anchor: { mount: 'm1' } } },
+      { elementTypes: DECLS });
+    queue.enqueueElement(state, bus, { ...c.item, label: 'Comment' });
+  }
+  const group = state.queue[0];
+  assert.deepEqual(group.element_ids, ['c1', 'c3', 'c4', 'c5', 'c2'], 'precondition: the re-raised member is the newest');
+  for (const remote of [false, true]) {
+    const row = parkedProjection([group], { remote }).pending.items[0];
+    assert.deepEqual(row.element_ids, ['c1', 'c3', 'c4', 'c5', 'c2'], `${remote ? 'basic' : 'local'}: the group's order`);
+    assert.equal(row.count, 5);
+    assert.equal(row.element_id, 'c2');
+  }
+});
+
 // The real chrome, booted last in its own describe (the box-grab.test.js
 // precedent): its globals would otherwise reach the daemons above.
 describe('the rail over a parked group (jsdom)', () => {
