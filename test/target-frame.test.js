@@ -407,6 +407,41 @@ test('pushing 10,000 samples performs O(log n) buffer growths and reads the rect
   }
 });
 
+test('the handle holds ONE rect: two pushes with a re-render between them write the new box into the same object (GT-22, U561a)', async () => {
+  const h = TF.stroke.begin(inputOf(press(q('path.line'), 100, 200)));
+  const held = h.rect;
+  assert.deepStrictEqual({ ...held }, { left: 100, top: 200, w: 200, h: 100 }, 'seeded from the frame');
+  assert.notStrictEqual(held, h.frame.rect, 'frame.rect stays the begin-time box');
+  h.push([sample(200, 250, 4)]);
+  assert.strictEqual(h.rect, held, 'the first push wrote in place');
+  const target = h.frame.target;
+  // Re-rendered between the pushes; the handle's target laid out anew.
+  await shell.frame({ type: 'render', id: 'tf1', target: 'main', html: PANE.html, params: {}, gen: 1 });
+  await shell.tick();
+  stubRects();
+  boxed(target, { left: 300, top: 400, width: 400, height: 200 });
+  h.push([sample(700, 600, 8)]);
+  assert.strictEqual(h.rect, held, 'the same object after a re-render');
+  assert.deepStrictEqual({ ...held }, { left: 300, top: 400, w: 400, h: 200 }, 'its values are the new box\'s');
+  // A zero-size box leaves the previous rect in place, as before.
+  boxed(target, { left: 0, top: 0, width: 0, height: 0 });
+  h.push([sample(500, 500, 12)]);
+  assert.strictEqual(h.rect, held);
+  assert.deepStrictEqual({ ...held }, { left: 300, top: 400, w: 400, h: 200 }, 'a zero-size box keeps the last rect');
+  assert.deepStrictEqual({ ...h.frame.rect }, { left: 100, top: 200, w: 200, h: 100 }, 'frame.rect untouched');
+  const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
+  assert.equal(r.ok, true);
+  const pts = posts()[0].body.payload.points;
+  assert.deepStrictEqual([pts[pts.length - 8], pts[pts.length - 7]], [1, 1], 'the second push against the new box');
+  assert.deepStrictEqual([pts[pts.length - 4], pts[pts.length - 3]], [0.5, 0.5], 'the third against the kept one');
+  // The source: readRect writes the held rect's fields and builds no object.
+  const src = fs.readFileSync(path.join(REPO, 'public/app/target-frame.js'), 'utf8');
+  const rr = /\n  function readRect\(\) \{\n([\s\S]*?)\n  \}\n/.exec(src);
+  assert.ok(rr, 'readRect found');
+  assert.doesNotMatch(rr[1], /rect\s*=\s*\{/, 'no rect object per push');
+  assert.match(rr[1], /rect\.left = b\.left; rect\.top = b\.top; rect\.w = b\.width; rect\.h = b\.height;/);
+});
+
 // ── re-anchoring ──────────────────────────────────────────────────────────
 
 test('a stored stroke re-resolves after its pane re-renders with the svg moved one sibling down; with the svg removed it is orphaned and listed', async () => {

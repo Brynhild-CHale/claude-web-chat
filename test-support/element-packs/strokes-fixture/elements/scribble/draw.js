@@ -2,6 +2,7 @@
 const NS = 'http://www.w3.org/2000/svg';
 const at = (e, o) => { for (const k in o) e.setAttribute(k, o[k]); return e; };
 let h = null;
+const PUSH_OPTS = { predicted: null };
 
 export default function draw(group, ctx) {
   const c = group.container;
@@ -38,7 +39,7 @@ export function create(input, ctx) {
     if (h && wet) wet.begin(h.frame.target, { pointerId: input.event.pointerId });
   } else if (h && ph === 'pointermove') {
     h.push(input.samples);
-    if (wet) { wet.push(input.samples, { predicted: input.predicted }); wet.paint(paint); }
+    if (wet) { PUSH_OPTS.predicted = input.predicted; wet.push(input.samples, PUSH_OPTS); wet.paint(paint); }
   } else if (h && (up || ph === 'pointercancel')) {
     if (up) h.commit({ tool: 'pen', width: 2, colour: 'accent', shared: false }); else h.cancel();
     h = null;

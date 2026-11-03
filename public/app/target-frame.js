@@ -31,6 +31,8 @@
 //   handle.frame     the frame begin found (a type's wet layer begins on
 //                    handle.frame.target)
 //   handle.count     the samples held
+//   handle.rect      the rect the last push read ({left, top, w, h}): ONE
+//                    object per handle, written in place (read only)
 //   handle.push(x)   a later event's samples: x is the create's input (its
 //                    samples, else its event; any sample in input.predicted
 //                    is skipped) or the samples list itself. Each sample's
@@ -181,7 +183,10 @@ function makeHandle(type, frame, first) {
   let len = 0;
   let t0 = null;
   let lastT = 0;
-  let rect = frame.rect;
+  // ONE held rect per handle (GT-22's per-sample allocation clause): seeded
+  // from the frame's rect at begin and written in place by readRect, so a push
+  // builds no object; frame.rect itself stays the begin-time box.
+  const rect = { left: frame.rect.left, top: frame.rect.top, w: frame.rect.w, h: frame.rect.h };
   let done = false;
 
   function grow() {
@@ -206,7 +211,8 @@ function makeHandle(type, frame, first) {
   function readRect() {
     const t = frame.target;
     const b = t && typeof t.getBoundingClientRect === 'function' ? t.getBoundingClientRect() : null;
-    if (b && b.width > 0 && b.height > 0) rect = { left: b.left, top: b.top, w: b.width, h: b.height };
+    // A zero-size box leaves the previous rect in place.
+    if (b && b.width > 0 && b.height > 0) { rect.left = b.left; rect.top = b.top; rect.w = b.width; rect.h = b.height; }
   }
   function push(x) {
     if (done || x == null) return;
@@ -284,6 +290,7 @@ function makeHandle(type, frame, first) {
     type,
     frame,
     get count() { return len / STROKE_STRIDE; },
+    get rect() { return rect; },   // the held rect (read only): the box the last push read
     push,
     commit,
     cancel,
