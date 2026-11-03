@@ -433,3 +433,58 @@ test('draw.js: a default export that is not a function named draw fails review n
   // No stage (the registry's read): the file is not looked at.
   assert.equal(validateElement(raw, { name: 'sticky' }).ok, true);
 });
+
+// ── the ONE draw-module contract (U590, engineering contract (e) and (i)) ──
+// Review and the documents' inliner read one predicate, lib/packs/elements
+// drawModuleProblem: a module review approves is one a document inlines, and
+// a module a document would skip as 'draw-contract' fails review first.
+test('draw.js: review and the document inliner read one contract predicate; the line twice, a static import (every spelling) and a glyph export that is no top-level declaration each fail review', () => {
+  const fs2 = require('fs');
+  const src = (rel) => fs2.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  assert.equal(typeof elements.drawModuleProblem, 'function');
+  // The splice's head is the review's; the inliner calls the one predicate and
+  // keeps no second copy of the static-import rule or the comment blanker.
+  assert.equal(require('../lib/server/runtime/elements-doc-src').MODULE_HEAD, elements.DRAW_HEAD);
+  const docSrc = src('lib/server/document-elements.js');
+  assert.match(docSrc, /const \{[^}]*\bdrawModuleProblem\b[^}]*\} = require\('\.\.\/packs\/elements'\)/, 'document-elements requires the predicate from lib/packs/elements');
+  assert.match(docSrc, /return drawModuleProblem\(text\) \? 'draw-contract' : '';/, 'moduleProblem is the predicate');
+  for (const own of ['STATIC_IMPORT', 'function blankComments', 'MODULE_HEAD']) {
+    assert.equal(docSrc.includes(own), false, `document-elements keeps no ${own} of its own`);
+  }
+  assert.equal(src('lib/server/runtime/elements-doc-src.js').includes("'export default function draw('"), false, 'the splice spells no second head');
+
+  const HEAD = 'export default function draw(group, ctx) {}\n';
+  const withDraw = (text) => validateStage(stage({ files: { ...ICONS, 'draw.js': text } }));
+  const bad = {
+    'the line twice': `${HEAD}${HEAD}`,
+    'a static import': `import x from './x.js';\n${HEAD}`,
+    'a bare import': `import './x.js';\n${HEAD}`,
+    'a re-export': `export { a } from './a.js';\n${HEAD}`,
+    'export * as ns from': `export * as ns from './a.js';\n${HEAD}`,
+    'an import behind a block comment': `/**/import x from './x.js';\n${HEAD}`,
+    'a regex literal holding a quote before an import': `const r = /'/;import/**/x from './x.js';\n${HEAD}`,
+    'a glyph re-exported under its name': `const g = { w: 2, h: 2 };\nexport { g as glyph };\n${HEAD}`,
+    'a glyph bound but never exported': `const glyph = { w: 2, h: 2 };\n${HEAD}`,
+    'a sourceGlyph in an export list': `const sourceGlyph = { dx: 1, dy: 1 };\nexport { sourceGlyph };\n${HEAD}`,
+  };
+  for (const [what, text] of Object.entries(bad)) {
+    const why = elements.drawModuleProblem(text);
+    assert.equal(typeof why, 'string', `${what}: the predicate refuses it`);
+    const m = withDraw(text);
+    assert.equal(m.ok, false, `${what}: review refuses it`);
+    assert.equal(m.errors.length, 1, `${what}: ${m.errors.join(' | ')}`);
+    assert.equal(m.errors[0], `element "sticky": elements/sticky/draw.js's ${why}`, `${what}: review's error is the predicate's reason`);
+  }
+  const good = {
+    'the plain module': HEAD,
+    'exported glyph and sourceGlyph': `${HEAD}export const glyph = { dx: 0, dy: 0, w: 8, h: 8 };\nexport let sourceGlyph = { dx: -4, dy: 0 };\n`,
+    'a glyph function': `${HEAD}export function glyph() { return null; }\n`,
+    'a local named glyph inside draw': 'export default function draw(group, ctx) {\n  const glyph = group.el;\n  return glyph;\n}\n',
+    'a dynamic import': 'export default function draw(group, ctx) { return import("./x.js"); }\n',
+    "a '<!--' in a string (the splice's to refuse, never review's)": 'export default function draw(group, ctx) { group.container.title = "<!--"; }\n',
+  };
+  for (const [what, text] of Object.entries(good)) {
+    assert.equal(elements.drawModuleProblem(text), null, `${what}: the predicate passes it`);
+    assert.deepStrictEqual(withDraw(text).errors, [], `${what}: review passes it`);
+  }
+});
