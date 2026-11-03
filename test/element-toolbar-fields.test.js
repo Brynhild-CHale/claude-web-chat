@@ -309,3 +309,32 @@ test('icon: TOOL_ICON_SIDE is exported and is 48 (a 24 px glyph at 2×)', () => 
   assert.equal(icon.TOOL_ICON_SIDE, 48);
   assert.equal(icon.TAB_ICON_SIDE, 16);
 });
+
+// ── place (U516, plan 4A.2): the box placement mode's manifest field ────────
+test('place: glyph and box accepted and kept in the descriptor; box without an element anchor refused; anything else refused', () => {
+  assert.deepStrictEqual([...elements.PLACE_MODES], ['glyph', 'box']);
+  assert.ok(TOOLBAR_KEYS.includes('place'), 'a toolbar field, kept as written');
+  for (const place of ['glyph', 'box']) {
+    const dir = stage({ json: { ...GOOD, input: 'strokes', place } });
+    const m = validateStage(dir);
+    assert.deepStrictEqual([m.errors, m.warnings], [[], []], place);
+    assert.equal(m.elements[0].descriptor.place, place, `${place}: kept in the descriptor`);
+    assert.deepStrictEqual(toolbarFields({ place, anchors: ['element'] }, null), { ok: true, errors: [] });
+  }
+  // Absent: nothing in the descriptor (the reader's default is glyph).
+  assert.equal('place' in validateStage(stage({ json: GOOD })).elements[0].descriptor, false);
+  // Box needs an element anchor: refused for a type anchored on ranges only,
+  // and naming the field.
+  const noEl = stage({ json: { ...GOOD, place: 'box', anchors: ['range'] } });
+  const r = validateStage(noEl);
+  assert.deepStrictEqual(fieldsOf(r.errors), ['place']);
+  assert.match(r.errors[0], /"box" sizes the marker to an element target, so the type's "anchors" must include "element" \(got \["range"\]\)/);
+  assert.deepStrictEqual(toolbarFields({ place: 'box' }, null).errors.map((e) => e.field), ['place'], 'no anchors at all');
+  assert.deepStrictEqual(toolbarFields({ place: 'glyph', anchors: ['range'] }, null), { ok: true, errors: [] }, 'glyph needs no element anchor');
+  // Any other value is refused naming the grammar.
+  for (const bad of ['free', 'Box', '', 1, true, null, ['box']]) {
+    const t = toolbarFields({ place: bad, anchors: ['element'] }, null);
+    assert.deepStrictEqual(t.errors.map((e) => e.field), ['place'], JSON.stringify(bad));
+    assert.match(t.errors[0].why, /must be one of glyph, box/);
+  }
+});

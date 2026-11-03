@@ -18,7 +18,11 @@
 //     takes a click of detail 1 and never one of detail 0 (a script's click);
 //   - shell.press is a faithful press (pointerdown, pointerup, a click of
 //     detail 1): its click takes its own gesture through the no-pointerId
-//     fallback, so the armed taps tool gets it and the page does not.
+//     fallback, so the armed taps tool gets it and the page does not;
+//   - (U516) a strokes tool's create gets input.samples (the browser's
+//     coalesced list as given, else [the event]) and input.predicted (else
+//     []), the raw event kept; a pointercancel's input, dispatched or through
+//     cancelGesture, carries empty lists; a taps tool's input has neither.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -190,5 +194,88 @@ test('shell.press is a faithful press: pointerdown, pointerup, a click of detail
     for (const [t, fn] of fns) W.document.removeEventListener(t, fn, true);
     ov.setArmed(null);
     off();
+  }
+});
+
+// ── the samples (U516, plan 4A.2): coalesced and predicted, feature-detected ─
+// A PointerEvent given (or stripped of) getCoalescedEvents / getPredictedEvents
+// on the instance, as a browser that has (or lacks) them would hand it.
+function sampled(el, type, pointerId, { coalesced, predicted, extra = {} } = {}) {
+  const ev = new W.PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true, pointerType: 'pen', pointerId, isPrimary: true, clientX: 100, clientY: 100,
+    buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, ...extra,
+  });
+  Object.defineProperty(ev, 'getCoalescedEvents', { configurable: true, value: coalesced === undefined ? undefined : () => coalesced });
+  Object.defineProperty(ev, 'getPredictedEvents', { configurable: true, value: predicted === undefined ? undefined : () => predicted });
+  el.dispatchEvent(ev);
+  return ev;
+}
+
+test('a strokes tool\'s create gets input.samples (the coalesced list, else [event]) and input.predicted (else []), the raw event kept', () => {
+  IM.setFingerDraws('off');
+  const inputs = [];
+  const off = ov.registerType('ops', { draw() {}, input: 'strokes', create: (inp) => inputs.push(inp) });
+  try {
+    ov.setArmed('ops');
+    const c1 = { clientX: 101, clientY: 100 };
+    const c2 = { clientX: 102, clientY: 101 };
+    const coalesced = [c1, c2];
+    const p1 = { clientX: 104, clientY: 102 };
+    const predicted = [p1];
+    const down = sampled(lead('p1'), 'pointerdown', 41, { coalesced: [], predicted: [] });
+    const move = sampled(lead('p1'), 'pointermove', 41, { coalesced, predicted });
+    const bare = sampled(lead('p1'), 'pointermove', 41, {});
+    const up = sampled(lead('p1'), 'pointerup', 41, {});
+    assert.deepStrictEqual(inputs.map((i) => i.phase), ['pointerdown', 'pointermove', 'pointermove', 'pointerup']);
+    const [iDown, iMove, iBare, iUp] = inputs;
+    assert.equal(iMove.event, move, 'the raw event kept');
+    assert.equal(iMove.samples, coalesced, 'the browser\'s coalesced list, as given (never copied)');
+    assert.equal(iMove.predicted, predicted, 'the browser\'s predicted list, as given');
+    assert.ok(!iMove.samples.includes(p1), 'a predicted sample is flagged by being in input.predicted only');
+    assert.equal(iDown.event, down);
+    assert.deepStrictEqual(iDown.samples.length, 1, 'an empty coalesced list reads as [the event]');
+    assert.equal(iDown.samples[0], down);
+    assert.deepStrictEqual([...iDown.predicted], [], 'an empty predicted list stays empty');
+    assert.equal(iBare.samples.length, 1, 'no getCoalescedEvents: [the event]');
+    assert.equal(iBare.samples[0], bare);
+    assert.deepStrictEqual([...iBare.predicted], [], 'no getPredictedEvents: []');
+    assert.equal(iUp.samples[0], up);
+    // The engine kept nothing: the arrays are the browser's own, unchanged.
+    assert.deepStrictEqual(coalesced, [c1, c2]);
+    assert.deepStrictEqual(predicted, [p1]);
+  } finally {
+    ov.setArmed(null);
+    off();
+  }
+});
+
+test('a pointercancel\'s input carries empty samples and predicted lists, dispatched or through cancelGesture; a taps tool gets neither field', () => {
+  IM.setFingerDraws('off');
+  const inputs = [];
+  const off = ov.registerType('ops', { draw() {}, input: 'strokes', create: (inp) => inputs.push(inp) });
+  const offTaps = ov.registerType('opt', { draw() {}, input: 'taps', create: (inp) => inputs.push(inp) });
+  try {
+    ov.setArmed('ops');
+    sampled(lead('p1'), 'pointerdown', 42, {});
+    sampled(lead('p1'), 'pointercancel', 42, { coalesced: [{ clientX: 1 }], predicted: [{ clientX: 2 }] });
+    const cancelled = inputs.at(-1);
+    assert.equal(cancelled.phase, 'pointercancel');
+    assert.deepStrictEqual([[...cancelled.samples], [...cancelled.predicted]], [[], []], 'a dispatched cancel: nothing to draw');
+    inputs.length = 0;
+    sampled(lead('p1'), 'pointerdown', 43, {});
+    assert.equal(ov.cancelGesture(43), true);
+    const viaPan = inputs.at(-1);
+    assert.equal(viaPan.phase, 'pointercancel');
+    assert.deepStrictEqual([[...viaPan.samples], [...viaPan.predicted]], [[], []], 'cancelGesture\'s cancel: the same');
+    inputs.length = 0;
+    ov.setArmed('opt');
+    shell.press(lead('p1'));
+    assert.equal(inputs.length, 1, 'the taps tool took the click');
+    assert.equal('samples' in inputs[0], false, 'a taps tool\'s input has no samples');
+    assert.equal('predicted' in inputs[0], false);
+  } finally {
+    ov.setArmed(null);
+    off();
+    offTaps();
   }
 });

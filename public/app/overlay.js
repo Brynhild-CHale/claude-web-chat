@@ -124,6 +124,16 @@ export const SCOPES = Object.freeze(['live', 'preview']);
 // selection`, K.2-6). A `taps` tool gets the gesture's click; a `strokes` or
 // `selection` tool gets every event of the gesture (input.phase names it).
 export const INPUT_KINDS = Object.freeze(['taps', 'strokes', 'selection']);
+// The placement modes a type registers (U516, plan 4A.2; the manifest field
+// `place`, lib/packs/elements.js PLACE_MODES, held equal by a test): 'glyph'
+// (the default) puts a glyph-sized marker at its anchor's top-left; 'box'
+// sizes the marker of an element row's group to the target's own rect (the
+// guess's, for a guess), clipped to its well, never over a displayed frame.
+export const PLACE_MODES = Object.freeze(['glyph', 'box']);
+// The create ctx's own keys (toolCtx): no registerCreateCtx name may take one.
+export const CREATE_CTX_KEYS = Object.freeze(['anchors', 'sourceMap', 'markdownText', 'scope', 'armed']);
+// A registered create-ctx member's name.
+export const CREATE_CTX_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
 // The pointer policy's three answers.
 export const POINTER_ANSWERS = Object.freeze(['tool', 'page', 'ignore']);
 export const PICK_KINDS = Object.freeze(['element', 'range', 'source']);
@@ -239,7 +249,7 @@ let initialQueued = new Set();
 let initialScheduled = false;
 let sourcesPending = false;
 const mapCache = new Map();       // md id → {text, map}
-const types = new Map();          // type → {draw, create, input, glyph, move}
+const types = new Map();          // type → {draw, create, input, glyph, move, place}
 const answerSubs = new Set();
 const armedSubs = new Set();
 let probe = null;
@@ -765,6 +775,16 @@ function marginGlyph(type) {
   const sg = types.get(type).sourceGlyph;
   return Object.freeze({ dx: sg.dx, dy: sg.dy, w: gl.w, h: gl.h });
 }
+// THE BOX PLACEMENT (U516, plan 4A.2): a row of a type registered with place
+// 'box' whose anchor is an element anchor is drawn as a box — its marker the
+// target's own rect (the carried guess's, for a guess), clipped to its well
+// and never over a displayed frame (measureBox). Any other row of such a type
+// (a range, a source, an item-box fallback; a point row is U532's) is drawn
+// as a glyph, as every other type's is.
+function boxRow(type, row) {
+  const t = types.get(type);
+  return !!(t && t.place === 'box' && row && row.anchor && row.anchor.kind === 'element');
+}
 // A host's drawn set as marker groups: per type, the elements grouped by the
 // DOM element they resolve to (a range or a section, one group each). The
 // page's are the drawn scope's answers; another host's, its own answers (the
@@ -779,12 +799,16 @@ function buildGroups(h) {
     const raw = e.raw;
     let el = null;
     let range = null;
-    if (kind === 'guess') el = raw.guess;
+    // Whether el is the element the row's anchor resolved to (its hit or its
+    // carried guess), never the item's box a fallback stands in with: only
+    // such an element may size a box marker (boxRow).
+    let own = false;
+    if (kind === 'guess') { el = raw.guess; own = true; }
     else if (raw.range) range = raw.range;
-    else if (raw.el) el = raw.el;
+    else if (raw.el) { el = raw.el; own = true; }
     // A row served masked: at the element the resolver's own pass found (its
     // range or element above, else its carried guess), else at its item's box.
-    else if (e.masked && raw.guess) el = raw.guess;
+    else if (e.masked && raw.guess) { el = raw.guess; own = true; }
     else if (h.page && (kind === 'section' || e.masked) && e.mount != null && M && typeof M.itemEl === 'function') {
       const it = M.itemEl(document, e.mount);
       el = it ? it.el : null;
@@ -798,12 +822,22 @@ function buildGroups(h) {
     // that moved nothing (F11). A re-render that replaced the text keeps no
     // container, so its key changes and the group is rebuilt over the new
     // Range; a kept group takes the pass's current Range (refreshKept).
-    const key = el ? `${type}|${kind}|e${tokenOf(el)}` : `${type}|${kind}|${rangeKey(range)}`;
+    // A box group (boxRow) is keyed apart from any glyph group on the same
+    // element, so a type re-registered with another place rebuilds it.
+    const box = own && boxRow(type, e.row);
+    const key = el ? `${type}|${kind}|e${tokenOf(el)}${box ? '|box' : ''}` : `${type}|${kind}|${rangeKey(range)}`;
     let g = byKey.get(key);
     if (!g) {
       const mdItem = h.page && range ? marginItemOf(type, range) : null;
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, host: h.name, items: [],
         container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type, h.page ? null : h), mdItem, failed: false };
+      if (box) {
+        g.place = 'box';
+        g.drawn = false;
+        g.boxW = 0;
+        g.boxH = 0;
+        g.box = Object.freeze({ get w() { return g.boxW; }, get h() { return g.boxH; } });
+      }
       byKey.set(key, g);
     }
     g.items.push({ id: e.row.id, v: e.row.v, type, row: e.row, state: e.state, how: raw.how == null ? null : raw.how,
@@ -844,13 +878,32 @@ function onLayerClick(ev) {
     bus.emit('overlay:guess', d);
   }
 }
+// A box group's ctx also carries `box`: {w, h}, the target's rect at the last
+// measure, read live (the same frozen object answers the newest measure).
 function drawCtx(g) {
   const h = hostOfGroup(g);
-  return {
+  const ctx = {
     layer: h ? h.layer : layer, host: g.host || 'page', scope: g.scope, glyph: g.glyph, previewing: view.previewing,
     rectOf: (x) => cfg.rectOf(x),
     rectsOf: (range) => (range && typeof range.getClientRects === 'function' ? [...range.getClientRects()] : []),
   };
+  if (g.place === 'box') ctx.box = g.box;
+  return ctx;
+}
+// A type's draw into its group's container; false (the container gone, the
+// failure recorded) when it threw.
+function runDraw(g, t) {
+  try {
+    t.draw(g, drawCtx(g));
+    return true;
+  } catch (err) {
+    console.error(`[web-chat] overlay: the '${g.type}' draw failed`, err);
+    if (g.container) g.container.remove();
+    g.container = null;
+    g.failed = true;
+    for (const it of g.items) failed.set(it.id, { type: g.type, error: String((err && err.message) || err) });
+    return false;
+  }
 }
 function rebuild(h, gs) {
   const layer = h.layer;
@@ -860,6 +913,20 @@ function rebuild(h, gs) {
     c.className = `el-marker ${g.cls}`;
     c.dataset.type = g.type;
     c.dataset.elIds = g.items.map((it) => it.id).join(' ');
+    const t = types.get(g.type);
+    if (g.place === 'box' && t) {
+      // A box marker: applyGroup sizes and places it at each measure, and the
+      // type's draw runs at its first drawn placement (so ctx.box is a real
+      // rect), then again only when the signature changes. It never takes a
+      // press: the target under it stays the page's and the armed tool's.
+      c.dataset.place = 'box';
+      c.style.pointerEvents = 'none';
+      c.style.display = 'none';
+      c._group = g;
+      g.container = c;
+      layer.appendChild(c);
+      continue;
+    }
     const gl = g.glyph;
     c.style.width = gl.w + 'px';
     c.style.height = gl.h + 'px';
@@ -868,23 +935,14 @@ function rebuild(h, gs) {
     c._group = g;
     g.container = c;
     layer.appendChild(c);
-    const t = types.get(g.type);
-    try {
-      if (t) t.draw(g, drawCtx(g));
-      else {
-        c.classList.add('el-generic');
-        c.title = g.type;
-        const s = document.createElement('span');
-        s.className = 'el-generic-name';
-        s.textContent = g.type;
-        c.appendChild(s);
-      }
-    } catch (err) {
-      console.error(`[web-chat] overlay: the '${g.type}' draw failed`, err);
-      c.remove();
-      g.container = null;
-      g.failed = true;
-      for (const it of g.items) failed.set(it.id, { type: g.type, error: String((err && err.message) || err) });
+    if (t) runDraw(g, t);
+    else {
+      c.classList.add('el-generic');
+      c.title = g.type;
+      const s = document.createElement('span');
+      s.className = 'el-generic-name';
+      s.textContent = g.type;
+      c.appendChild(s);
     }
   }
 }
@@ -985,8 +1043,9 @@ function hide(g) {
 const FRAME_TAGS = new Set(['iframe', 'frame']);
 // Why an element can be no host's root or well: it is a frame, lies inside
 // one, or belongs to another document than the chrome's (a sandboxed or
-// cross-origin frame's). Null when it may be one.
-function frameReason(el) {
+// cross-origin frame's). Null when it may be one. Exported read-only (U516)
+// so the wet layer (U517) applies the never-draw rule with no second copy.
+export function frameReason(el) {
   if (!el || el.nodeType !== 1) return 'not an element';
   if (el.ownerDocument !== document) return 'in another document';
   if (FRAME_TAGS.has(el.localName)) return 'a frame';
@@ -1080,6 +1139,7 @@ function measureGroup(g, fr, read) {
   }
   const r = read(g.range || g.el);
   if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) return { res: 'unplaced' };
+  if (g.place === 'box') return measureBox(g, r, startEl, fr, read, well);
   let x = r.left;
   const y = r.top;
   // The margin glyph (marginItemOf): the anchor point is the item's left edge
@@ -1115,8 +1175,26 @@ function measureGroup(g, fr, read) {
   }
   return { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
 }
+// Measure a box group (boxRow) — READS ONLY, past measureGroup's shared
+// checks: the target's rect `r` ∩ its clip (clipFrom) is the painted box,
+// empty → 'clipped'; a painted box meeting a displayed frame in the census →
+// 'framed' (THE NEVER-DRAW RULE: a box is never drawn over a frame, in part or
+// whole); else 'drawn' with the target's rect {x, y, w, h} and the clip's
+// insets [top, right, bottom, left] into it.
+function measureBox(g, r, startEl, fr, read, well) {
+  const target = boxOf(r);
+  const clip = clipFrom(startEl, fr, read, well);
+  const painted = intersect(target, clip);
+  if (!(painted.right > painted.left && painted.bottom > painted.top)) return { res: 'clipped' };
+  if (censusFor(g, startEl, fr, read).some((b) => meets(painted, b))) return { res: 'framed' };
+  const inset = [painted.top - target.top, target.right - painted.right, target.bottom - painted.bottom, painted.left - target.left];
+  return { res: 'drawn', box: true, x: r.left, y: r.top, w: r.width, h: r.height, clip, inset };
+}
 // Write one measured group: left/top and the glyph's clip-path, or hidden;
-// then the type's move, if any. Runs only after the slice's reads.
+// then the type's move, if any. Runs only after the slice's reads. A box
+// group's marker also takes the target's width and height, and its type's
+// draw runs here at its first drawn placement (a draw that throws marks the
+// measure unplaced, so the frame counts it as nothing drawn).
 function applyGroup(g, m) {
   const c = g.container;
   if (!c) return;
@@ -1124,9 +1202,19 @@ function applyGroup(g, m) {
   const [top, right, bottom, left] = m.inset;
   c.style.left = m.x + 'px';
   c.style.top = m.y + 'px';
+  if (m.box) {
+    c.style.width = m.w + 'px';
+    c.style.height = m.h + 'px';
+    g.boxW = m.w;
+    g.boxH = m.h;
+  }
   c.style.clipPath = top || right || bottom || left ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : '';
-  c.style.display = '';
   const t = types.get(g.type);
+  if (m.box && !g.drawn) {
+    if (!t || !runDraw(g, t)) { m.res = 'unplaced'; return; }
+    g.drawn = true;
+  }
+  c.style.display = '';
   if (t && t.move) {
     try { t.move(g, { ...drawCtx(g), x: m.x, y: m.y, clip: m.clip }); } catch (err) {
       console.error(`[web-chat] overlay: the '${g.type}' move failed`, err);
@@ -1555,8 +1643,13 @@ export function isHostRoot(el) {
 // create takes the armed tool's input. sourceGlyph {dx, dy}, when given, puts
 // the type's glyph in a markdown item's left margin (marginItemOf). `host`
 // (default 'page') is the host whose presses its create takes, and `tool`
-// (default its own name) the armed tool whose presses it takes there. An
-// element whose type has none draws a generic marker.
+// (default its own name) the armed tool whose presses it takes there. `place`
+// (PLACE_MODES, default 'glyph') 'box' draws an element row's group as a box
+// marker sized to its target (boxRow, measureBox): the draw gets ctx.box
+// {w, h} and draws in the target's normalised space (an <svg viewBox="0 0 1
+// 1" preserveAspectRatio="none"> at 100 % of the marker), so a resize
+// rescales it with no second draw. An element whose type has none draws a
+// generic marker.
 export function registerType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerType: a type name is required');
   if (!spec || typeof spec.draw !== 'function') throw new TypeError('registerType: {draw(group, ctx)} is required');
@@ -1583,8 +1676,10 @@ export function registerType(type, spec) {
   if (!HOST_NAMES.includes(host)) throw new TypeError(`registerType: host must be one of ${HOST_NAMES.join(', ')}`);
   const tool = spec.tool == null ? type : spec.tool;
   if (typeof tool !== 'string' || !tool) throw new TypeError('registerType: tool is an armed tool\'s name');
+  const place = spec.place == null ? 'glyph' : spec.place;
+  if (!PLACE_MODES.includes(place)) throw new TypeError(`registerType: place must be one of ${PLACE_MODES.join(', ')}`);
   const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
-    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool };
+    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool, place };
   types.set(type, entry);
   resetSigs(type);
   syncListening();
@@ -1729,8 +1824,62 @@ function swallow(e, prevent) {
   e.stopPropagation();
   if (prevent && e.cancelable) e.preventDefault();
 }
+// THE CREATE-CTX SEAM (U516, plan 4A.2; BOX@mode / WET@engine / FRAME@shared):
+// registerCreateCtx(name, value) → unregister puts `value` on every create
+// ctx as ctx[name] — the wet layer's `wet` (U517), the target frame's
+// `frameAt` (U561), the tray's `tray` (U514) — so an engine module plugs into
+// a type's create without an edit here. The name is CREATE_CTX_NAME, never one
+// of the ctx's own keys (CREATE_CTX_KEYS) and never one already registered (a
+// TypeError naming it). The members live in one frozen object rebuilt only
+// at a (un)registration: an event spreads it into today's ctx and does no
+// other work.
+const createCtxMembers = new Map();   // name → {value}
+let createCtxExtra = Object.freeze({});
+function rebuildCreateCtx() {
+  const out = {};
+  for (const [k, m] of createCtxMembers) out[k] = m.value;
+  createCtxExtra = Object.freeze(out);
+}
+export function registerCreateCtx(name, value) {
+  if (typeof name !== 'string' || !CREATE_CTX_NAME.test(name)) {
+    throw new TypeError(`registerCreateCtx: ${JSON.stringify(name)} is not a member name (a lower-case letter, then up to 31 letters or digits)`);
+  }
+  if (CREATE_CTX_KEYS.includes(name)) throw new TypeError(`registerCreateCtx: "${name}" is one of the create ctx's own keys`);
+  if (createCtxMembers.has(name)) throw new TypeError(`registerCreateCtx: "${name}" is already registered`);
+  if (value === undefined) throw new TypeError(`registerCreateCtx: "${name}" needs a value`);
+  const m = { value };
+  createCtxMembers.set(name, m);
+  rebuildCreateCtx();
+  return () => {
+    if (createCtxMembers.get(name) !== m) return;
+    createCtxMembers.delete(name);
+    rebuildCreateCtx();
+  };
+}
 function toolCtx() {
-  return { anchors, sourceMap, markdownText, scope: 'live', armed: armed() };
+  return { ...createCtxExtra, anchors, sourceMap, markdownText, scope: 'live', armed: armed() };
+}
+// THE SAMPLES (U516): a strokes tool's pointer event carries the browser's
+// coalesced samples (input.samples: getCoalescedEvents() when it answers a
+// non-empty list, else [the event]) and its predicted ones (input.predicted:
+// getPredictedEvents(), else []) — both feature-detected (Safari's support
+// varies) and handed as the browser gave them, never copied. A predicted
+// sample is flagged by being in input.predicted: a type draws it
+// provisionally on the wet layer and never stores it; the engine keeps none.
+// A pointercancel's input (dispatched, or cancelGesture's) carries [] and [].
+const NO_SAMPLES = Object.freeze([]);
+function samplesOf(e) {
+  let list = null;
+  if (typeof e.getCoalescedEvents === 'function') {
+    try { list = e.getCoalescedEvents(); } catch { list = null; }
+  }
+  return list && list.length ? list : [e];
+}
+function predictedOf(e) {
+  if (typeof e.getPredictedEvents !== 'function') return NO_SAMPLES;
+  let list = null;
+  try { list = e.getPredictedEvents(); } catch { list = null; }
+  return list || NO_SAMPLES;
 }
 function markdownText(md) {
   const m = page.markdown && md != null ? page.markdown.get(String(md)) : null;
@@ -1869,6 +2018,12 @@ function pointerIn(h, e) {
   const input = { event: e, phase: e.type, kind, target, root: where.root, mount: where.mount, md: where.md,
     clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType || 'mouse',
     profile: armedState.profile, host: h.name };
+  if (kind === 'strokes') {
+    // A cancel carries no samples, as cancelGesture's does: nothing to draw.
+    const cancel = e.type === 'pointercancel';
+    input.samples = cancel ? NO_SAMPLES : samplesOf(e);
+    input.predicted = cancel ? NO_SAMPLES : predictedOf(e);
+  }
   try { t.create(input, toolCtx()); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
@@ -1895,6 +2050,10 @@ export function cancelGesture(pointerId) {
   const input = { event: { type: 'pointercancel', pointerId, pointerType }, phase: 'pointercancel', kind,
     target: null, root: document, mount: null, md: null, clientX: null, clientY: null, pointerType,
     profile: armedState.profile, host: h.name };
+  if (kind === 'strokes') {
+    input.samples = NO_SAMPLES;
+    input.predicted = NO_SAMPLES;
+  }
   try { t.create(input, toolCtx()); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
