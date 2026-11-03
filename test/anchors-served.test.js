@@ -679,7 +679,10 @@ test('export: buildExportHtml splices the factory for a pinned node and not for 
   assert.equal(count(bare, '<script'), 3, 'the payload, the runtime, the shell');
   const pinned = await get('n1');
   assertSpliced(pinned, 'pinned export', ['element']);
-  assert.equal(count(pinned, '<script'), 4, 'the payload, the runtime, the resolver, the shell');
+  // U524: the export draws its shared pin — the element runtime and one data
+  // element ride right after the resolver.
+  assert.equal(count(pinned, '<script'), 6, 'the payload, the runtime, the resolver, the element runtime, the element data, the shell');
+  assert.equal(count(pinned, '<script type="application/json" data-wc-elements>'), 1, 'one element data element');
 });
 
 // A highlight's node: one id@v ref (E-STORE (a)); no kindOf is bound yet, so

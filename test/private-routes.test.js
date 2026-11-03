@@ -453,8 +453,6 @@ const REVIEWED = new Map([
 const PENDING_DOCUMENTS = new Map([
   // U523 (the pane preview draws its elements).
   ['graph.js GET /preview/pane/:node/:mount', 'U523'],
-  // U524 (the export draws its elements).
-  ['export.js GET /api/export/:ref', 'U524'],
   // U525 (the replay documents draw their elements).
   ['replay.js GET /replay', 'U525'],
   ['replay.js GET /api/replay/html', 'U525'],
@@ -733,17 +731,19 @@ module.exports = { mountPlanted };
 }
 `);
   assert.deepStrictEqual(privateCensus([planted]).problems, []);
-  // export.js wired (its handler names readerOf) while PENDING_DOCUMENTS still
-  // names it: stale.
-  const wired = path.join(dir, 'export.js');
-  const real = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/routes/export.js'), 'utf8');
-  const cut = real.replace('const opts = { mode: modeParam(req.query.mode) };', 'const opts = { mode: modeParam(req.query.mode), reader: readerOf(ctx.audience, req) };');
-  assert.notEqual(cut, real, 'the planted copy names readerOf');
-  fs.writeFileSync(wired, cut);
-  assert.match(privateCensus([wired]).problems.join('\n'), /PENDING_DOCUMENTS names "export\.js GET \/api\/export\/:ref", which now applies its projection/);
-  assert.deepStrictEqual(privateCensus([wired], new Map()).problems, [], 'with no pending entry, the wired copy passes');
-  // And unwired, with no pending entry, it is reported.
-  assert.match(privateCensus([path.join(REPO_ROOT, 'lib/server/routes/export.js')], new Map()).problems.join('\n'),
+  // export.js is wired (U524: its handler names readerOf): a pending entry
+  // still naming it is stale, and with none it passes.
+  const exportRoute = path.join(REPO_ROOT, 'lib/server/routes/export.js');
+  const stale = new Map([['export.js GET /api/export/:ref', 'U524']]);
+  assert.match(privateCensus([exportRoute], stale).problems.join('\n'), /PENDING_DOCUMENTS names "export\.js GET \/api\/export\/:ref", which now applies its projection/);
+  assert.deepStrictEqual(privateCensus([exportRoute], new Map()).problems, [], 'with no pending entry, the wired route passes');
+  // And a copy whose handler stops naming readerOf, with no pending entry, is reported.
+  const unwired = path.join(dir, 'export.js');
+  const real = fs.readFileSync(exportRoute, 'utf8');
+  const cut = real.replace('readerOf(ctx.audience, req)', "{ level: 'local' }");
+  assert.notEqual(cut, real, 'the planted copy lost its readerOf');
+  fs.writeFileSync(unwired, cut);
+  assert.match(privateCensus([unwired], new Map()).problems.join('\n'),
     /GET \/api\/export\/:ref is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/);
 });
 
