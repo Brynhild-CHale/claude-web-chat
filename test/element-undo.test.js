@@ -202,6 +202,125 @@ test('a comment\'s reply undone: the reply gone from the new version', async (t)
   assert.equal(d.srv.elements.version(c.id, 3).parent_v, 2);
 });
 
+// ── repeated undo steps back (U518b; form 5 AR1 = b, DECISIONS N.5) ─────────
+// A version the undo wrote retracts its parent: the next undo reads it as
+// restoring the version it names (its provenance's `undo`) and retracts the
+// caller's next older action — on the same element first (down to its create,
+// which the Delete path removes), then the next element — never the revert
+// the previous undo wrote.
+
+test('U518b: repeated undo on one element keeps stepping back — v3 (v1\'s payload), then the create removed, never v2\'s payload again', async (t) => {
+  const d = await boot(t);
+  const h = await highlight(d.anonApi, 'm1');
+  await ok(d.anonApi.patch(`/api/elements/${h.id}`, { payload: { color: 'blue' } }), 'PATCH blue');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo 1');
+  assert.deepEqual(r1.undone, { id: h.id, type: 'highlight', v: 2, item: 'm1', how: 'reverted', to_v: 1, now_v: 3 });
+  const bytes = logBytes(d.root);
+  const r2 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo 2');
+  assert.deepEqual(r2.undone, { id: h.id, type: 'highlight', v: 1, item: 'm1', how: 'removed' },
+    'the second undo retracts the create, not the revert the first one wrote');
+  assert.equal(d.srv.elements.version(h.id, 4), null, 'no v4: never toggled back to v2\'s payload');
+  assert.equal(logBytes(d.root), bytes, 'nothing appended (C2)');
+  assert.deepEqual(d.srv.state.elements, []);
+  assert.equal(d.srv.elements.version(h.id, 3).provenance.undo, 1, 'the revert is marked with the version it restores');
+  const none = await d.anonApi.post(UNDO, { item: 'm1' });
+  assert.equal(none.status, 409, none.text);
+
+  // Three versions: each undo restores the one before the last it retracted.
+  const g = await highlight(d.anonApi, 'm1');
+  await ok(d.anonApi.patch(`/api/elements/${g.id}`, { payload: { color: 'blue' } }), 'PATCH blue');
+  await ok(d.anonApi.patch(`/api/elements/${g.id}`, { payload: { color: 'green' } }), 'PATCH green');
+  const s1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo green');
+  assert.deepEqual([s1.undone.v, s1.undone.to_v, s1.undone.now_v], [3, 2, 4]);
+  assert.equal(d.srv.elements.version(g.id, 4).payload.color, 'blue');
+  const s2 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo blue');
+  assert.deepEqual([s2.undone.v, s2.undone.how, s2.undone.to_v, s2.undone.now_v], [2, 'reverted', 1, 5]);
+  const v5 = d.srv.elements.version(g.id, 5);
+  assert.equal(v5.payload.color, 'gold', 'v5 holds v1\'s payload (the pre-edit state), not green');
+  assert.deepEqual([v5.parent_v, v5.provenance.undo], [4, 1]);
+  assert.deepEqual(d.srv.state.elements, [`${g.id}@5`]);
+  const s3 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo the create');
+  assert.deepEqual([s3.undone.id, s3.undone.v, s3.undone.how], [g.id, 1, 'removed']);
+  assert.deepEqual(d.srv.state.elements, []);
+});
+
+test('U518b: a comment edited then undone twice: its text back, then the comment deleted — never the edited text again', async (t) => {
+  const d = await boot(t);
+  const c = await comment(d.anonApi, 'first words');
+  await ok(d.anonApi.patch(`/api/elements/${c.id}`, { text: 'second words' }), 'PATCH text');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo 1');
+  assert.deepEqual([r1.undone.v, r1.undone.how, r1.undone.now_v], [2, 'reverted', 3]);
+  assert.equal(d.srv.state.comments.find((p) => p.id === c.id).text, 'first words');
+  const r2 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo 2');
+  assert.deepEqual(r2.undone, { id: c.id, type: 'comment', v: 1, item: 'm1', how: 'removed' });
+  assert.ok(!d.srv.state.comments.some((p) => p.id === c.id), 'the pin is gone');
+});
+
+test('U518b: a glyph moved twice, then a move back to its first offset, undone four times — each move retracted in turn, then the comment deleted (the mark, not the content, tells a revert)', async (t) => {
+  const d = await boot(t);
+  const glyph = (id) => `/api/elements/${encodeURIComponent(id)}/glyph`;
+  const shown = (id) => { const p = d.srv.state.comments.find((x) => x.id === id); return p ? (p.display ? p.display.glyph : null) : undefined; };
+  const c = await comment(d.anonApi);
+  const A = { dx: 10, dy: 20, corner: 'tl' };
+  const B = { dx: -30, dy: 5, corner: 'br' };
+  await ok(d.anonApi.post(glyph(c.id), A), 'move to A');
+  await ok(d.anonApi.post(glyph(c.id), B), 'move to B');
+  // A move back to A: the same payload and display as v2 — content alone would
+  // read it as a revert of v3; it carries no mark, so it is an action.
+  await ok(d.anonApi.post(glyph(c.id), A), 'move back to A');
+  assert.deepEqual(shown(c.id), A);
+  const seen = [];
+  for (let k = 0; k < 3; k++) {
+    const r = await ok(d.anonApi.post(UNDO, { item: 'm1' }), `undo ${k + 1}`);
+    seen.push([r.undone.v, r.undone.how, shown(c.id)]);
+  }
+  assert.deepEqual(seen, [[4, 'reverted', B], [3, 'reverted', A], [2, 'reverted', null]]);
+  const last = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo the create');
+  assert.deepEqual([last.undone.v, last.undone.how], [1, 'removed']);
+  assert.equal(shown(c.id), undefined);
+});
+
+test('U518b: across two elements the undo walks the caller\'s actions newest first — B\'s edit, A\'s edit, B\'s create, A\'s create — never B\'s revert', async (t) => {
+  const d = await boot(t);
+  const a = await highlight(d.anonApi, 'm1');
+  const b = await highlight(d.anonApi, 'm2');
+  await ok(d.anonApi.patch(`/api/elements/${a.id}`, { payload: { color: 'blue' } }), 'PATCH A');
+  await ok(d.anonApi.patch(`/api/elements/${b.id}`, { payload: { color: 'blue' } }), 'PATCH B');
+  const steps = [];
+  for (let k = 0; k < 4; k++) {
+    const r = await ok(d.anonApi.post(UNDO, {}), `page-wide undo ${k + 1}`);
+    steps.push([r.undone.id, r.undone.v, r.undone.how]);
+  }
+  assert.deepEqual(steps, [
+    [b.id, 2, 'reverted'],
+    [a.id, 2, 'reverted'],
+    [b.id, 1, 'removed'],
+    [a.id, 1, 'removed'],
+  ]);
+  assert.equal(d.srv.elements.version(b.id, 4), null, 'B\'s revert never retracted');
+  assert.equal(d.srv.elements.version(a.id, 4), null);
+  assert.deepEqual(d.srv.state.elements, []);
+  const none = await d.anonApi.post(UNDO, {});
+  assert.equal(none.status, 409, none.text);
+});
+
+test('U518b, AF10: a revert the caller wrote over another writer\'s version exposes that writer\'s action — the next undo is not the caller\'s (409 naming it), and the other writer\'s own undo takes it', async (t) => {
+  const d = await boot(t);
+  const h = await highlight(d.api, 'm1');
+  assert.equal(h.writer.owner, 'claude');
+  await ok(d.anonApi.patch(`/api/elements/${h.id}`, { payload: { color: 'blue' } }), 'the user\'s PATCH');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'the user\'s undo');
+  assert.deepEqual([r1.undone.v, r1.undone.how, r1.undone.now_v], [2, 'reverted', 3]);
+  assert.equal(d.srv.elements.version(h.id, 3).writer.owner, 'user', 'the revert carries the caller\'s stamp');
+  const bytes = logBytes(d.root);
+  const r2 = await d.anonApi.post(UNDO, { item: 'm1' });
+  assert.equal(r2.status, 409, r2.text);
+  assert.deepEqual(r2.json.newer, [{ id: h.id, type: 'highlight', writer_class: 'claude' }]);
+  assert.equal(logBytes(d.root), bytes);
+  const own = await ok(d.api.post(UNDO, { item: 'm1' }), 'Claude\'s undo');
+  assert.deepEqual([own.undone.id, own.undone.v, own.undone.how], [h.id, 1, 'removed']);
+});
+
 // ── AF10: attribution picks the version ────────────────────────────────────
 
 test('AF10: a pane\'s newer highlight on the same item — the user\'s own newest is undone, the pane\'s named in newer and the hint and left as it is', async (t) => {
@@ -267,6 +386,52 @@ test('UNDO@scope: after a node commit the committed version is not undone (409; 
   const r2 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo the edit');
   assert.deepEqual([r2.undone.v, r2.undone.how, r2.undone.to_v], [2, 'reverted', 1]);
   assert.equal(fs.readFileSync(nodeFile, 'utf8'), before);
+});
+
+test('UNDO@scope, U518b: the step back stops at a committed ordinary version — v1 committed, PATCH v2, undo (v3), undo again 409; the element live at v3, the node file unchanged', async (t) => {
+  const d = await boot(t);
+  const h = await highlight(d.anonApi, 'm1');
+  const done = await turn(d.api, 'commit the highlight');
+  const nodeId = done.node_id || done.node || (await ok(d.api.get('/api/graph'))).active;
+  assert.ok(d.srv.elements.homeOf(h.id, 1), 'v1 is committed');
+  const nodeFile = path.join(projectPaths(d.root).graphDir, `${nodeId}.json`);
+  const before = fs.readFileSync(nodeFile, 'utf8');
+  await ok(d.anonApi.patch(`/api/elements/${h.id}`, { payload: { color: 'blue' } }), 'PATCH blue');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo the edit');
+  assert.deepEqual([r1.undone.v, r1.undone.how, r1.undone.to_v, r1.undone.now_v], [2, 'reverted', 1, 3]);
+  assert.equal(d.srv.elements.version(h.id, 3).provenance.undo, 1, 'v3 is marked as restoring v1');
+  const bytes = logBytes(d.root);
+  const r2 = await d.anonApi.post(UNDO, { item: 'm1' });
+  assert.equal(r2.status, 409, r2.text);
+  assert.equal(r2.json.error, 'nothing to undo');
+  assert.deepEqual(d.srv.state.elements, [`${h.id}@3`], 'the committed element is not removed');
+  assert.equal(logBytes(d.root), bytes, 'nothing appended');
+  assert.equal(fs.readFileSync(nodeFile, 'utf8'), before, 'the node file unchanged');
+});
+
+test('UNDO@scope, U518b: the step back never crosses a committed revert — v1, PATCH v2, undo (v3), commit, PATCH v4, undo (v5 = v3\'s payload), undo again 409', async (t) => {
+  const d = await boot(t);
+  const h = await highlight(d.anonApi, 'm1');
+  await ok(d.anonApi.patch(`/api/elements/${h.id}`, { payload: { color: 'blue' } }), 'PATCH blue');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo blue');
+  assert.deepEqual([r1.undone.v, r1.undone.to_v, r1.undone.now_v], [2, 1, 3]);
+  const done = await turn(d.api, 'commit the revert');
+  const nodeId = done.node_id || done.node || (await ok(d.api.get('/api/graph'))).active;
+  assert.ok(d.srv.elements.homeOf(h.id, 3), 'v3 (the revert) is committed');
+  assert.equal(d.srv.elements.homeOf(h.id, 1), null, 'v1 is not');
+  const nodeFile = path.join(projectPaths(d.root).graphDir, `${nodeId}.json`);
+  const before = fs.readFileSync(nodeFile, 'utf8');
+  await ok(d.anonApi.patch(`/api/elements/${h.id}`, { payload: { color: 'green' } }), 'PATCH green');
+  const r2 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo green');
+  assert.deepEqual([r2.undone.v, r2.undone.how, r2.undone.to_v, r2.undone.now_v], [4, 'reverted', 3, 5]);
+  assert.equal(d.srv.elements.version(h.id, 5).payload.color, 'gold', 'v5 holds the committed v3\'s payload');
+  const bytes = logBytes(d.root);
+  const r3 = await d.anonApi.post(UNDO, { item: 'm1' });
+  assert.equal(r3.status, 409, r3.text);
+  assert.equal(r3.json.error, 'nothing to undo');
+  assert.deepEqual(d.srv.state.elements, [`${h.id}@5`], 'the element the node holds is not deleted by a live undo');
+  assert.equal(logBytes(d.root), bytes, 'the log bytes unchanged');
+  assert.equal(fs.readFileSync(nodeFile, 'utf8'), before, 'the node file unchanged');
 });
 
 test('UNDO@scope: a chat-comment is never a candidate, even the newest; no item undoes the page-wide newest of the caller\'s and names its item', async (t) => {
