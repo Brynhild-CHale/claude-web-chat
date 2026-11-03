@@ -626,8 +626,49 @@ function setRecords(type, p, list) {
     next.set(String(rec.id), deepFreeze(structuredClone(rec)));
   }
   p.records = next;
+  relayRows(type, [...next.values()]);
   const entry = registrations.get(type);
   if (entry && entry.spec[PLUGIN] === type) reregister(type);
+}
+
+// The overlay's live rows of a plug-in type follow its records (the GET and
+// the element:<type> frame), as highlight.js's applyLive does for its own,
+// through the overlay's own row path (removeElements / upsertElements, whose
+// normRow keeps only what it draws by; no second row store): a row that left
+// is removed, a new or changed one upserted, an unchanged one left alone (so
+// a stroke's frame does not re-place every earlier stroke). Without it a
+// stroke drawn live has a record but no row until the next hello or reset
+// (U512b; the hello and the reset still fill the rows through takeLive).
+function relayRows(type, recs) {
+  if (typeof ov.elementsOf !== 'function' || typeof ov.upsertElements !== 'function' || typeof ov.removeElements !== 'function') return;
+  const have = new Map(ov.elementsOf('live').filter((r) => r.type === type).map((r) => [r.id, r]));
+  const ids = new Set(recs.map((r) => String(r.id)));
+  const gone = [...have.keys()].filter((id) => !ids.has(id));
+  const fresh = recs.filter((r) => !sameRow(have.get(String(r.id)), r)).map((r) => ({ ...r, type }));
+  if (gone.length) ov.removeElements('live', gone);
+  if (fresh.length) ov.upsertElements('live', fresh);
+}
+// Whether the overlay's row already draws what this record would give it:
+// every field normRow keeps, compared as JSON (a false "changed" only costs
+// an upsert; a record carrying a host answer is always upserted).
+const jsonOf = (x) => { try { return JSON.stringify(x); } catch { return undefined; } };
+function sameRow(h, r) {
+  if (!h || h.pending || r.pending || (r.answer && typeof r.answer === 'object')) return false;
+  const want = jsonOf({
+    v: r.v == null ? null : r.v,
+    schema: typeof r.schema === 'string' ? r.schema : null,
+    shared: r.shared === undefined ? null : !!r.shared,
+    replies: Number.isFinite(r.replies) ? r.replies : 0,
+    answered: r.answered === undefined ? undefined : !!r.answered,
+    anchor: r.anchor == null ? null : r.anchor,
+    display: r.display == null ? null : r.display,
+    answer: typeof ov.servedAnswerOf === 'function' ? ov.servedAnswerOf(r) : null,
+  });
+  const got = jsonOf({
+    v: h.v, schema: h.schema, shared: h.shared, replies: h.replies, answered: h.answered,
+    anchor: h.anchor, display: h.display == null ? null : h.display, answer: h.answer == null ? null : h.answer,
+  });
+  return want !== undefined && want === got;
 }
 
 // record(id) for a plug-in type's draw: the record, or null.
