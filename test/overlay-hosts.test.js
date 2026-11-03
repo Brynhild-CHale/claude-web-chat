@@ -183,7 +183,7 @@ test('hosts(): the page first on #el-layer at --z-pins; a host gets one body-lev
   const [page] = ov.hosts();
   assert.deepEqual({ name: page.name, layer: page.layer, rung: page.rung }, { name: 'page', layer: 'el-layer', rung: '--z-pins' });
   assert.equal(page.root, W.document.getElementById('main'), 'the page host is rooted at #main');
-  assert.deepEqual(page.kinds, ['element', 'range', 'source']);
+  assert.deepEqual(page.kinds, ['element', 'range', 'source', 'point']);
   const off = register('chat');
   try {
     const hs = ov.hosts();

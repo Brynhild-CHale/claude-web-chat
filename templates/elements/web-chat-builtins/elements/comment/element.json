@@ -5,7 +5,7 @@
   "private": true,
   "schema": "comment@2",
   "reads": ["comment@1", "comment@2"],
-  "anchors": ["element", "range", "source"],
+  "anchors": ["element", "range", "source", "point"],
   "label": "Comment",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "settings": {

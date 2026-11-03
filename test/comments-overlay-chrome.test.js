@@ -992,6 +992,235 @@ test('the page title\'s heading and its first paragraph take a comment pin: the 
   } finally { await dropMd(); }
 });
 
+// ── a point (4C.1, U532; DECISIONS.md C5; RULED U531-U532@point-record-kind a) ──
+// A tap on a fixed-aspect target (an svg, an img, a canvas) pins a POINT: the
+// target's element record with kind 'point' and x, y, aspect beside, and the
+// TARGET's 0.8.5 locator; a tap on text or a control keeps the element anchor
+// (the conversion at creation), never a raw point over prose. The overlay
+// places a point row at its x/y (anchors.pointAt), one marker per point,
+// clipped to the well and never over a displayed frame; a pick of kind
+// 'point' records one only on a fixed-aspect target; elementsAt holds a point
+// by its glyph's box. Boxes on stubbed rects: the target's own
+// getBoundingClientRect (the one target-frame walk reads it) and the
+// overlay's rectOf (POS) answer the same live object.
+const PT_HTML = (id) => `<svg class="chart" data-pin="svg-${id}" width="200" height="100" viewBox="0 0 200 100"><circle class="dot" cx="50" cy="50" r="10"></circle></svg>`
+  + `<img class="pic" data-pin="img-${id}" alt="a picture"><canvas class="cv" data-pin="cv-${id}"></canvas>`
+  + `<p class="para">a paragraph of prose in ${id}</p><button class="btn">Push</button><script>
+    root.querySelector('.btn').addEventListener('click', function () { window.__goClicks.push(mountId); });
+  </script>`;
+const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+// The target's box, live: POS[key] for the overlay, and the element's own box
+// for the target-frame walk (jsdom does no layout).
+function frameBox(el, key, r) {
+  POS[key] = r;
+  el.getBoundingClientRect = () => POS[key];
+}
+async function pointPanes() {
+  for (const id of ['pt1', 'pt2']) {
+    if (M.itemEl(W.document, id)) continue;
+    await shell.frame({ type: 'render', id, target: 'main', params: {}, html: PT_HTML(id) });
+  }
+  await shell.tick();
+  for (const id of ['pt1', 'pt2']) {
+    const r = rootOf(id);
+    const off = id === 'pt1' ? 0 : 400;
+    frameBox(r.querySelector('svg'), `svg-${id}`, rect(100 + off, 200, 200, 100));
+    frameBox(r.querySelector('img'), `img-${id}`, rect(100 + off, 320, 80, 60));
+    frameBox(r.querySelector('canvas'), `cv-${id}`, rect(200 + off, 320, 120, 60));
+  }
+}
+const svgOf = (id) => rootOf(id).querySelector('svg');
+function tapWith(el, pointerType, x, y, pointerId) {
+  pe(el, 'pointerdown', pointerType, pointerId, { clientX: x, clientY: y });
+  pe(el, 'pointerup', pointerType, pointerId, { clientX: x, clientY: y });
+  el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType, pointerId, clientX: x, clientY: y }));
+}
+// Tap with the comment tool armed and Pin: the body posted, or null.
+async function pinWith(el, pointerType, x, y, pointerId) {
+  ov.setArmed('comment');
+  const n = posts.length;
+  try {
+    tapWith(el, pointerType, x, y, pointerId);
+    const pop = pinPop();
+    if (!pop || !pop.querySelector('.pin-text')) return null;
+    pop.querySelector('.pin-text').value = 'a point';
+    shell.click(pop.querySelector('.pin-save'));
+    await waitUntil(() => posts.length === n + 1, { what: 'the POST' });
+    return posts.at(-1);
+  } finally { ov.setArmed(null); comments.closePinPop(); }
+}
+function pointPin(id, mount, x, y, extra = {}) {
+  const svg = svgOf(mount);
+  const b = svg.getBoundingClientRect();
+  const anchor = anchors.recordPoint(rootOf(mount), svg, b.left + x * b.width, b.top + y * b.height, { mount });
+  assert.equal(anchor.kind, 'point', `precondition: ${id} is a point`);
+  return { id, v: 1, seq: 1, type: 'comment', text: `${id} text`, shared: true, replies: [], anchor,
+    locator: { mount, selector: 'svg.chart', text: '', ordinal: 0 }, ...extra };
+}
+// The anchor point a point marker must sit at: pointAt over the target's box now.
+const expectAt = (pin, mount) => anchors.pointAt(pin.anchor, POS[`svg-${mount}`]);
+const placedOn = (m, p) => !!m && !!p && m.style.display === '' && Math.abs(parseFloat(m.style.left) - p.x) <= 0.5
+  && Math.abs(parseFloat(m.style.top) - p.y) <= 0.5;
+
+test('a pen tap on a <circle> inside a pane\'s svg posts a point: the svg\'s element record with kind point, x, y and aspect, and the svg\'s 0.8.5 locator', async () => {
+  await setLive([]);
+  await pointPanes();
+  const circle = rootOf('pt1').querySelector('circle');
+  const body = await pinWith(circle, 'pen', 150, 250, 61);
+  assert.ok(body, 'the pen opened the composer and posted');
+  assert.equal(body.type, 'comment');
+  const elRec = anchors.record(rootOf('pt1'), svgOf('pt1'), { mount: 'pt1' });
+  const { kind, ...elFields } = elRec;
+  assert.equal(kind, 'element');
+  assert.deepEqual(body.anchor, { ...elFields, kind: 'point', x: 0.25, y: 0.5, aspect: 2 }, 'the svg\'s record, kind point, x/y/aspect beside');
+  assert.deepEqual(body.anchor, anchors.recordPoint(rootOf('pt1'), circle, 150, 250, { mount: 'pt1' }));
+  assert.deepEqual(body.locator, { mount: 'pt1', selector: 'svg.chart', text: '', ordinal: 0 }, 'the TARGET\'s locator, not the circle\'s');
+});
+
+test('a pen tap on an img and on a canvas pins a point; on a paragraph an element; a pen on a button an element, the button unheard', async () => {
+  await pointPanes();
+  const r = rootOf('pt1');
+  const img = await pinWith(r.querySelector('img'), 'pen', 140, 350, 62);
+  assert.equal(img.anchor.kind, 'point');
+  assert.deepEqual([img.anchor.x, img.anchor.y, img.anchor.aspect], [0.5, 0.5, 1.3333]);
+  assert.equal(img.locator.selector, 'img.pic');
+  const cv = await pinWith(r.querySelector('canvas'), 'pen', 230, 335, 63);
+  assert.equal(cv.anchor.kind, 'point');
+  assert.deepEqual([cv.anchor.x, cv.anchor.y], [0.25, 0.25]);
+  assert.equal(cv.locator.selector, 'canvas.cv');
+  const para = r.querySelector('p.para');
+  const p = await pinWith(para, 'pen', 120, 400, 64);
+  assert.equal(p.anchor.kind, 'element', 'text keeps the element anchor (C5: never a raw point over prose)');
+  assert.deepEqual(p.anchor, anchors.record(r, para, { mount: 'pt1' }));
+  assert.equal(p.locator.selector, 'p.para');
+  W.__goClicks.length = 0;
+  const btn = await pinWith(r.querySelector('button.btn'), 'pen', 120, 420, 65);
+  assert.equal(btn.anchor.kind, 'element', 'a control keeps the element anchor');
+  assert.deepEqual(W.__goClicks, [], 'the button did not run');
+});
+
+test('a finger tap on the svg pins a point by the input policy; a tap 1 px outside the svg\'s box pins an element', async () => {
+  await pointPanes();
+  IM.setFingerDraws('off');
+  try {
+    const circle = rootOf('pt1').querySelector('circle');
+    const finger = await pinWith(circle, 'touch', 200, 220, 66);
+    assert.ok(finger, 'a finger tap on the svg opened the composer');
+    assert.equal(finger.anchor.kind, 'point');
+    assert.deepEqual([finger.anchor.x, finger.anchor.y], [0.5, 0.2]);
+    const out = await pinWith(circle, 'mouse', 99, 250, 67);
+    assert.equal(out.anchor.kind, 'element', 'outside the box: the element path, unchanged');
+    assert.deepEqual(out.anchor, anchors.record(rootOf('pt1'), circle, { mount: 'pt1' }));
+  } finally { W.localStorage.removeItem('wc:finger-draws'); }
+});
+
+test('two point pins on one svg draw two markers at pointAt; after a resize both follow on the overlay\'s redraw, no interval armed', async () => {
+  await pointPanes();
+  const intervals = shell.intervals().length;
+  const a = pointPin('c201', 'pt1', 0.25, 0.5);
+  const b = pointPin('c202', 'pt1', 0.75, 0.2);
+  await setLive([a, b]);
+  await drawnUntil(() => placedOn(markersFor('c201')[0], expectAt(a, 'pt1')) && placedOn(markersFor('c202')[0], expectAt(b, 'pt1')), 'two points drawn');
+  assert.notEqual(markersFor('c201')[0], markersFor('c202')[0], 'two markers, not one group');
+  assert.equal(markersFor('c201').length, 1);
+  assert.equal(markersFor('c201')[0].style.left, '150px');
+  assert.equal(markersFor('c201')[0].style.top, '250px');
+  assert.equal(markersFor('c201')[0].style.transform, 'translate(-13px, -26px)', 'the glyph\'s anchor point (its bottom centre) at the point');
+  // The svg resizes (the pane's colSpan and rows): both follow.
+  POS['svg-pt1'] = rect(40, 260, 400, 200);
+  await shell.frame({ type: 'pane:state', id: 'pt1', pane_state: { colSpan: 6, rows: 8 } });
+  await drawnUntil(() => placedOn(markersFor('c201')[0], expectAt(a, 'pt1')) && placedOn(markersFor('c202')[0], expectAt(b, 'pt1')), 'both re-placed');
+  assert.equal(markersFor('c202')[0].style.left, '340px');
+  assert.equal(markersFor('c202')[0].style.top, '300px');
+  assert.equal(shell.intervals().length, intervals, 'no interval armed');
+  POS['svg-pt1'] = rect(100, 200, 200, 100);
+  await setLive([]);
+});
+
+test('a point glyph whose box meets a displayed frame is not drawn; a point outside the well is clipped', async () => {
+  await pointPanes();
+  const a = pointPin('c203', 'pt1', 0.25, 0.5);
+  const b = pointPin('c204', 'pt1', 0.75, 0.5);
+  await setLive([a, b]);
+  await drawnUntil(() => placedOn(markersFor('c203')[0], expectAt(a, 'pt1')) && placedOn(markersFor('c204')[0], expectAt(b, 'pt1')), 'both drawn');
+  const frame = W.document.createElement('iframe');
+  frame.dataset.pin = 'pt-frame';
+  POS['pt-frame'] = rect(140, 230, 20, 20);   // over c203's glyph (137..163 × 224..250), clear of c204's
+  W.document.body.appendChild(frame);
+  const well = W.document.getElementById('main');
+  try {
+    ov.requestDraw();
+    await drawnUntil(() => markersFor('c203')[0].style.display === 'none', 'the framed glyph hidden');
+    assert.ok(placedOn(markersFor('c204')[0], expectAt(b, 'pt1')), 'the other point still drawn');
+    frame.remove();
+    ov.requestDraw();
+    await drawnUntil(() => placedOn(markersFor('c203')[0], expectAt(a, 'pt1')), 'drawn again once the frame goes');
+    // The well's right edge between the two points: c204's point leaves the clip.
+    well.dataset.pin = 'well';
+    POS.well = rect(0, 0, 200, 768);
+    ov.requestDraw();
+    await drawnUntil(() => markersFor('c204')[0].style.display === 'none', 'the point outside the well clipped');
+    assert.ok(placedOn(markersFor('c203')[0], expectAt(a, 'pt1')), 'the point inside it drawn');
+  } finally {
+    frame.remove();
+    delete well.dataset.pin;
+    delete POS.well;
+    await setLive([]);
+    ov.requestDraw();
+    flush();
+  }
+});
+
+test('a pick of kind point: a click on another svg records a point; a click on a paragraph records nothing and the pick waits; cancel ends it; an orphaned point pin\'s Re-anchor does not throw', async () => {
+  await pointPanes();
+  const orph = await shell.importApp('orphans.js');
+  const { PICK_KINDS } = ov;
+  assert.ok(PICK_KINDS.includes('point'));
+  const handle = ov.pick({ kind: 'point' });
+  let got;
+  handle.promise.then((v) => { got = v; });
+  try {
+    const para = rootOf('pt2').querySelector('p.para');
+    tapWith(para, 'mouse', 520, 400, 71);
+    await shell.tick();
+    assert.equal(got, undefined, 'a paragraph records nothing: the pick still waits');
+    tapWith(rootOf('pt2').querySelector('circle'), 'mouse', 600, 225, 72);
+    await shell.tick();
+    assert.ok(got && got.record, 'the svg click resolved the pick');
+    assert.equal(got.kind, 'point');
+    assert.equal(got.mount, 'pt2');
+    assert.deepEqual(got.record, anchors.recordPoint(rootOf('pt2'), svgOf('pt2'), 600, 225, { mount: 'pt2' }));
+  } finally { handle.cancel(); }
+  // Cancel (the card's Escape) resolves null.
+  const second = ov.pick({ kind: 'point' });
+  second.cancel();
+  assert.equal(await second.promise, null);
+  // An orphaned point pin (its target gone: a record no element answers).
+  const pin = pointPin('c205', 'pt1', 0.5, 0.5);
+  const lost = { ...pin, anchor: { ...pin.anchor, at: { path: [9, 9, 9], sib: 0 }, fp: { ...pin.anchor.fp, tag: 'video', cls: ['gone'], attrs: [] }, rows: [] } };
+  await setLive([lost]);
+  await drawnUntil(() => ov.orphans().some((o) => o.id === 'c205'), 'listed as an orphan');
+  const o = ov.orphans().find((x) => x.id === 'c205');
+  assert.doesNotThrow(() => orph.startPick(o), 'the Re-anchor never throws');
+  W.document.dispatchEvent(new W.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await setLive([]);
+});
+
+test('a press on a point pin\'s glyph names it in a new comment\'s chain; a press elsewhere on the same svg does not', async () => {
+  await pointPanes();
+  const a = pointPin('c206', 'pt1', 0.25, 0.5);   // at (150, 250): its glyph 137..163 × 224..250
+  await setLive([a]);
+  await drawnUntil(() => placedOn(markersFor('c206')[0], expectAt(a, 'pt1')), 'the point drawn');
+  assert.deepEqual(ov.elementsAt(150, 240).map((h) => h.id), ['c206'], 'held by its glyph');
+  assert.deepEqual(ov.elementsAt(250, 280).map((h) => h.id), [], 'not by its whole target');
+  const circle = rootOf('pt1').querySelector('circle');
+  const on = await pinWith(circle, 'mouse', 150, 240, 73);
+  assert.deepEqual(on.payload.chain, ['c206'], 'the press on its glyph names it');
+  const off = await pinWith(circle, 'mouse', 250, 280, 74);
+  assert.equal('chain' in off.payload, false, 'a press elsewhere on the svg names nothing');
+  await setLive([]);
+});
+
 // ── get_comments, replayed against a real daemon ───────────────────────────
 // Last: the shell's globals go back first (a daemon's timers need Node's own).
 const captured = { body: null };

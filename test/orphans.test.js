@@ -486,3 +486,77 @@ test('a preview opened while a pick is pending: the card stays up with READONLY_
   }
   assert.equal(ov.drawnScopeOf(), 'live');
 });
+
+// An orphaned, guess-less POINT pin (4C.1; U532): the card names the point
+// pick's hint and arms pick({kind: 'point'}); a click on a paragraph writes
+// nothing and the pick waits; the card's Escape cancels with nothing written;
+// a click inside another svg PATCHes {anchor: {kind: 'point', …}} through
+// write(), the record recordPoint makes of that click.
+test('a guess-less point pin: the card shows the point hint and arms the point pick; a paragraph writes nothing; Escape cancels; a click inside another svg PATCHes a point anchor', async () => {
+  const SVG_BOX = { left: 500, top: 300, width: 200, height: 100, right: 700, bottom: 400, x: 500, y: 300 };
+  await shell.frame({ type: 'render', id: 'pv', target: 'main', params: {},
+    html: '<svg class="chart" width="200" height="100" viewBox="0 0 200 100"><circle class="dot" cx="50" cy="50" r="10"></circle></svg><p class="para">a paragraph of prose</p>' });
+  await waitUntil(() => M.itemEl(W.document, 'pv'), { timeout: 3000, what: 'the pv pane mounted' });
+  const svg = rootOf('pv').querySelector('svg');
+  svg.getBoundingClientRect = () => SVG_BOX;
+  const tap = (node, x, y) => {
+    const init = { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: 91, isPrimary: true, clientX: x, clientY: y };
+    node.dispatchEvent(new W.PointerEvent('pointerdown', { ...init, buttons: 1 }));
+    node.dispatchEvent(new W.PointerEvent('pointerup', { ...init, buttons: 0 }));
+    node.dispatchEvent(new W.PointerEvent('click', { ...init, detail: 1 }));
+  };
+  // The pin's target is gone from p2: no element answers its record, no guess.
+  const made = anchors.recordPoint(rootOf('pv'), svg, 550, 350, { mount: 'pv' });
+  assert.equal(made.kind, 'point', 'precondition: a point record');
+  const LOSTPT = { id: 'c14', v: 2, type: 'comment', shared: true, replies: 0,
+    anchor: { ...made, mount: 'p2', at: { path: [9, 9, 9], sib: 0 }, fp: { ...made.fp, tag: 'video', cls: ['gone'], attrs: [] }, rows: [] } };
+  ov.setElements('live', [...ROWS, LOSTPT]);
+  await waitUntil(() => orphanIds().includes('c14'), { timeout: 4000, what: 'the point pin orphaned' });
+  assert.ok(!ov.orphans().find((o) => o.id === 'c14').guess, 'guess-less');
+  const act = () => listPop().querySelector('[data-el-id="c14"] .wc-orphan-act');
+  const n0 = patches().length;
+  patchAnswer = (url, init) => {
+    const b = JSON.parse(init.body);
+    return { ok: true, pin: { id: 'c14', v: 3 }, element: { id: 'c14', v: 3, type: 'comment', record: b.anchor } };
+  };
+  try {
+    orph.openOrphanList();
+    shell.click(act());
+    await shell.tick();
+    assert.ok(card(), 'the pick card is up');
+    assert.ok(card().textContent.includes(orph.PICK_HINTS.point), 'the point pick\'s hint');
+    assert.doesNotMatch(card().textContent, /no anchor kind/);
+    // A paragraph is no fixed-aspect target: nothing written, the pick waits.
+    tap(rootOf('pv').querySelector('p.para'), 560, 420);
+    await shell.tick(20);
+    assert.equal(patches().length, n0, 'a paragraph writes nothing');
+    assert.ok(card(), 'the pick still waits');
+    // The card's Escape cancels: nothing written, the card gone.
+    shell.key('Escape');
+    await shell.tick();
+    assert.equal(card(), null);
+    tap(rootOf('pv').querySelector('circle'), 600, 325);
+    await shell.tick(20);
+    assert.equal(patches().length, n0, 'Escape writes nothing, and the cancelled pick takes no click');
+    // Again, and click inside the svg.
+    orph.openOrphanList();
+    shell.click(act());
+    await shell.tick();
+    const want = anchors.recordPoint(rootOf('pv'), svg, 600, 325, { mount: 'pv' });
+    tap(rootOf('pv').querySelector('circle'), 600, 325);
+    await waitUntil(() => /Re-anchored/.test(noteText()), { timeout: 3000, what: 'the picked point written' });
+    const sent = patches().slice(n0);
+    assert.equal(sent.length, 1, 'one PATCH');
+    assert.equal(sent[0].url, '/api/elements/c14');
+    assert.equal(sent[0].body.anchor.kind, 'point');
+    assert.deepEqual(sent[0].body.anchor, want, 'the record recordPoint makes of the click');
+    assert.equal(sent[0].body.anchor.mount, 'pv');
+    assert.equal(sent[0].body.base_v, 2);
+    assert.equal(noteText(), 'Re-anchored · anchor v3 written, the node untouched');
+    shell.key('Escape');
+    await shell.tick();
+  } finally {
+    patchAnswer = null;
+    ov.setElements('live', ROWS);
+  }
+});
