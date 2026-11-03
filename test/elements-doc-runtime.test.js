@@ -286,6 +286,54 @@ test('the document ctx\'s record(id): a payload key named like one of the six ba
   assert.equal(rec.label, 'framed', 'the other payload keys still ride flat');
 });
 
+// THE PLUG-IN SETTINGS (U512c): a document has no saved settings and no armed
+// tool, so a plug-in group's ctx.settings() answers its row's element.json
+// defaults — the live draw ctx's answer for a type that is not armed.
+test('the document ctx\'s settings(): a plug-in group\'s element.json defaults, frozen, {small, large}; {} levels for a row with none; no settings on a built-in\'s ctx', async () => {
+  const p = fixturePayload();
+  const DEFAULTS = { small: { tool: 'pen' }, large: { width: 4, colour: '#1f2328', probe: false } };
+  p.types[0].settings = JSON.parse(JSON.stringify(DEFAULTS));
+  assert.equal(E.validatePayload(p), null, 'a row\'s settings defaults validate');
+  assert.ok(E.dataElement(p).includes('"settings":'), 'the defaults ride the data element');
+  const head = 'BUILTIN.comment = { draw: function (g) {';
+  const edit = (x) => x.replace(head, 'BUILTIN.comment = { draw: function (g, ctx) { window.__commentCtx = ctx;');
+  const { win } = open(documentOf(p, fixture().node, edit));
+  const box = fBoxDraw(win);
+  win.__wcMount.elements.define('f-box', box.draw, p.types[0].assets);
+  await settled(win);
+  assert.equal(typeof box.ctx.settings, 'function', 'a plug-in group\'s ctx carries settings');
+  const got = box.ctx.settings();
+  assert.deepEqual(JSON.parse(JSON.stringify(got)), DEFAULTS, 'the element.json defaults, by level');
+  assert.deepEqual(Object.keys(got), ['small', 'large']);
+  assert.ok(Object.isFrozen(got) && Object.isFrozen(got.small) && Object.isFrozen(got.large), 'frozen: nothing writes through the seam');
+  assert.equal(got.small.tool, 'pen');
+  assert.deepEqual([got.large.width, got.large.colour, got.large.probe], [4, '#1f2328', false]);
+  try { got.large.width = 99; } catch { /* strict code throws; the value stands either way */ }
+  assert.equal(box.ctx.settings().large.width, 4, 'a write to an answer changes no later answer');
+  assert.equal(win.__commentCtx && win.__commentCtx.settings, undefined, 'a built-in\'s ctx has no settings, as live');
+  // A row with no settings (an older builder's payload) reads as none.
+  const q = fixturePayload();
+  const { win: w2 } = open(documentOf(q));
+  const box2 = fBoxDraw(w2);
+  w2.__wcMount.elements.define('f-box', box2.draw, q.types[0].assets);
+  await settled(w2);
+  assert.deepEqual(JSON.parse(JSON.stringify(box2.ctx.settings())), { small: {}, large: {} });
+  // The row's settings grammar.
+  const bad = [
+    [{ medium: {} }, /settings: medium is not a settings level/],
+    [[], /settings is not \{small\?, large\?\}/],
+    [{ small: [] }, /settings\.small is not an object/],
+    [{ large: { width: Number.NaN } }, /settings\.large\.width is not a string, a finite number or a boolean/],
+    [{ small: { tool: { nested: 1 } } }, /settings\.small\.tool is not a string/],
+    [{ small: { tool: null } }, /settings\.small\.tool is not a string/],
+  ];
+  for (const [settings, want] of bad) {
+    const r = fixturePayload();
+    r.types[0].settings = settings;
+    assert.match(String(E.validatePayload(r)), want, JSON.stringify(settings));
+  }
+});
+
 test('a comment on a markdown item draws from the payload\'s sources table; without the table it is unplaced', async () => {
   const p = fixturePayload();
   assert.deepEqual(p.sources['md-notes'], (() => {
@@ -853,8 +901,11 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // relaunch (record(id), the sources install, anchors-src's one compact), on
 // the main session's engineering contract of 2026-11-03: 18,785 → 19,486;
 // and at U522a (the margin glyph and its inset, a plug-in's glyph and
-// sourceGlyph through the define line), on the same contract: → 21,107.
-const RUNTIME_WHOLE_BYTES = 21107;
+// sourceGlyph through the define line), on the same contract: → 21,107;
+// and at U512c (a plug-in ctx's settings(), the element.json defaults: the
+// U566 builder's contract), on the main session's engineering contract of
+// 2026-11-03 that asks for that member: 21,176 at ae/int cd348616 → 21,365.
+const RUNTIME_WHOLE_BYTES = 21365;
 test('the byte tripwire: the whole runtime under its measured size + 128 B; each cut reported', (t) => {
   const sizes = {};
   for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {

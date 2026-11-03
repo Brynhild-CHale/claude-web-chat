@@ -156,13 +156,29 @@
 // the type's create sends shared: false; the route's own default is the
 // daemon's, not this module's). The built-in trays keep their own code, on
 // trayAction already; none of them goes through ctx.tray.
+//
+// THE PLUG-IN SETTINGS (U512c; the U566 builder's contract). A pack's type
+// reads its own element.json settings through `ctx.settings()` — on its draw
+// and move ctx (pluginCtx: settingsFor(type)) and on every create ctx (the
+// overlay's own key, overlay.js CREATE_CTX_KEYS) — never by importing a
+// chrome module. It answers a frozen {small: {...}, large: {...}}: each
+// level's declared fields (the toolbar's tools[] settings[level].properties),
+// each the value toolbar-state.js settingsOf resolves (the user's ⊕ the
+// project's ⊕ the armed profile's) when one is saved, else the schema's
+// default; a field with neither is absent (toolbar-state settingsSnapshot).
+// On the create ctx: the armed type and profile's values at the gesture's
+// start. On the draw ctx: the armed profile's values while this type is
+// armed, else element.json's defaults alone (defaultSettings) — the answer a
+// document's ctx.settings() gives too (lib/server/runtime/elements-doc-src).
+// Nothing writes settings through the seam: the small menu and the large pane
+// (tool-settings.js) are the writers.
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
 import { READONLY_HINT, showReaimNote } from './topbar.js';
-import { toolbarState, settingsOf, onToolbarChange } from './toolbar-state.js';
+import { toolbarState, settingsOf, onToolbarChange, settingsSnapshot, defaultSettings } from './toolbar-state.js';
 import { mediaOf as assetMediaOf } from './element-assets.js';
 
 export const TYPES_PATH = '/api/elements/types';
@@ -691,12 +707,23 @@ export function assetOf(type, rel) {
 }
 
 // The ctx a plug-in type's draw and move see: the overlay's, plus record,
-// asset and its tray (U514, bound to its type). A built-in's ctx is the
-// overlay's, untouched.
+// asset, its tray (U514, bound to its type) and settings (U512c). A
+// built-in's ctx is the overlay's, untouched.
 function pluginCtx(spec, ctx) {
   const type = spec && spec[PLUGIN];
   if (!type) return ctx;
-  return { ...(ctx || {}), record: (id) => recordOf(type, id), asset: (rel) => assetOf(type, rel), tray: trayOf(type) };
+  return {
+    ...(ctx || {}), record: (id) => recordOf(type, id), asset: (rel) => assetOf(type, rel), tray: trayOf(type),
+    settings: () => settingsFor(type),
+  };
+}
+
+// settings() for a plug-in type's draw and move (U512c; THE PLUG-IN SETTINGS
+// in the header): read per call, so a toolbar change is read at the next one.
+function settingsFor(type) {
+  let a = null;
+  try { a = overlayModule.armed(); } catch { a = null; }
+  return a && a.type === type ? settingsSnapshot(type, a.profile) : defaultSettings(type);
 }
 
 // ── the tray action guard (TRAY@guard) ─────────────────────────────────────

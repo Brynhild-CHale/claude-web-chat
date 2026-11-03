@@ -24,6 +24,16 @@
 //                    default ⊕ the project's ⊕ the named profile's, field by
 //                    field (lib/core/tier-merge's mergeByKey, served as
 //                    /app/tier-merge.js — never a second merge)
+//   settingsSnapshot(type, profile?) → Object.freeze({small, large}): the
+//                    type's two levels as a plug-in type reads them through
+//                    ctx.settings() (U512c): each level's declared fields
+//                    (tools[]'s settings[level].properties), each settingsOf's
+//                    value when it holds the key, else the schema's default; a
+//                    field with neither is absent; an undeclared level is {}.
+//                    Frozen, read-only, memoised per view (a new view — a GET,
+//                    a frame, a PATCH — answers new values). Never a writer.
+//   defaultSettings(type) → the same shape from the schema's defaults alone
+//                    (element.json's): what a type that is not armed reads.
 //   iconSrc(type)    → the URL of a listed type's icon, /api/toolbar/icon/<type>
 //                    with ?mode=dark under web-chat's dark mode: the ONE
 //                    spelling of that route in the chrome (the toolbar's slots
@@ -155,6 +165,47 @@ export function settingsOf(type, profile) {
   const out = {};
   for (const k of Object.keys(merged)) out[k] = merged[k].value;
   return out;
+}
+
+// ── the plug-in settings seam (U512c) ──────────────────────────────────────
+const NO_SETTINGS = Object.freeze({ small: Object.freeze({}), large: Object.freeze({}) });
+const SETTINGS_LEVELS = Object.freeze(['small', 'large']);
+const snapshots = new WeakMap();   // a view → Map('<saved?>|<type>|<profile>' → snapshot)
+
+function snapshotOf(type, values) {
+  const row = view.tools.find((t) => t.type === type);
+  const decl = row && isObject(row.settings) ? row.settings : null;
+  if (!decl) return NO_SETTINGS;
+  const out = {};
+  for (const level of SETTINGS_LEVELS) {
+    const schema = decl[level];
+    const props = isObject(schema) && isObject(schema.properties) ? schema.properties : {};
+    const lv = {};
+    for (const k of Object.keys(props)) {
+      if (values && Object.hasOwn(values, k)) lv[k] = values[k];
+      else if (isObject(props[k]) && Object.hasOwn(props[k], 'default')) lv[k] = props[k].default;
+    }
+    out[level] = Object.freeze(lv);
+  }
+  return Object.freeze(out);
+}
+
+function memo(key, make) {
+  let m = snapshots.get(view);
+  if (!m) { m = new Map(); snapshots.set(view, m); }
+  if (!m.has(key)) m.set(key, make());
+  return m.get(key);
+}
+
+export function settingsSnapshot(type, profile) {
+  if (typeof type !== 'string' || !type) return NO_SETTINGS;
+  const p = typeof profile === 'string' ? profile : null;
+  return memo(`s|${type}|${p == null ? '' : p}`, () => snapshotOf(type, settingsOf(type, p == null ? undefined : p)));
+}
+
+export function defaultSettings(type) {
+  if (typeof type !== 'string' || !type) return NO_SETTINGS;
+  return memo(`d|${type}`, () => snapshotOf(type, null));
 }
 
 export function initToolbarState({ onFrame, onHello } = {}) {

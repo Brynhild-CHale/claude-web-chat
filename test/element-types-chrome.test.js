@@ -416,3 +416,134 @@ test('sendToClaude(id): one POST to /api/elements/<id>/send with the device clai
     assert.equal(sent().length, n0 + 3);
   } finally { shell.setRoutes({}); }
 });
+
+// ── a plug-in type reads its own tool settings (U512c) ──────────────────────
+// THE PLUG-IN SETTINGS (element-types.js's header; the U566 builder's
+// contract): ctx.settings() on the create ctx (the overlay's own key, the
+// values at the gesture's start) and on the draw ctx (the armed profile's
+// values while the type is armed, else element.json's defaults) answers a
+// frozen {small, large} as toolbar-state's settingsOf resolves them, over the
+// schema's defaults — re-read after the user changes them in the toolbar.
+test('ctx.settings() in create and draw answers the armed profile\'s small and large values, re-read after a toolbar change; element.json\'s defaults when not armed', async () => {
+  const TB = await shell.importApp('toolbar-state.js');
+  const SHA = 'e'.repeat(64);
+  const SETTINGS = {
+    small: { type: 'object', properties: { tool: { type: 'string', enum: ['pen', 'marker', 'highlighter'], default: 'pen' } } },
+    large: {
+      type: 'object',
+      properties: {
+        width: { type: 'number', minimum: 1, maximum: 40, default: 3 },
+        colour: { type: 'string', maxLength: 32, default: '#1f2328' },
+        probe: { type: 'boolean', default: false },
+        note: { type: 'string', maxLength: 20 },   // no default: absent until saved
+      },
+    },
+  };
+  // The toolbar the daemon answers: the type's tools[] row (its settings
+  // schemas), and the records the test changes as the toolbar's Save would.
+  let project = { v: 1, pinned: [], hidden: [], settings: {}, profiles: { 'ink-set': [{ name: 'fine', settings: { width: 1 } }] }, bindings: {} };
+  let user = { v: 1, bindings: {}, fingerDraws: false, settings: { 'ink-set': { colour: '#0000ff' } } };
+  const toolbarBody = () => ({
+    ok: true, v: 1, project, user, merged: { bindings: {}, settings: {} }, canWrite: true, canWriteUser: true,
+    tools: [{ type: 'ink-set', label: 'Ink', settings: SETTINGS, profiles: true, input: 'strokes' }],
+  });
+  const patches = [];
+  shell.setRoutes({
+    '/api/toolbar': (url, init) => {
+      const method = String((init && init.method) || 'GET').toUpperCase();
+      if (method === 'PATCH') {
+        const body = JSON.parse(init.body);
+        patches.push(body);
+        if (body.settings) project = { ...project, settings: { ...project.settings, ...body.settings } };
+        if (body.profiles) project = { ...project, profiles: { ...project.profiles, ...body.profiles } };
+      }
+      return toolbarBody();
+    },
+  });
+  const seenCreate = [];
+  const seenDraw = [];
+  const mod = {
+    default: function draw(group, ctx) { seenDraw.push(ctx.settings()); },
+    create(input, ctx) { seenCreate.push({ phase: input.phase, settings: ctx.settings() }); },
+  };
+  const modules = new Map([[ET.drawPath('ink-set', SHA), mod]]);
+  const fakeImport = (url) => (modules.has(url) ? Promise.resolve(modules.get(url)) : Promise.reject(new Error(`no module at ${url}`)));
+  const inkRow = { ...row('ink-set', 'ink-set@1', ['ink-set@1']), pack: 'ink-pack', draw: { sha256: SHA },
+    toolbar: { input: 'strokes', settings: SETTINGS, profiles: true } };
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const DEFAULTS = { small: { tool: 'pen' }, large: { width: 3, colour: '#1f2328', probe: false } };
+  try {
+    await TB.refreshToolbar();
+    // The draw ctx, through the stub overlay (the gate's wrapper as given).
+    ET.initElementTypes({ importModule: fakeImport, overlay: stub });
+    await relist({ ok: true, types: [inkRow], reserved: [] });
+    await ET.loadPluginTypes();
+    const draw = () => {
+      seenDraw.length = 0;
+      regs.get('ink-set').draw({ key: 'k-ink', type: 'ink-set', items: [{ id: 'p9', v: 1, type: 'ink-set', row: { id: 'p9', v: 1, type: 'ink-set', schema: 'ink-set@1' } }],
+        container: W.document.createElement('div') }, {});
+      assert.equal(seenDraw.length, 1, 'the plug-in\'s draw ran');
+      return seenDraw[0];
+    };
+    // Not armed: element.json's defaults alone (the user's saved colour unread).
+    const d0 = draw();
+    assert.deepStrictEqual(plain(d0), DEFAULTS);
+    assert.ok(Object.isFrozen(d0) && Object.isFrozen(d0.small) && Object.isFrozen(d0.large), 'frozen: never a writer');
+    // Armed, the plain settings: the user's colour over the defaults.
+    realOv.setArmed('ink-set');
+    assert.deepStrictEqual(plain(draw()), { small: { tool: 'pen' }, large: { width: 3, colour: '#0000ff', probe: false } });
+    // The user changes them in the toolbar (the settings frame's Save is this
+    // PATCH, toolbar-state's patchToolbar): the next draw reads them.
+    const r = await TB.patchToolbar({ settings: { 'ink-set': { tool: 'marker', width: 7, probe: true, note: 'hi' } } });
+    assert.equal(r.ok, true);
+    assert.equal(patches.length, 1);
+    const d1 = draw();
+    assert.deepStrictEqual(plain(d1), { small: { tool: 'marker' }, large: { width: 7, colour: '#0000ff', probe: true, note: 'hi' } });
+    assert.equal(d1.small.tool, 'marker');
+    assert.deepStrictEqual([d1.large.width, d1.large.colour, d1.large.probe], [7, '#0000ff', true], 'the pack\'s settingsNow() reads');
+    // The named profile, armed: its width over the plain settings.
+    realOv.setArmed('ink-set', 'fine');
+    assert.deepStrictEqual(plain(draw()).large.width, 1, 'the armed profile\'s value');
+    // Another socket's change lands as the toolbar frame: read at the next draw.
+    project = { ...project, profiles: { 'ink-set': [{ name: 'fine', settings: { width: 2, tool: 'highlighter' } }] } };
+    await shell.frame({ type: 'toolbar', ...toolbarBody() });
+    assert.deepStrictEqual(plain(draw()), { small: { tool: 'highlighter' }, large: { width: 2, colour: '#0000ff', probe: true, note: 'hi' } });
+    realOv.setArmed(null);
+    assert.deepStrictEqual(plain(draw()), DEFAULTS, 'put down: the defaults again');
+
+    // The create ctx, through the real overlay: the values at the gesture's
+    // start, kept through the gesture; the next gesture reads the new ones.
+    ET.initElementTypes({ overlay: realOv });
+    const host = W.__wcMount.itemEl(W.document, 'p1');
+    if (!host) await shell.frame(helloFrame({ active: 'n1', mounts: [{ id: 'p1', target: 'main', params: {}, html: '<p class="lead">lead of p1</p>' }] }));
+    const lead = W.__wcMount.itemEl(W.document, 'p1').el.shadowRoot.querySelector('p.lead');
+    assert.ok(lead, 'precondition: the pane');
+    const pe = (type, id) => lead.dispatchEvent(new W.PointerEvent(type, {
+      bubbles: true, cancelable: true, composed: true, pointerType: 'mouse', pointerId: id, isPrimary: true,
+      clientX: 210, clientY: 205, buttons: type === 'pointerup' ? 0 : 1,
+    }));
+    realOv.setArmed('ink-set');
+    seenCreate.length = 0;
+    pe('pointerdown', 71);
+    await TB.patchToolbar({ settings: { 'ink-set': { tool: 'pen', width: 12 } } });
+    pe('pointermove', 71);
+    pe('pointerup', 71);
+    assert.deepStrictEqual(seenCreate.map((c) => c.phase), ['pointerdown', 'pointermove', 'pointerup'], 'the strokes tool heard its gesture');
+    const START = { small: { tool: 'marker' }, large: { width: 7, colour: '#0000ff', probe: true, note: 'hi' } };
+    for (const c of seenCreate) assert.deepStrictEqual(plain(c.settings), START, `${c.phase}: the values at the gesture's start`);
+    assert.ok(Object.isFrozen(seenCreate[0].settings) && Object.isFrozen(seenCreate[0].settings.large), 'frozen');
+    seenCreate.length = 0;
+    pe('pointerdown', 72);
+    pe('pointerup', 72);
+    assert.equal(seenCreate.length, 2);
+    for (const c of seenCreate) {
+      assert.deepStrictEqual(plain(c.settings), { small: { tool: 'pen' }, large: { width: 12, colour: '#0000ff', probe: false } },
+        `${c.phase}: the next gesture reads the toolbar's change`);
+    }
+    assert.deepStrictEqual(patches.length, 2, 'nothing wrote settings but the test\'s own two PATCHes');
+  } finally {
+    realOv.setArmed(null);
+    shell.setRoutes({});
+    await TB.refreshToolbar();
+  }
+});

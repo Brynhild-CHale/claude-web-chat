@@ -281,6 +281,44 @@ test('draw.js inlined byte-equal to its recorded digest; an asset over the cap a
   assert.match(skipped['notes.txt'], /not an allowed file/);
 });
 
+// THE PLUG-IN SETTINGS (U512c): a type row carries its element.json
+// toolbar.settings defaults, so a real document's ctx.settings() answers them
+// (lib/server/runtime/elements-doc-src); a type with no default at any level
+// carries no `settings` key.
+test('a type row carries its element.json settings defaults {small, large}; a type with no default at any level carries no settings key', async (t) => {
+  const d = await withServer(t);
+  const INK = {
+    ...MARK_JSON,
+    settings: {
+      small: { type: 'object', properties: { tool: { type: 'string', enum: ['pen', 'marker'], default: 'pen' } } },
+      large: {
+        type: 'object',
+        properties: {
+          width: { type: 'number', minimum: 1, maximum: 40, default: 3 },
+          colour: { type: 'string', maxLength: 32, default: '#1f2328' },
+          probe: { type: 'boolean', default: false },
+          note: { type: 'string', maxLength: 20 },
+        },
+      },
+    },
+  };
+  const BARE = { ...MARK_JSON, settings: { large: { type: 'object', properties: { note: { type: 'string', maxLength: 20 } } } } };
+  approveElementPack(d, { name: 'de-ink-pack', type: 'de-ink', json: INK });
+  approveElementPack(d, { name: 'de-bare-pack', type: 'de-bare', json: BARE });
+  await ok(d.api.post('/api/render', { id: 'pb', html: HTML_B }), 'render');
+  await post(d.api, { type: 'de-ink', anchor: ELEMENT('pb'), payload: { label: 'ink' } }, 'de-ink');
+  await post(d.api, { type: 'de-bare', anchor: ELEMENT('pb'), payload: { label: 'bare' } }, 'de-bare');
+  const node = await commit(d.api);
+  for (const [route, reader] of [[PREVIEW, readerOf(createAudience({ configFile: null }), REQ.browser)], [EXPORT, fileReader('local')]]) {
+    const p = build(d, node, reader, { route });
+    assert.equal(validatePayload(p), null, JSON.stringify(p && p.types));
+    const rows = Object.fromEntries(p.types.map((r) => [r.type, r]));
+    assert.deepStrictEqual(Object.keys(rows).sort(), ['de-bare', 'de-ink'], route);
+    assert.deepStrictEqual(rows['de-ink'].settings, { small: { tool: 'pen' }, large: { width: 3, colour: '#1f2328', probe: false } }, `${route}: exactly the defaults`);
+    assert.ok(!Object.hasOwn(rows['de-bare'], 'settings'), `${route}: no default at any level, no settings key`);
+  }
+});
+
 test('a module that breaks the draw contract or cannot be spliced rides as no module, named in skipped; its items still ride for the generic mark (readTypeFile a stub through deps)', async (t) => {
   const { d, node, ids } = await scenario(t);
   for (const [text, reason] of [

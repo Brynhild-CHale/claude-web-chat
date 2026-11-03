@@ -330,10 +330,11 @@ test('registerCreateCtx: refusals; a registered value is on the create ctx and l
   for (const bad of ['', 'Wet', '1wet', 'we-t', 'w'.repeat(33), null, 7]) {
     assert.throws(() => ov.registerCreateCtx(bad, {}), (e) => e instanceof TypeError && /not a member name/.test(e.message), JSON.stringify(bad));
   }
-  for (const own of ['anchors', 'sourceMap', 'markdownText', 'scope', 'armed']) {
+  // `settings` joined the ctx's own keys at U512c (a plug-in type's settings()).
+  for (const own of ['anchors', 'sourceMap', 'markdownText', 'scope', 'armed', 'settings']) {
     assert.throws(() => ov.registerCreateCtx(own, {}), (e) => e instanceof TypeError && e.message.includes(`"${own}"`) && /own keys/.test(e.message));
   }
-  assert.deepStrictEqual([...ov.CREATE_CTX_KEYS], ['anchors', 'sourceMap', 'markdownText', 'scope', 'armed']);
+  assert.deepStrictEqual([...ov.CREATE_CTX_KEYS], ['anchors', 'sourceMap', 'markdownText', 'scope', 'armed', 'settings']);
   assert.ok(ov.CREATE_CTX_NAME.test('w'.repeat(32)), '32 characters is the cap, inclusive');
   const seen = [];
   const offType = ov.registerType('ctx-probe', { draw() {}, input: 'strokes', create: (inp, ctx) => seen.push(ctx) });
