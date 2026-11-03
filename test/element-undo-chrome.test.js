@@ -166,3 +166,22 @@ test('a user binding Shift+U → elements.undo adds a key; Mod+Z still answers',
       user: { v: 1, bindings: {}, fingerDraws: false, settings: {} }, merged: { bindings: {}, settings: {} } });
   }
 });
+
+test('Cmd+Shift+Z and Ctrl+Shift+Z are the browser\'s redo: nothing posted, no preventDefault (U518a); ⌘⇧K still opens the palette', async () => {
+  const n0 = posts().length;
+  pointerOn(host().shadowRoot.querySelector('p'));
+  const e1 = shell.key('z', { metaKey: true, shiftKey: true });
+  const e2 = shell.key('Z', { metaKey: true, shiftKey: true });
+  const e3 = shell.key('z', { ctrlKey: true, shiftKey: true });
+  const e4 = shell.key('Z', { ctrlKey: true, shiftKey: true });
+  await shell.tick(3);
+  assert.equal(posts().length, n0, 'nothing posted');
+  for (const e of [e1, e2, e3, e4]) assert.equal(e.defaultPrevented, false, 'the browser keeps its redo');
+  // Only elements.undo refuses Shift: chordOf's Shift-under-Mod fold stands for every other row.
+  const sh = await shell.importApp('shell.js');
+  const k = shell.key('k', { metaKey: true, shiftKey: true });
+  try {
+    assert.equal(k.defaultPrevented, true, '⌘⇧K is still the palette');
+    assert.equal($('cmd-palette').classList.contains('hidden'), false, 'the palette opened');
+  } finally { sh.handleEscape(); }
+});
