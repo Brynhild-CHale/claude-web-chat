@@ -333,6 +333,46 @@ test('a glyph whose anchor lies outside its pane\'s host is clipped, not drawn',
   } finally { BOXES['p.lead'] = saved; }
 });
 
+test('a comment with no reply of Claude\'s is not drawn answered', async () => {
+  const p = fixturePayload();
+  p.items[1].payload.replies = [{ text: 'A note of my own.', claude: false }];
+  const { win } = open(documentOf(p));
+  await settled(win);
+  const c1 = markerOf(win, 'c1');
+  assert.ok(c1 && !classes(c1).includes('replied'), 'not answered: no reply is Claude\'s');
+  assert.equal(c1.title, 'Is this the right lead? (1 reply)');
+});
+
+test('a box marker is clipped to its pane\'s host, and never drawn over a displayed frame', async () => {
+  const saved = BOXES['svg.chart'];
+  BOXES['svg.chart'] = [700, 750, 200, 100];
+  try {
+    const p = fixturePayload();
+    const { win } = open(documentOf(p));
+    win.__wcMount.elements.define('f-box', fBoxDraw(win).draw, p.types[0].assets);
+    await settled(win);
+    const b1 = markerOf(win, 'b1');
+    assert.deepEqual([b1.style.left, b1.style.width], ['700px', '200px'], 'the container is still the target\'s rect');
+    assert.equal(b1.style.clipPath, 'inset(0px 100px 0px 0px)', 'cut at the host\'s right edge (800px)');
+    assert.notEqual(b1.style.display, 'none');
+  } finally { BOXES['svg.chart'] = saved; }
+
+  BOXES['iframe.emb'] = [60, 760, 50, 50];
+  try {
+    const p = fixturePayload();
+    const node = fixture().node;
+    node.mounts[1].html = node.mounts[1].html.replace('</figure>', '<iframe class="emb"></iframe></figure>');
+    const { win } = open(documentOf(p, node));
+    const box = fBoxDraw(win);
+    win.__wcMount.elements.define('f-box', box.draw, p.types[0].assets);
+    await settled(win);
+    const b1 = markerOf(win, 'b1');
+    assert.equal(b1.style.display, 'none', 'not drawn over the frame');
+    assert.equal(box.calls, 0, 'and its draw never ran');
+    assert.equal(stats(win).clipped, 1);
+  } finally { delete BOXES['iframe.emb']; }
+});
+
 // ── the splice ─────────────────────────────────────────────────────────────
 
 test('typeElement(row): the module\'s exact bytes, a newline, the one define line', () => {
