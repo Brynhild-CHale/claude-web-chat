@@ -820,3 +820,38 @@ test('NOTE_MAX: a 1,000-character note, a full block and signals past the budget
   assert.match(heavy, /^- \[signal\] 46 s+…$/m, 'the newest signal kept');
   assert.ok(!heavy.includes('- [element] pane-1 · highlight el-1\n'), 'the oldest dropped');
 });
+
+// ── a stroke group's text under (U562) ───────────────────────────────────────
+test('a stroke group\'s text under rides the excerpt block shaped like any element\'s excerpt, under its header and limit', () => {
+  const policy = require('../lib/channel/policy');
+  const { describeOf, TEXT_UNDER_MAX } = require('../lib/core/ink-shape');
+  const rec = (text) => ({ points: [0.1, 0.5, 0.5, 0, 0.5, 0.5, 0.5, 8], stride: 4, aspect: 1, text_under: text });
+  const raise = (id, text, count) => {
+    const it = policy.elementItem({ kind: 'element', type: 'ink', op: 'add', id, v: 1, shared: true, has: true, mount: 'pane-1', seq: count },
+      { wake: true, label: 'Ink', describe: { shape: 'underline', confidence: 0.9, count, bbox: [0.1, 0.5, 0.4, 0] } });
+    it.excerpt = excerptText(describeOf([rec(text)]).text_under);
+    return it;
+  };
+  const long = 'w'.repeat(20).concat(' ').repeat(30);
+  const a = raise('p1', 'Revenue  fell', 1);
+  const group = policy.mergeElement({ ...a, element_ids: [], excerpt: undefined }, a);
+  policy.mergeElement(group, raise('p2', long, 2));
+  const { content } = wakeEnvelope([{ id: 'q1', ...group }]);
+  const lines = content.split('\n');
+  const head = lines.indexOf(`${EXCERPT_HEADER}:`);
+  assert.ok(head >= 0, 'the block is there');
+  assert.equal(lines.filter((l) => l === `${EXCERPT_HEADER}:`).length, 1, 'one block, one header');
+  assert.equal(lines[head + 1], '- ink p1');
+  assert.equal(lines[head + 2], `${EXCERPT_PREFIX}Revenue fell`);
+  assert.equal(lines[head + 3], '- ink p2');
+  const second = lines[head + 4];
+  assert.ok(second.startsWith(EXCERPT_PREFIX) && second.endsWith('…'), second);
+  assert.ok(second.length - EXCERPT_PREFIX.length <= EXCERPT_ITEM_MAX, 'cut at the block\'s item limit');
+  assert.ok(TEXT_UNDER_MAX >= EXCERPT_ITEM_MAX, 'the envelope\'s limit is the tighter');
+  // Shape unchanged: the same group without describe renders the same block.
+  const bare = { ...group };
+  delete bare.describe;
+  const block = (c) => { const ls = c.split('\n'); const h = ls.indexOf(`${EXCERPT_HEADER}:`); return ls.slice(h, h + 5); };
+  assert.deepEqual(block(content), block(wakeEnvelope([{ id: 'q1', ...bare }]).content));
+  assert.ok(!content.includes('0.9') && !content.includes('bbox'), 'describe\'s numbers ride no line');
+});

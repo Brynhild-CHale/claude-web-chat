@@ -390,3 +390,53 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     assert.ok(META_KEYS.includes(k), `meta key "${k}" is outside the versioned vocabulary ${JSON.stringify(META_KEYS)}`);
   }
 });
+
+// ── a stroke group's describe (U562) ────────────────────────────────────────
+{
+  const { elementItem, mergeElement } = require('../lib/channel/policy');
+  const { SHAPES } = require('../lib/core/ink-shape');
+  const ev = (id, extra = {}) => ({ kind: 'element', type: 'ink', op: 'add', id, v: 1, shared: true, has: true, mount: 'm1', ...extra });
+  const DESC = { shape: 'circle', confidence: 0.82, count: 3, bbox: [0.1, 0.2, 0.3, 0.4] };
+
+  test('elementItem copies only {shape, confidence, count, bbox} of describe, and names the shape and count before the id', () => {
+    const it = elementItem(ev('p7'), { wake: true, label: 'Ink', describe: { ...DESC, text_under: 'never here', extra: 1 } });
+    assert.deepStrictEqual(it.describe, DESC);
+    assert.equal(it.summary, 'Ink · circle · 3 strokes · p7@1');
+    assert.ok(!JSON.stringify(it).includes('never here'), 'no text rides describe');
+    const one = elementItem(ev('p8'), { wake: true, label: 'Ink', text: 'a note', describe: { ...DESC, count: 1 } });
+    assert.equal(one.summary, 'Ink · circle · 1 stroke · p8@1 · "a note"');
+    // No describe: the item is as it was.
+    const plain = elementItem(ev('p9'), { wake: true, label: 'Ink' });
+    assert.equal('describe' in plain, false);
+    assert.equal(plain.summary, 'Ink · p9@1');
+    for (const s of SHAPES) assert.equal(elementItem(ev('p1'), { wake: true, describe: { ...DESC, shape: s } }).describe.shape, s);
+  });
+
+  test('elementItem drops a describe whose shape is not a SHAPES word, or whose numbers are not numbers', () => {
+    const bad = [
+      { ...DESC, shape: 'Revenue fell' }, { ...DESC, shape: 'CIRCLE' }, { ...DESC, shape: 3 },
+      { ...DESC, bbox: ['0.1', 0.2, 0.3, 0.4] }, { ...DESC, bbox: [0.1, 0.2, 0.3] }, { ...DESC, bbox: 'secret' },
+      { ...DESC, confidence: '0.9' }, { ...DESC, confidence: 2 }, { ...DESC, count: 0 }, { ...DESC, count: 1.5 },
+      'circle', null,
+    ];
+    for (const describe of bad) {
+      const it = elementItem(ev('p3'), { wake: true, label: 'Ink', describe });
+      assert.equal('describe' in it, false, JSON.stringify(describe));
+      assert.equal(it.summary, 'Ink · p3@1', JSON.stringify(describe));
+    }
+  });
+
+  test('mergeElement: the newest member\'s describe is the group\'s, dropped when the newest has none', () => {
+    const a = elementItem(ev('p1'), { wake: true, label: 'Ink', describe: { ...DESC, count: 1 } });
+    const group = mergeElement({ ...a, element_ids: [], excerpt: undefined }, a);
+    assert.deepStrictEqual(group.describe, { ...DESC, count: 1 });
+    const b = elementItem(ev('p2'), { wake: true, label: 'Ink', describe: { ...DESC, shape: 'underline', count: 2 } });
+    mergeElement(group, b);
+    assert.deepStrictEqual(group.describe, { ...DESC, shape: 'underline', count: 2 }, 'the newest wins');
+    assert.deepStrictEqual(group.element_ids, ['p1', 'p2']);
+    const c = elementItem(ev('p3'), { wake: true, label: 'Ink' });
+    mergeElement(group, c);
+    assert.equal('describe' in group, false, 'the newest has none');
+    assert.equal(group.count, 3);
+  });
+}
