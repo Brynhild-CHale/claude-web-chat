@@ -428,7 +428,10 @@ test('the handle holds ONE rect: two pushes with a re-render between them write 
   h.push([sample(700, 600, 8)]);
   assert.strictEqual(h.rect, held, 'the same object after a re-render');
   assert.deepStrictEqual({ ...held }, { left: 300, top: 400, w: 400, h: 200 }, 'its values are the new box\'s');
-  // A zero-size box leaves the previous rect in place, as before.
+  // A zero-size box leaves the previous rect in place, as before. A frame
+  // boundary first (U561b): inside the frame the last push read in, the push
+  // would not read at all, and the guard would go untested.
+  await shell.tick();
   boxed(target, { left: 0, top: 0, width: 0, height: 0 });
   h.push([sample(500, 500, 12)]);
   assert.strictEqual(h.rect, held);
