@@ -665,11 +665,13 @@ test('preview: /preview/node/:id carries the factory only for a node with pins â
   assert.ok(bare.startsWith(a), 'pinless: the template\'s first piece');
   assert.ok(bare.includes(b + c), 'pinless: the anchors hole is empty');
   assert.ok(bare.endsWith(d), 'pinless: the template\'s last piece');
-  assert.equal(count(bare, '<script'), count(pinned, '<script') - 1, 'one <script> fewer than the pinned node\'s');
+  // The pinned node's hole also holds its elements (U523): the element runtime and one data element.
+  assert.equal(count(bare, '<script'), count(pinned, '<script') - 3, 'three <script>s fewer than the pinned node\'s: the resolver, the element runtime, the element data');
+  assert.equal(count(pinned, '<script type="application/json" data-wc-elements>'), 1, 'one element data element');
   // With one pin: the factory once, after the runtime, and it resolves.
   // A comment-only node: the element kind alone (kindsOf ['element']).
   assertSpliced(pinned, 'pinned preview', ['element']);
-  assert.ok(pinned.includes(b + anchorsSrc.scriptElement({ kinds: ['element'] }) + c), 'pinned: the hole holds the element kind\'s script');
+  assert.ok(pinned.includes(b + anchorsSrc.scriptElement({ kinds: ['element'] }) + '<script>'), 'pinned: the hole holds the element kind\'s script, then the element runtime');
   const w = scripted(pinned);
   await new Promise((r) => setTimeout(r, 50));
   resolvesExact(w, 'm1', 'li:nth-child(2) > span.act', 'preview');

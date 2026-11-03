@@ -454,8 +454,6 @@ const REVIEWED = new Map([
 // unit lands. An entry whose route now passes is stale and fails, as a stale
 // REVIEWED entry does — so the list only shrinks.
 const PENDING_DOCUMENTS = new Map([
-  // U523 (the pane preview draws its elements).
-  ['graph.js GET /preview/pane/:node/:mount', 'U523'],
 ]);
 
 // Source with comments and string/template contents blanked to spaces

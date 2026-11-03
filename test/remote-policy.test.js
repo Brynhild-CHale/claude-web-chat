@@ -2215,8 +2215,13 @@ test('U406a: GET /api/graph/node/:id and /preview/node/:id — a shared pin chai
     assert.ok(quoted(html, chained), `${who} preview: the chained pin is drawn`);
     for (const x of [hp, priv]) assert.ok(!quoted(html, x), `${who} preview: ${x} is nowhere in the document`);
   }
+  // U523: a preview embeds no comment copy and its element payload carries no
+  // chain (elements-doc-src FORBIDDEN): the local browser's draws the chained
+  // pin and the private highlight, each an item of its own; the deleted pin,
+  // named only by the chain, reaches no document.
   const bp = await d.anonApi.get(`/preview/node/${id}`);
-  for (const x of [hp, priv]) assert.ok(quoted(bp.text, x), `the local browser's preview keeps ${x}`);
+  for (const x of [chained, hp]) assert.ok(quoted(bp.text, x), `the local browser's preview draws ${x}`);
+  assert.ok(!quoted(bp.text, priv), `the local browser's preview: ${priv} (deleted, in no node) is nowhere`);
 });
 
 // ── tranche 3 · the chat rows (U441; 3D.1; L6) ──────────────────────────────
