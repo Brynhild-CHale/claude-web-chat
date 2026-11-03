@@ -173,8 +173,7 @@ test('a Send to Claude of a shared stroke queues ONE render (never on add or sha
   assert.equal(pictures(srv).length, 0);
   assert.ok(elementItems(srv).length >= 1, 'the shared strokes raised their item as ever');
 
-  await b.push();
-  assert.deepEqual(elementItems(srv), [], 'delivered');
+  // Sent with the add's item still queued (the usual case): the Send draws.
   const tabCapture = srv.state.store.tab_capture;
   const sent = await b.send(a.id);
   assert.equal(sent.ok, true);
@@ -218,7 +217,7 @@ test('a Send to Claude of a shared stroke queues ONE render (never on add or sha
   assert.deepEqual(srv.state.store.tab_capture, tabCapture, 'no tab_capture bump');
 
   // The 'grab' op folded the image onto the send's queued item.
-  const items = elementItems(srv);
+  const items = elementItems(srv).filter((it) => it.type === TYPE);
   assert.equal(items.length, 1, JSON.stringify(items));
   assert.equal(items[0].image.state, 'ready');
   assert.equal(items[0].image.capture, cap.id);
@@ -232,14 +231,12 @@ test('one capture per send: a second send with no member changed reuses the pict
   const { srv, calls } = b;
   const a = await b.post({ dx: 0 });
   const bb = await b.post({ dx: 0.05 });
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the first picture' });
   const first = pictures(srv)[0];
   await settled(srv, first.id);
   assert.equal(calls.length, 1);
 
-  await b.push();
   await b.send(a.id);
   await settle(10);
   assert.equal(calls.length, 1, 'no second render');
@@ -250,7 +247,6 @@ test('one capture per send: a second send with no member changed reuses the pict
 
   // A new member: the change picture.
   const dd = await b.post({ dx: 0.2 });
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 2, { timeout: 10000, what: 'the change picture' });
   const second = pictures(srv)[1];
@@ -275,7 +271,6 @@ test('a member edited since the picture (a new version, the same ids) draws a ne
   const { d, srv, calls } = b;
   const a = await b.post({ dx: 0 });
   const bb = await b.post({ dx: 0.05 });
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the first picture' });
   const first = pictures(srv)[0];
@@ -284,7 +279,6 @@ test('a member edited since the picture (a new version, the same ids) draws a ne
   assert.deepEqual(first.distilled.elements, [`${a.id}@1`, `${bb.id}@1`]);
 
   await ok(d.anonApi.patch(`/api/elements/${bb.id}`, { colour: 'gold' }), 'edit bb');
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 2, { timeout: 10000, what: 'the picture of the edited group' });
   const second = pictures(srv)[1];
@@ -292,6 +286,72 @@ test('a member edited since the picture (a new version, the same ids) draws a ne
   assert.equal(calls.length, 2, 'a second render: bb is at a new version');
   assert.deepEqual(second.distilled.elements, [`${a.id}@1`, `${bb.id}@2`]);
   assert.ok(!calls[1].html.includes('data-wc-picture'), 'no member is new, so none is greyed');
+});
+
+// The user's Send to Claude draws the picture in every state of the stroke
+// (PICTURE@when (a)): routes/elements.js tells the engine of each stroke Send
+// (boxGrabFor(ctx).sent), since a Send that shares a private stroke, or finds
+// its item already queued, emits no 'send' event of its own.
+const sendEvents = (srv) => srv.bus.read({ kinds: ['element'] }).events.filter((e) => e.op === 'send' && e.type === TYPE);
+
+test('a Send of a stroke shared by PATCH, its item still queued, draws one picture (the send emits no send event)', async (t) => {
+  const b = await boot(t);
+  const { d, srv, calls } = b;
+  const a = await b.post({ shared: false, dx: 0 });
+  await ok(d.anonApi.patch(`/api/elements/${a.id}`, { shared: true }), 'share a');
+  await settle();
+  assert.equal(calls.length, 0, 'no render on share');
+  assert.equal(elementItems(srv).length, 1, 'the share raised the item');
+  const sent = await b.send(a.id);
+  assert.equal(sent.already, true, 'the item was already queued');
+  assert.equal(sendEvents(srv).length, 0, 'no send event');
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  assert.equal((await settled(srv, pictures(srv)[0].id)).state, 'ready');
+  await settle(10);
+  assert.equal(calls.length, 1, 'one render');
+  assert.equal(pictures(srv).length, 1);
+  const items = elementItems(srv);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].image.capture, pictures(srv)[0].id, 'the picture folded onto the queued item');
+});
+
+test('a Send of a private stroke shares it and draws one picture', async (t) => {
+  const b = await boot(t);
+  const { srv, calls } = b;
+  const a = await b.post({ shared: false, dx: 0 });
+  await settle();
+  assert.deepEqual(elementItems(srv), [], 'a private stroke raises nothing');
+  const sent = await b.send(a.id);
+  assert.equal(sent.ok, true);
+  assert.equal(sent.element.shared, true, 'the Send shared it');
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  assert.equal((await settled(srv, cap.id)).state, 'ready');
+  await settle(10);
+  assert.equal(calls.length, 1, 'one render');
+  assert.deepEqual(cap.distilled.elements, [`${a.id}@2`], 'the shared version');
+  assert.ok(!calls[0].html.includes(`${a.id}@1`), 'never the private version');
+  const items = elementItems(srv);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].image.capture, cap.id);
+});
+
+test('a fresh Send (no item queued) is drawn once, not twice: the send event and the route\'s own word reuse one picture', async (t) => {
+  const b = await boot(t);
+  const { srv, calls } = b;
+  const a = await b.post({ dx: 0 });
+  await b.push();
+  assert.deepEqual(elementItems(srv), [], 'delivered');
+  const sent = await b.send(a.id);
+  assert.equal(sent.already, undefined, 'a fresh raise');
+  assert.equal(sendEvents(srv).length, 1, 'the send event');
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  assert.equal((await settled(srv, pictures(srv)[0].id)).state, 'ready');
+  await settle(10);
+  assert.equal(calls.length, 1, 'one render');
+  assert.equal(pictures(srv).length, 1, 'one capture');
+  assert.equal(grabOps(srv).length, 1, 'one grab op');
+  assert.equal(elementItems(srv)[0].image.capture, pictures(srv)[0].id);
 });
 
 // ── the box grab's own render site ──────────────────────────────────────────
@@ -410,7 +470,6 @@ test('no Chrome: the image is chrome-not-found with its hint, and the queued ite
   const { srv, calls } = b;
   const a = await b.post({ dx: 0 });
   await b.post({ dx: 0.05 });
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture capture' });
   const image = await settled(srv, pictures(srv)[0].id);
@@ -491,7 +550,6 @@ test('a member made private withdraws every picture showing it: the queued item\
   const a = await b.post({ dx: 0 });
   const mid = await b.post({ dx: 0.05 });
   const last = await b.post({ dx: 0.1 });
-  await b.push();
   await b.send(a.id);
   await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
   const cap = pictures(srv)[0];
