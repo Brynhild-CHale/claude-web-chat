@@ -1406,13 +1406,18 @@ test('a tap on a button or a link records the element, on an img or an svg U532\
   await wordPane();
   await pointPanes();
   const r = rootOf('tw');
-  const undo = layText({ caret: () => ({ offsetNode: wordsText(), offset: 2 }), rects: false });
+  // The caret a browser gives on a control: inside the control's own label
+  // text, so only the control guard keeps the tap off a word.
+  let caretNode = null;
+  const undo = layText({ caret: () => ({ offsetNode: caretNode, offset: 1 }), rects: false });
   try {
     const btn = r.querySelector('button.btn');
+    caretNode = btn.firstChild;
     const b = await pinText(btn, 60, 60, 73, 'pen');
     assert.equal(b.anchor.kind, 'element', 'a control takes the element');
     assert.deepEqual(b.anchor, anchors.record(r, btn, { mount: 'tw' }));
     const lnk = r.querySelector('a.lnk');
+    caretNode = lnk.firstChild;
     const l = await pinText(lnk, 60, 60, 74);
     assert.equal(l.anchor.kind, 'element', 'a link is a control');
     assert.deepEqual(l.anchor, anchors.record(r, lnk, { mount: 'tw' }));
@@ -1436,7 +1441,9 @@ test('a tap in text where no caret is found records the element: no caret, a car
     const a = await pinText(para, at.x, at.y, 77);
     assert.deepEqual(a.anchor, elRec, 'the caret API found none (and no rects to walk): the element');
   } finally { undo(); }
-  undo = layText({ caret: () => ({ offsetNode: root.querySelector('p.long').firstChild, offset: 3 }), rects: false });
+  // A caret in a short word of another element (the link's), which would
+  // record a range there were it taken.
+  undo = layText({ caret: () => ({ offsetNode: root.querySelector('a.lnk').firstChild, offset: 3 }), rects: false });
   try {
     const b = await pinText(para, at.x, at.y, 78);
     assert.deepEqual(b.anchor, elRec, 'a caret in another element: the element');
