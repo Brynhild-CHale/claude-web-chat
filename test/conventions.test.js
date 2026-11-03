@@ -1769,6 +1769,26 @@ const PATTERNS = [
       'public/app/overlay-report.js': 3,
     },
   },
+  {
+    // Code loaded from a daemon URL (U512, plan 4A.2; DECISIONS.md B1
+    // review-approve; DRAW@loader; PLAN-T4 §2.4 note F1). The one place the
+    // chrome imports code by URL is public/app/element-types.js
+    // loadPluginTypes: an approved, listed pack type's draw.js, from the
+    // same-origin fenced route, once per digest. A second dynamic import of a
+    // non-relative specifier is a second loader with none of the listing's
+    // checks. Counted: a quoted or template specifier that does not start
+    // './' or '../', and a bare expression; a relative import('./x.js') (the
+    // chrome's lazy module loads) and the prose spelling `import()` are not.
+    name: 'import( of a non-relative specifier',
+    home: 'public/app/element-types.js — loadPluginTypes (the approved type loader, B1)',
+    what: 'loading code from a daemon URL',
+    roots: ['lib', 'public', 'templates'],
+    re: /\bimport\(\s*(?!['"`]\.{1,2}\/|\))/g,
+    baseline: {
+      // The loader's default importer, `(url) => import(url)`.
+      'public/app/element-types.js': 1,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
