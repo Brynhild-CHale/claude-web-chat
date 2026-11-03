@@ -529,3 +529,22 @@ test('a value learned after the commit: no fragment of it in the payload, and th
     assert.equal(it.state, 'masked', `${id}: served masked`);
   }
 });
+
+// U590 (engineering contract (n); U522b's finding): a declared plug-in key a
+// version never wrote reads null in a document, as GET /api/elements's record
+// serves it, so ctx.record(id) answers the same fields in both realms.
+test('a declared key a version never wrote is null in the document payload, as GET /api/elements serves it', async (t) => {
+  const d = await withServer(t);
+  const { api } = d;
+  approveElementPack(d, { name: 'opt-pack', type: 'de-opt', json: { payload: { keys: ['anchor', 'shared', 'label', 'note'] }, anchors: ['element'] }, draw: MARK_DRAW });
+  await ok(api.post('/api/render', { id: 'pb', html: HTML_B }), 'render pb');
+  const el = (await post(api, { type: 'de-opt', anchor: ELEMENT('pb'), payload: { label: 'only the label', shared: true } }, 'de-opt')).element;
+  const live = (await ok(api.get(`/api/elements?type=de-opt`), 'GET')).elements.find((r) => r.id === el.id);
+  assert.equal(live.note, null, 'the live record serves the unwritten key as null');
+  const node = await commit(api, 'opt');
+  const p = build(d, node, fileReader('local'), { route: EXPORT });
+  const it = p.items.find((x) => x.id === el.id);
+  assert.ok(it, 'the item rides');
+  assert.deepStrictEqual(it.payload, { label: 'only the label', note: null }, 'the declared keys, the unwritten one null');
+  assert.equal(validatePayload(p), null);
+});
