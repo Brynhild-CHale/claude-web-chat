@@ -234,7 +234,7 @@ test('the document ctx\'s asset(rel): the inlined data: URI; null for a skipped 
   }
 });
 
-test('the document ctx\'s record(id): a plug-in group\'s, frozen, in the GET\'s shape; null for an unknown id or another type\'s item; no record on a built-in\'s ctx', async () => {
+test('the document ctx\'s record(id): a plug-in group\'s, frozen, in the GET\'s shape (flat: no payload key); null for an unknown id or another type\'s item; no record on a built-in\'s ctx', async () => {
   const p = fixturePayload();
   // Observe the comment's ctx: the served runtime, its built-in draw made to
   // keep the ctx it is handed (a test-only edit of the document text).
@@ -251,10 +251,15 @@ test('the document ctx\'s record(id): a plug-in group\'s, frozen, in the GET\'s 
   assert.equal(typeof record, 'function', 'a plug-in group\'s ctx carries record');
   const b1 = p.items.find((it) => it.id === 'b1');
   const rec = record('b1');
+  // ONE SHAPE in both realms (U522b; finding U565@ctx-record-shape): the
+  // GET's, FLAT — the payload's keys beside id, v, type, schema, anchor and
+  // shared, never nested under `payload`.
   assert.deepEqual(JSON.parse(JSON.stringify(rec)), { id: b1.id, v: b1.v, type: b1.type, schema: b1.schema, anchor: b1.anchor,
-    shared: b1.shared, payload: b1.payload }, 'the GET\'s shape, built from the data element\'s item');
-  assert.deepEqual(Object.keys(rec), ['id', 'v', 'type', 'schema', 'anchor', 'shared', 'payload']);
-  assert.ok(Object.isFrozen(rec) && Object.isFrozen(rec.payload) && Object.isFrozen(rec.anchor), 'frozen, all the way down');
+    shared: b1.shared, ...b1.payload }, 'the GET\'s shape, flat, built from the data element\'s item');
+  assert.deepEqual(Object.keys(rec), ['id', 'v', 'type', 'schema', 'anchor', 'shared', ...Object.keys(b1.payload)]);
+  assert.equal(rec.label, 'framed', 'a payload key read off the record itself');
+  assert.equal(rec.payload, undefined, 'no nested payload: a document never nests it');
+  assert.ok(Object.isFrozen(rec) && Object.isFrozen(rec.anchor), 'frozen, all the way down');
   assert.equal(markerOf(win, 'b1').getAttribute('data-f-box-label'), 'framed', 'the fixture draw wrote its record\'s label');
   assert.equal(record('nope'), null, 'an id the data element does not hold');
   assert.equal(record('c1'), null, 'another type\'s item');

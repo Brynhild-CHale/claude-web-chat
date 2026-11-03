@@ -23,7 +23,8 @@
 //       over the payload's `sources` table, md-notes' {src, map} as
 //       lib/server/preview.js pageItems(node, {sourceMap: true}) gives it
 // The f-box draw reads its item through ctx.record(id) (the GET's shape) and
-// writes the record's payload.label to its container (data-f-box-label).
+// writes the record's label (flat, beside id and v) to its container
+// (data-f-box-label).
 // No anchor here is a page anchor, no field is attribution, and the node
 // carries no chat pin (L2).
 
@@ -67,7 +68,7 @@ const F_BOX_MODULE = [
   '  }',
   '  const first = group.items[0];',
   '  const rec = first && ctx && typeof ctx.record === \'function\' ? ctx.record(first.id) : null;',
-  '  if (rec && rec.payload && typeof rec.payload.label === \'string\') c.setAttribute(\'data-f-box-label\', rec.payload.label);',
+  '  if (rec && typeof rec.label === \'string\') c.setAttribute(\'data-f-box-label\', rec.label);',
   '  c.setAttribute(\'data-f-box-items\', String(group.items.length));',
   '  c.appendChild(svg);',
   '}',
