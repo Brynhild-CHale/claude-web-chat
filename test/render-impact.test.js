@@ -133,6 +133,9 @@ test('clear by id answers what went (read before the removal), a markdown item\'
   const r = await ok(d.call('POST', '/api/clear', { id: 'm1' }), 'clear m1');
   assert.deepStrictEqual(r, { ok: true, annotations: { item: 'm1', total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 } });
   assert.ok(!d.srv.state.mounts.has('m1'), 'the pane went');
+  // A repeat clear of the removed pane: nothing went, though its references
+  // and pin stay in the log (only a Wipe drops them).
+  assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', { id: 'm1' }), 'repeat clear m1'), { ok: true });
 
   // A markdown item (one id space): a highlight anchored by md.
   await ok(d.call('POST', '/api/markdown', { id: 'md-a', text: '## Hello' }), 'markdown');
@@ -261,6 +264,41 @@ test('GET /api/mounts: an annotated pane carries its counts; after a resolution 
   });
 });
 
+test('GET /api/mounts: a re-render leaves the old content\'s verdict out — no by_state until a viewer reports at the new gen', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  const els = await annotate(d, 'm1');
+  const row = (j, id) => j.mounts.find((m) => m.id === id);
+  const counts = { total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 };
+
+  const frames = [];
+  const sock = wsConnect(d.port, '/ws');
+  t.after(() => { try { sock.terminate(); } catch {} });
+  sock.on('message', (m) => { try { frames.push(JSON.parse(m.toString())); } catch {} });
+  await new Promise((res, rej) => { sock.once('open', res); sock.once('error', rej); });
+  await waitUntil(() => frames.some((f) => f.type === 'hello'), { timeout: T, what: 'hello' });
+  const hello = frames.find((f) => f.type === 'hello');
+  const report = (gen, state) => sock.send(JSON.stringify({
+    type: 'report', surface: hello.surface, mounts: [{ mount: 'm1', gen, items: [{ id: els.h1.id, v: els.h1.v, state }] }],
+  }));
+
+  const gen0 = hello.mounts.find((m) => m.id === 'm1').gen;
+  report(gen0, 'exact');
+  await waitUntil(() => d.srv.reports.stats().accepted === 1, { timeout: T, what: 'the first report accepted' });
+  assert.deepStrictEqual(row(await ok(d.call('GET', '/api/mounts'), 'mounts'), 'm1').annotations, { ...counts, by_state: { exact: 1, re_resolved: 0, orphaned: 0 } });
+
+  // Claude re-renders m1: the held answer is the old content's.
+  await render(d, 'm1', '<p>Hello again</p>');
+  const gen1 = d.srv.state.mounts.get('m1').gen;
+  assert.notStrictEqual(gen1, gen0);
+  assert.deepStrictEqual(row(await ok(d.call('GET', '/api/mounts'), 'mounts after the render'), 'm1').annotations, counts,
+    'the counts, and no by_state until a report at the new gen');
+
+  report(gen1, 'orphaned');
+  await waitUntil(() => d.srv.reports.stats().accepted === 2, { timeout: T, what: 'the report at the new gen accepted' });
+  assert.deepStrictEqual(row(await ok(d.call('GET', '/api/mounts'), 'mounts after the new report'), 'm1').annotations, { ...counts, by_state: { exact: 0, re_resolved: 0, orphaned: 1 } });
+});
+
 test('annotationsOn (the engine): a version the log cannot place is skipped; a legacy locator pin counts on its mount; counts only', () => {
   const store = {
     version: (id, v) => (id === 'h1' && v === 1 ? { payload: { anchor: { mount: 'm1' }, shared: true } } : null),
@@ -277,14 +315,18 @@ test('annotationsOn (the engine): a version the log cannot place is skipped; a l
   assert.equal(annotationsOn(state, store, 'm3'), null);
   assert.equal(annotationsOn(state, null, 'm2', { remote: true }) && annotationsOn(state, null, 'm2', { remote: true }).total, 1, 'with no store, the pins still count');
   assert.equal(annotationsOn(state, store, []), null);
-  // byState: the newest held answer per element, over the ids given only.
-  const ids = new Set(['a', 'b']);
+  // byState: the held answers at the pane's live gen and each element's live
+  // v, over the ids given only.
+  const ids = new Map([['a', { v: 2 }], ['b', { v: 1 }]]);
   assert.deepStrictEqual(byState([
-    { id: 'a', state: 'orphaned', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
-    { id: 'a', state: 'exact', surface: 1, gen: 1, storeEpoch: 0, at: 2 },
-    { id: 'b', state: 're-resolved', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
-    { id: 'z', state: 'exact', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
-  ], ids), { exact: 1, re_resolved: 1, orphaned: 0 });
-  assert.equal(byState([], ids), null);
-  assert.equal(byState([{ id: 'z', state: 'exact' }], ids), null);
+    { id: 'a', v: 1, state: 'orphaned', gen: 1 },
+    { id: 'a', v: 2, state: 'exact', gen: 1 },
+    { id: 'b', v: 1, state: 're-resolved', gen: 1 },
+    { id: 'b', v: 1, state: 'orphaned', gen: 0 },
+    { id: 'z', v: 1, state: 'exact', gen: 1 },
+  ], ids, 1), { exact: 1, re_resolved: 1, orphaned: 0 });
+  assert.equal(byState([{ id: 'a', v: 2, state: 'exact', gen: 0 }], ids, 1), null, 'an answer at an older gen is not the verdict');
+  assert.equal(byState([{ id: 'a', v: 1, state: 'exact', gen: 1 }], ids, 1), null, 'an answer for an older version is not the verdict');
+  assert.equal(byState([], ids, 1), null);
+  assert.equal(byState([{ id: 'z', v: 1, state: 'exact', gen: 1 }], ids, 1), null);
 });
