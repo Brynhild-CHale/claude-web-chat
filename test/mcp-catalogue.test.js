@@ -38,6 +38,14 @@ function registrationOrder() {
   if (!block) throw new Error('could not locate the tools array in lib/mcp/index.js');
   const names = [...block[1].matchAll(/require\('\.\/tools\/([A-Za-z0-9_]+)'\)/g)].map((m) => m[1]);
   if (names.length === 0) throw new Error('the tools array parse in lib/mcp/index.js found no tools');
+  // Every entry must be one of those requires: an entry of any other form (an
+  // inline object, a spread, a require from elsewhere) would reach ListTools
+  // unhashed, so it fails here rather than slipping past the parse.
+  const rest = block[1]
+    .replace(/require\('\.\/tools\/[A-Za-z0-9_]+'\)/g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/[\s,]/g, '');
+  if (rest) throw new Error(`lib/mcp/index.js's tools array holds an entry this test cannot read as require('./tools/<name>'): ${rest.slice(0, 80)}`);
   return names;
 }
 
