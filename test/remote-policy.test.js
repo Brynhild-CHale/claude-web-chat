@@ -1449,6 +1449,10 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       'GET /api/mounts/:id/history': ['versions[].trigger_summary'],
       'GET /api/replay/path': ['steps[].prompt', 'steps[].reply', 'steps[].summary',
         'steps[].folded[].prompt', 'steps[].folded[].reply', 'steps[].folded[].summary'],
+      // The replay documents (DOCS@replay-text a): no caption and no element
+      // below read (U525: buildReplay and documentElements apply them).
+      'GET /replay': ['steps[].caption', 'doc_elements'],
+      'GET /api/replay/html': ['steps[].caption', 'doc_elements'],
       'GET /api/health': LOCK_PATHS,
       // The ring (K.2-117): a comment entry's whole pin, for the network peer
       // a WEB_CHAT_HOST bind lets reach the daemon at basic.
@@ -1868,19 +1872,16 @@ test('TEXT_RULES: every key names a frame sent, or a route mounted, under lib/se
 // ── the probe: what a basic viewer could GET ────────────────────────────────
 
 // The routes a remote viewer below `read` may GET that serve conversation
-// text the table does not decide yet. The replay documents caption each step
-// with Claude's reply summary (and with the prompt, when include_prompts asks
-// for it); whether such a viewer gets them with no captions or not at all is
-// the maintainer's call, open since the U05 review. They are named here, each
-// with what it is, so the probe below still fails on any NEW carrier.
-const TEXT_UNDECIDED = new Map([
-  ['GET /replay', 'the replay document the player frames'],
-  ['GET /api/replay/html', 'the same document, as a download'],
-  ['GET /api/replay/file/:name', 'a replay POST /api/replay/render wrote: its captions are drawn into a GIF\'s or a '
-    + 'video\'s frames, or held in a .html payload, so no text probe sees them'],
-]);
+// text the table does not decide yet, each named with what it is, so the
+// probe below still fails on any NEW carrier. None since DOCS@replay-text (a):
+// the replay documents (GET /replay, GET /api/replay/html) are served with no
+// captions and no element below read (their TEXT_RULES rows, drawn in the
+// probe's DRAWN map), and a rendered file, whose captions are drawn into its
+// frames, is refused below read (RULED U525@replay-file-below-read a: the
+// daemon's gate, asserted below).
+const TEXT_UNDECIDED = new Map([]);
 
-test('TEXT_RULES: the replay documents are the one undecided carrier, and still routes a basic viewer may GET', () => {
+test('TEXT_RULES: the replay documents have their rows, no carrier is undecided, and a rendered replay file is refused below read with the hint', async (t) => {
   const routes = new Set(daemonRoutes().map((r) => `${r.method} ${r.path}`));
   for (const key of TEXT_UNDECIDED.keys()) {
     const p = key.slice('GET '.length);
@@ -1889,6 +1890,31 @@ test('TEXT_RULES: the replay documents are the one undecided carrier, and still 
       `${key} is no longer one a basic viewer may GET — if the maintainer's decision refused it there, drop it from TEXT_UNDECIDED`);
     assert.equal(TEXT_RULES.routes[key], undefined, `${key} has a TEXT_RULES entry now — drop it from TEXT_UNDECIDED`);
   }
+  for (const key of ['GET /replay', 'GET /api/replay/html']) {
+    assert.ok(routes.has(key), `${key} is not a route in lib/server/routes/`);
+    assert.ok(basicSurfaceRoute('GET', sample(key.slice('GET '.length))), `${key} is still one a basic viewer may GET`);
+    assert.deepStrictEqual(TEXT_RULES.routes[key], ['steps[].caption', 'doc_elements'], `${key}: no caption and no element below read`);
+  }
+  // The file route: still one the portal lets a basic viewer GET (its
+  // `GET /api/replay/*` row, unchanged), refused by the daemon below read.
+  const FILE = 'GET /api/replay/file/:name';
+  assert.ok(routes.has(FILE));
+  assert.equal(TEXT_RULES.routes[FILE], undefined, 'a rendered file has no row: its captions are in its frames');
+  assert.ok(basicSurfaceRoute('GET', '/api/replay/file/replay-n1-1_n1-2-x.gif'), 'the portal row is unchanged (PROTO@none)');
+  const { request } = require('../lib/client');
+  const { FILE_BELOW_READ_HINT } = require('../lib/server/routes/replay');
+  const d = await withServer(t);
+  const exportsDir = path.join(d.webChatDir, 'exports');
+  fs.mkdirSync(exportsDir, { recursive: true });
+  const name = 'replay-n1-1_n1-2-20261103.gif';
+  fs.writeFileSync(path.join(exportsDir, name), 'GIF89a');
+  const basic = await request(d.port, 'GET', `/api/replay/file/${name}`, null, { headers: { 'X-WC-Remote': '1' }, timeout: 30000 });
+  assert.equal(basic.status, 403, `a basic remote request is refused: ${JSON.stringify(basic.body)}`);
+  assert.equal(basic.body.hint, FILE_BELOW_READ_HINT);
+  assert.match(basic.body.hint, /tunnel mirror on --read-only/, 'the hint names the read opt-in');
+  assert.match(basic.body.hint, /captions/, 'and a render with captions off');
+  const local = await request(d.port, 'GET', `/api/replay/file/${name}`, null, { timeout: 30000 });
+  assert.equal(local.status, 200, 'the host gets the file');
 });
 
 // A daemon with marked conversation text in every place a turn writes it —
@@ -1902,7 +1928,7 @@ test('TEXT_RULES: the replay documents are the one undecided carrier, and still 
 test('TEXT_RULES: no route a basic viewer may GET serves conversation text its entry leaves in', async (t) => {
   const { request } = require('../lib/client');
   const { renderPreviewHtml } = require('../lib/server/preview');
-  const { port } = await withServer(t);
+  const { port, srv, root } = await withServer(t);
   const MARK = 'wc-text-mark';
   const MOUNT = 'tx-pane';
   const get = (p) => request(port, 'GET', p, null, { timeout: 30000 });
@@ -1935,8 +1961,16 @@ test('TEXT_RULES: no route a basic viewer may GET serves conversation text its e
     .replace(/\$\{[^}]*\}/g, 'sample').replace(/:[A-Za-z_]+/g, 'sample1');
   const QUERY = { '/api/graph/diff': `?a=${first}&b=${last}` };
   // What each document route draws from: the preview, the node it is handed.
+  const { buildReplay } = require('../lib/server/replay/document');
+  const { resolvePaths } = require('../lib/server/paths');
+  const replayCtx = { graph: srv.graph, paths: resolvePaths(root), root };
+  const BASIC = { level: 'basic', seesPrivate: false };
   const DRAWN = {
     'GET /preview/node/:id': () => renderPreviewHtml(stripText('routes', 'GET /preview/node/:id', node), {}),
+    // The replay documents, as the routes build them for a reader below read
+    // (buildReplay applies the route's row to the payload before it is written).
+    'GET /replay': () => buildReplay(replayCtx, {}, { reader: BASIC, route: 'GET /replay' }).html,
+    'GET /api/replay/html': () => buildReplay(replayCtx, {}, { reader: BASIC, route: 'GET /api/replay/html' }).html,
   };
 
   const near = (text) => { const i = text.indexOf(MARK); return text.slice(Math.max(0, i - 80), i + 40); };

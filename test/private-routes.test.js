@@ -453,9 +453,6 @@ const REVIEWED = new Map([
 const PENDING_DOCUMENTS = new Map([
   // U523 (the pane preview draws its elements).
   ['graph.js GET /preview/pane/:node/:mount', 'U523'],
-  // U525 (the replay documents draw their elements).
-  ['replay.js GET /replay', 'U525'],
-  ['replay.js GET /api/replay/html', 'U525'],
 ]);
 
 // Source with comments and string/template contents blanked to spaces

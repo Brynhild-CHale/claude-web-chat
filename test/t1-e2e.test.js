@@ -252,6 +252,10 @@ const TEXT_ROUTE_URLS = Object.freeze({
   'GET /preview/node/:id': ({ node }) => node && `/preview/node/${encodeURIComponent(node)}`,
   'GET /api/mounts/:id/history': ({ node }) => node && `/api/mounts/${PANE}/history`,
   'GET /api/replay/path': ({ node }) => node && '/api/replay/path',
+  // The replay documents (U525; DOCS@replay-text a): captioned with the turn's
+  // reply for the host, with no caption below read.
+  'GET /replay': ({ node }) => node && '/replay',
+  'GET /api/replay/html': ({ node }) => node && '/api/replay/html',
   'GET /api/health': () => '/api/health',
 });
 
