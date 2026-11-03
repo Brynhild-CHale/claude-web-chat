@@ -50,6 +50,9 @@ import { initOverlay } from './overlay.js';
 // The input-mode policy (annotation engine 2D.4): pen, mouse and finger routed
 // to the armed tool or the page, at the overlay's one pointer dispatch.
 import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
+// The wet layer (annotation engine 4A.2, U517): one canvas over a strokes
+// type's target for the stroke in progress, plugged in as the create ctx's `wet`.
+import { initWetLayer } from './wet-layer.js';
 // The report path's chrome half (annotation engine 2B.1, U314; U312's remote
 // carrier inside it): what the resolver answered, batched to the daemon. It
 // learns each mount's gen from the frames, so it starts before connect().
@@ -81,6 +84,7 @@ initMode();       // Earthy light (default) / dark before first paint
 // settle. It costs nothing until something watches a pane (tranche 2).
 installAnchors(window.__wcMount);
 initOverlay();    // the element overlay: after the resolver it watches through
+initWetLayer();   // ctx.wet on every create ctx (overlay.js registerCreateCtx)
 installInputMode();   // the pointer-type policy, at the overlay's setPointerPolicy
 initOverlayReport();  // the resolver's answers to the daemon: before the first hello (U314)
 initViewport();   // <html class="phone"> before anything mounts (panes read it)

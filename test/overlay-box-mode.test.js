@@ -354,13 +354,15 @@ test('registerCreateCtx: refusals; a registered value is on the create ctx and l
     assert.equal(seen[0].wetProbe, value, 'the registered value, as given');
     assert.equal(seen[0].scope, 'live');
     assert.equal(typeof seen[0].anchors.record, 'function', 'the ctx\'s own keys kept');
-    assert.deepStrictEqual(Object.keys(seen[0]).filter((k) => !ov.CREATE_CTX_KEYS.includes(k)), ['wetProbe'], 'nothing else added');
+    // The members main.js registers at boot (U517: initWetLayer's `wet`).
+    const booted = ['wet'];
+    assert.deepStrictEqual(Object.keys(seen[0]).filter((k) => !ov.CREATE_CTX_KEYS.includes(k) && !booted.includes(k)), ['wetProbe'], 'nothing else added');
     offWet();
     offWet();   // idempotent
     pe('pointerdown', 32);
     pe('pointerup', 32);
     assert.equal('wetProbe' in seen[2], false, 'gone after unregister');
-    assert.deepStrictEqual(Object.keys(seen[2]).sort(), [...ov.CREATE_CTX_KEYS].sort(), 'the ctx is its own keys exactly');
+    assert.deepStrictEqual(Object.keys(seen[2]).sort(), [...ov.CREATE_CTX_KEYS, ...booted].sort(), 'the ctx is its own keys and the boot\'s members exactly');
     // The name is free again.
     const offAgain = ov.registerCreateCtx('wetProbe', 1);
     offAgain();
