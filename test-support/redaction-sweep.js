@@ -182,7 +182,12 @@ function stubClaude(t) {
   const stub = fakeBin(t, { name: 'claude', script, env: { ARGV_LOG: log } });
   const before = process.env.PATH;
   process.env.PATH = `${stub.dir}${path.delimiter}${before}`;
-  t.after(() => { process.env.PATH = before; fs.rmSync(dir, { recursive: true, force: true }); });
+  // Never throw (treesnap-fixture's hang guard): a throwing after hook skips
+  // the later ones (a daemon's stop among them) and the file hangs.
+  t.after(() => {
+    process.env.PATH = before;
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* the sandbox's */ }
+  });
   return { argvs: () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) };
 }
 

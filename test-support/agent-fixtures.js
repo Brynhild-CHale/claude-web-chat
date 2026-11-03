@@ -272,7 +272,11 @@ const PID = 4242;
 function project(t) {
   const dir = fs.mkdtempSync(path.join(SANDBOX, 'wc-agents-'));
   fs.mkdirSync(path.join(dir, '.web-chat'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Never throw (treesnap-fixture's hang guard): node:test skips a test's
+  // later after hooks once one throws, so a daemon stop registered after this
+  // would be skipped and the file would hang. Retry, then leave the rest to
+  // the sandbox HOME's exit cleanup.
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* the sandbox's */ } });
   return dir;
 }
 

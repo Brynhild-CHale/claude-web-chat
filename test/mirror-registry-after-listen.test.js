@@ -134,8 +134,10 @@ test('withServer: ready is pending at the body\'s first line and none of the 50 
   const a = await early;
   assert.deepEqual(w.ids.filter((id) => listedIds(a).has(id)), w.ids, 'the early GET answers the whole list');
   const b = await client.get('/api/mirror?since=0', { port: d.port, noSpawn: true, timeout: 15000 });
-  const strip = ({ now, ...rest }) => rest; // eslint-disable-line no-unused-vars
-  assert.deepEqual(strip(a), strip(b), 'the body unchanged (but its clock)');
+  // The clock and the mirror's rev counter move between two reads (a source
+  // may bump rev once the registry settles), so both are left out (U590).
+  const strip = ({ now, rev, ...rest }) => rest; // eslint-disable-line no-unused-vars
+  assert.deepEqual(strip(a), strip(b), 'the body unchanged (but its clock and its rev)');
 });
 
 test('an envelope published between the listen and the registry load is ingested and delivered, never ignored as not-running', async (t) => {
