@@ -59,6 +59,11 @@
 // is required. A process that inherits a sandbox (WEB_CHAT_TEST_SANDBOX set)
 // inherits the scrubbed environment too, plus whatever a test set on purpose,
 // which a second scrub would wipe. test/sandbox-env.test.js holds all of this.
+//
+// Two switches are set the same way, once, below: WEB_CHAT_CHROME (no real
+// Chrome, K.2-69) and WEB_CHAT_UPDATE_CHECK=0 (no real update check: a spawned
+// MCP server's check wrote into a per-test HOME as the test removed it, and
+// hung the suite, K.2-187).
 
 if (!process.env.WEB_CHAT_TEST_SANDBOX) {
   const exact = new Set([
@@ -84,6 +89,19 @@ const path = require('path');
 // test set.
 if (!process.env.WEB_CHAT_TEST_SANDBOX && process.env.WEB_CHAT_E2E_CHROME !== '1') {
   process.env.WEB_CHAT_CHROME = path.join(path.sep, 'nonexistent', 'web-chat-test', 'chrome');
+}
+
+// No real update check (K.2-187, H.6): an MCP server a test spawns runs
+// lib/update/check.js check() at startup, fire-and-forget, which past its
+// throttle asks GitHub for the latest release and writes update-check.json
+// under its HOME — a fresh per-test HOME is always past the throttle, and the
+// write landing while a test removed that HOME (ENOTEMPTY) once hung the suite
+// 46 minutes. WEB_CHAT_UPDATE_CHECK=0 is check()'s off switch, so no process
+// the suite starts ({...process.env, HOME} spawns included) reaches the
+// network or writes a record from it. Once, where the sandbox is made, like
+// the scrub: an inheriting process keeps what a test set.
+if (!process.env.WEB_CHAT_TEST_SANDBOX) {
+  process.env.WEB_CHAT_UPDATE_CHECK = '0';
 }
 
 // Idempotent — --import and the helpers require both land in the same process,

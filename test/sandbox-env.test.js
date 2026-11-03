@@ -53,6 +53,7 @@ function lexicallyInside(dir, p) {
 const FACTS = `({
   names: Object.keys(process.env),
   probe: process.env.WC_SANDBOX_PROBE,
+  updateCheck: process.env.WEB_CHAT_UPDATE_CHECK,
   sandbox: process.env.WEB_CHAT_TEST_SANDBOX,
   HOME: process.env.HOME,
   CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
@@ -165,6 +166,32 @@ test('a process that inherits a sandbox keeps what a test set on purpose', () =>
   assert.equal(r.sandbox, SANDBOX);
   assert.deepEqual(r.names.filter(scrubbed), ['CLAUDE_CODE_SESSION_ID']);
   assert.ok(fs.existsSync(SANDBOX), 'and the inherited sandbox outlives that process');
+});
+
+test('the sandbox switches the update check off, in this process and every process it starts (K.2-187)', () => {
+  // A spawned MCP server's fire-and-forget update check reached GitHub and
+  // wrote update-check.json into a per-test HOME as the test removed it.
+  assert.equal(process.env.WEB_CHAT_UPDATE_CHECK, '0');
+  for (const opts of [{ env: { ...process.env, HOME: os.tmpdir() } }, {}]) {
+    assert.equal(child(LEAF, opts).updateCheck, '0', 'a {...process.env, HOME} spawn, or one with no env, inherits it');
+  }
+  // A fresh sandbox sets it whatever the outer environment said.
+  const fresh = { ...process.env, WEB_CHAT_UPDATE_CHECK: '1' };
+  delete fresh.WEB_CHAT_TEST_SANDBOX;
+  const r = child(NESTED, { env: fresh, execArgv: ['--import', pathToFileURL(SANDBOX_MODULE).href] });
+  assert.ok(r.sandbox && r.sandbox !== SANDBOX, 'a sandbox of its own');
+  assert.equal(r.updateCheck, '0');
+  assert.equal(r.child.updateCheck, '0', 'and its children inherit it');
+});
+
+test('a process that inherits a sandbox keeps an update-check value a test set on purpose', () => {
+  const r = child(NESTED, {
+    env: { ...process.env, WEB_CHAT_UPDATE_CHECK: '1' },
+    execArgv: ['--import', pathToFileURL(SANDBOX_MODULE).href],
+  });
+  assert.equal(r.sandbox, SANDBOX);
+  assert.equal(r.updateCheck, '1', 'the sandbox, loaded again, does not reset it');
+  assert.equal(r.child.updateCheck, '1');
 });
 
 // ── the claude-home fixture ─────────────────────────────────────────────────
