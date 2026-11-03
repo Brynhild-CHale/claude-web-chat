@@ -63,6 +63,10 @@ const MARK_DRAW = [
   '',
 ].join('\n');
 const MARK_JSON = { payload: { keys: ['anchor', 'shared', 'label'] }, anchors: ['element', 'range'] };
+// The type's one asset: it rides inside the module row, once per replay, and
+// is read as itself (the replay's memoised type-file reads key on the path).
+const ASSET_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>\n';
+const ASSET_URI = `data:image/svg+xml;base64,${Buffer.from(ASSET_SVG).toString('base64')}`;
 
 const HTML_A = (k) => `<p class="lead">Hello world</p><p class="step">step ${k}</p>`;
 const HTML_B = '<figure><svg class="chart" viewBox="0 0 10 10" width="100" height="100"><rect width="10" height="10"/></svg></figure>';
@@ -121,7 +125,7 @@ function frameOf(payload, i) {
 async function scenario(t, opts = {}) {
   const d = await withServer(t, opts);
   const { api } = d;
-  approveElementPack(d, { name: 'rp-pack', type: TYPE, json: MARK_JSON, draw: MARK_DRAW });
+  approveElementPack(d, { name: 'rp-pack', type: TYPE, json: MARK_JSON, draw: MARK_DRAW, files: { 'assets/dot.svg': ASSET_SVG } });
   assert.ok(d.srv.elementTypes.listed(TYPE), 'the fixture type lists');
   await ok(api.post('/api/render', { id: 'pb', html: HTML_B }), 'render pb');
   const nodes = [];
@@ -175,6 +179,7 @@ test('GET /replay from a local browser: the runtime once, the type\'s module onc
   assert.deepStrictEqual(Object.keys(payload.elements_rt), ['comment'], 'one runtime cut: the comment built-in (the plug-in is a glyph)');
   assert.deepStrictEqual(Object.keys(payload.element_types), [TYPE], 'one module row');
   assert.equal(count(r.text, SENTINEL), 1, 'the draw module\'s bytes ride once in the whole document');
+  assert.equal(count(r.text, ASSET_URI), 1, 'the type\'s asset rides once, as itself (not another file\'s bytes)');
   const rtJson = jsonForScript(runtimeElement('comment')).slice(1, -1);
   assert.equal(count(r.text, rtJson), 1, 'the runtime\'s bytes ride once');
   for (const [i, s] of payload.steps.entries()) {
