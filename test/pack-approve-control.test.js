@@ -57,27 +57,13 @@ test.before(async () => {
   CONFIRM = await import(pathToFileURL(path.join(__dirname, '..', 'lib', 'server', 'answer-surface', 'public', 'control-confirm.js')).href);
 });
 
-const nonceOf = (html) => /name="wc-answer-nonce" content="([^"]*)"/.exec(html)[1];
-function descOf(html) {
-  const m = /<meta name="wc-control" content="([^"]*)">/.exec(html);
-  const raw = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  return JSON.parse(raw);
-}
-
-// The confirm document for pack-approve with `query`, then the POST of
-// bodyOf(query) — exactly what control-confirm.js sends.
-async function confirmThrough(srv, query) {
-  await srv.controlStarted;
-  const { origin, port } = await srv.answerSurface.ensure();
-  const qs = `${query}&layout=confirm&mode=light`;
-  const doc = await request(port, 'GET', `/answer/control/pack-approve?${qs}`);
-  if (doc.status !== 200) return { doc };
-  const body = CONFIRM.bodyOf(Object.fromEntries(new URLSearchParams(qs)));
-  const res = await request(port, 'POST', '/answer/api/control/pack-approve?device=desktop', body, {
-    headers: { origin, 'sec-fetch-site': 'same-origin', 'x-wc-answer': nonceOf(doc.body) },
-  });
-  return { doc, body, res, desc: descOf(doc.body) };
-}
+// The frame's protocol has one test copy (U565; ruling
+// U511-U565@approveElementPack-twice a): test-support/element-type-fixture.js
+// approveFromFrame — the confirm document for pack-approve with `query`, then
+// the POST of bodyOf(query), exactly what control-confirm.js sends — and its
+// readers of the document's nonce and review.
+const { approveFromFrame, frameNonce: nonceOf, frameReview: descOf } = require('../test-support/element-type-fixture');
+const confirmThrough = (srv, query) => approveFromFrame(srv, { query });
 
 const controlAudit = (root) => {
   try {

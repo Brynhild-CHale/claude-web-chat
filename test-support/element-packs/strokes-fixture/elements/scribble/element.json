@@ -1,0 +1,15 @@
+{
+  "type": "scribble",
+  "family": "page",
+  "remote": { "see": "read", "send": "full" },
+  "private": true,
+  "schema": "scribble@1",
+  "reads": ["scribble@1"],
+  "anchors": ["element"],
+  "label": "Scribble",
+  "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
+  "input": "strokes",
+  "place": "box",
+  "wake": true,
+  "payload": { "keys": ["anchor", "shared", "tool", "width", "colour", "points", "stride", "aspect", "text_under", "bbox", "text_box"] }
+}
