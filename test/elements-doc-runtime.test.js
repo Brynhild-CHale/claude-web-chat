@@ -269,6 +269,23 @@ test('the document ctx\'s record(id): a plug-in group\'s, frozen, in the GET\'s 
   assert.equal(cctx.record, undefined, 'a built-in\'s ctx has no record, as live');
 });
 
+test('the document ctx\'s record(id): a payload key named like one of the six base fields never overwrites it (the server\'s record() rule)', async () => {
+  // A pack may declare a key `v` or `id` (PLUGIN_KEY_RE admits them); the
+  // GET keeps its own field (lib/server/domain/elements.js record(): `if
+  // (!(k in out))`), and so does the document.
+  const p = fixturePayload();
+  const b1 = p.items.find((it) => it.id === 'b1');
+  b1.payload = { ...b1.payload, id: 'not-b1', v: 99, type: 'other', schema: 'other@1' };
+  const { win } = open(documentOf(p));
+  const box = fBoxDraw(win);
+  win.__wcMount.elements.define('f-box', box.draw, p.types[0].assets);
+  await settled(win);
+  const rec = box.ctx.record('b1');
+  assert.ok(rec, 'the record by its own id');
+  assert.deepEqual([rec.id, rec.v, rec.type, rec.schema], [b1.id, b1.v, b1.type, b1.schema], 'the six base fields win');
+  assert.equal(rec.label, 'framed', 'the other payload keys still ride flat');
+});
+
 test('a comment on a markdown item draws from the payload\'s sources table; without the table it is unplaced', async () => {
   const p = fixturePayload();
   assert.deepEqual(p.sources['md-notes'], (() => {
