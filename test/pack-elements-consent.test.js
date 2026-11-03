@@ -20,7 +20,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const { packFixture, tmpDir, write, fakeForge, repoWithArchive } = require('../test-support/packs');
-const { withServer, withTempHome } = require('../test-support/helpers');
+const { withServer, withTempHome, waitUntil } = require('../test-support/helpers');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { BUILTIN_ELEMENT_PACK, BUILTIN_ELEMENT_TYPE_NAMES } = require('../lib/core/names');
 const { listPacks, findPack, readAudit } = require('../lib/packs/store');
@@ -119,6 +119,10 @@ test('POST /api/packs/install refuses an element pack with the reviewed-path hin
   await withServer(t, async ({ api, root }) => {
     const forge = await fakeForge(t, { repos: { 'acme/marks': repoWithArchive(elementPack(), { sha: SHA }) } });
     const url = forge.url('acme', 'marks');
+    // The boot's own last write lands on the first immediate after the listen
+    // (the derived graph index, lib/server/graph.js flushIndex): let it settle
+    // before the snapshot, so the comparison below sees only the install's.
+    await waitUntil(() => fs.existsSync(projectPaths(root).graphIndex), { what: 'the after-listen graph index write' });
     const before = written(root);
     for (const body of [{ url }, { url, via: 'builtin' }, { url, via: 'approve' }, { url, builtin: true, global: true }]) {
       const r = await api.post('/api/packs/install', body);
