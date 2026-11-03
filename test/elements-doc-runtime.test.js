@@ -29,6 +29,7 @@ const { jsonForScript } = require('../lib/server/export');
 const { PREVIEW_CSP } = require('../lib/core/cors');
 const { convertAnchor } = require('../lib/core/element-log');
 const { escapeHtml } = require('../lib/core/html');
+const { MARKDOWN_MAX_CHARS } = require('../lib/server/domain/page');
 const { fixture, fixturePayload, F_BOX_MODULE, MARK_URI } = require('../test-support/doc-elements-fixture');
 const { waitUntil, e2eGate } = require('../test-support/helpers');
 
@@ -40,10 +41,10 @@ test.after(() => { for (const w of WINDOWS) w.close(); });
 
 // The preview document of `node` with the resolver and the elements spliced
 // after it, exactly where the template's anchors hole puts them.
-function documentOf(payload, node = fixture().node) {
+function documentOf(payload, node = fixture().node, edit = (x) => x) {
   const [a, b, c, d] = previewTemplate();
   return a + previewThemeCss({ tokens: {} }) + b + anchorsSrc.scriptElement({ kinds: ALL_KINDS })
-    + E.scripts(payload) + c + previewNodeJson(node) + d;
+    + edit(E.scripts(payload)) + c + previewNodeJson(node) + d;
 }
 
 // The fixture's boxes (viewport px), the x axis scaled by win.__scale.
@@ -54,8 +55,11 @@ const BOXES = {
   'p.body': [20, 80, 400, 20],
   'li.two': [40, 200, 100, 16],
   'svg.chart': [50, 750, 200, 100],
+  'main.page': [0, 0, 800, 1200],
+  'div.md-block': [0, 620, 800, 60],
 };
 const RANGE_BOX = [60, 80, 120, 18];   // 'quick brown fox' inside p.body
+const MD_RANGE_BOX = [120, 650, 90, 18];   // 'three steps' inside md-notes
 function rect(win, [l, t, w, h]) {
   const s = win.__scale || 1;
   const left = l * s;
@@ -86,6 +90,7 @@ function open(html) {
       };
       win.Range.prototype.getClientRects = function () {
         const p = this.startContainer && this.startContainer.parentNode;
+        if (p && p.closest && p.closest('.md-block')) return [rect(win, MD_RANGE_BOX)];
         return p && p.localName === 'p' && p.getAttribute('class') === 'body' ? [rect(win, RANGE_BOX)] : [];
       };
     },
@@ -123,7 +128,7 @@ const stats = (win) => win.__wcMount.elements.stats();
 
 // ── the document draws ─────────────────────────────────────────────────────
 
-test('a document draws the fixture: the comment pin at its target, the highlight over its range, the box on its svg, the removed type\'s generic mark; no network', async (t) => {
+test('a document draws the fixture: the comment pin at its target, the highlight over its range, the box on its svg, the removed type\'s generic mark, the markdown comment; no network', async (t) => {
   const p = fixturePayload();
   const { win, net } = open(documentOf(p));
   const box = fBoxDraw(win);
@@ -163,7 +168,8 @@ test('a document draws the fixture: the comment pin at its target, the highlight
   assert.equal(box.ctx.document, true);
   assert.equal(box.ctx.previewing, true);
   assert.equal(box.ctx.host, 'page');
-  for (const k of ['create', 'input', 'tray', 'record']) assert.equal(box.ctx[k], undefined, `no ${k} in a document`);
+  for (const k of ['create', 'input', 'tray']) assert.equal(box.ctx[k], undefined, `no ${k} in a document`);
+  assert.equal(b1.getAttribute('data-f-box-label'), 'framed', 'the draw read its record\'s payload through ctx.record');
 
   win.__scale = 1.5;
   win.dispatchEvent(new win.Event('resize'));
@@ -180,14 +186,14 @@ test('a document draws the fixture: the comment pin at its target, the highlight
   assert.equal(r1.querySelector('.el-generic-name').textContent, 'f-gone', 'the type named');
 
   // Every marker: its type and its group's ids, space-joined.
-  const ids = { 'c1': 'comment', 'h1': 'highlight', 'b1': 'f-box', 'r1': 'f-gone' };
+  const ids = { 'c1': 'comment', 'h1': 'highlight', 'b1': 'f-box', 'r1': 'f-gone', 's1': 'comment' };
   const ms = markers(win);
-  assert.equal(ms.length, 4);
+  assert.equal(ms.length, 5);
   for (const m of ms) {
     assert.ok(m.hasAttribute('data-type') && m.hasAttribute('data-el-ids'), 'data-type and data-el-ids on every marker');
     assert.equal(m.getAttribute('data-type'), ids[m.getAttribute('data-el-ids')]);
   }
-  assert.deepEqual(stats(win), { drawn: 3, generic: 1, parked: 0, unplaced: 0, clipped: 0 });
+  assert.deepEqual(stats(win), { drawn: 4, generic: 1, parked: 0, unplaced: 0, clipped: 0 });
   assert.equal(net.calls, 0, 'no network call');
   assert.equal(win.document.querySelectorAll('[id]').length, 1 + 2, 'no id added: #main and the two pane hosts only');
   t.diagnostic(`markers ${ms.length}; stats ${JSON.stringify(stats(win))}`);
@@ -221,6 +227,60 @@ test('the document ctx\'s asset(rel): the inlined data: URI; null for a skipped 
   }
 });
 
+test('the document ctx\'s record(id): a plug-in group\'s, frozen, in the GET\'s shape; null for an unknown id or another type\'s item; no record on a built-in\'s ctx', async () => {
+  const p = fixturePayload();
+  // Observe the comment's ctx: the served runtime, its built-in draw made to
+  // keep the ctx it is handed (a test-only edit of the document text).
+  const head = 'BUILTIN.comment = { draw: function (g) {';
+  const edit = (x) => {
+    assert.ok(x.includes(head), 'the comment draw\'s head');
+    return x.replace(head, 'BUILTIN.comment = { draw: function (g, ctx) { window.__commentCtx = ctx;');
+  };
+  const { win } = open(documentOf(p, fixture().node, edit));
+  const box = fBoxDraw(win);
+  win.__wcMount.elements.define('f-box', box.draw, p.types[0].assets);
+  await settled(win);
+  const { record } = box.ctx;
+  assert.equal(typeof record, 'function', 'a plug-in group\'s ctx carries record');
+  const b1 = p.items.find((it) => it.id === 'b1');
+  const rec = record('b1');
+  assert.deepEqual(JSON.parse(JSON.stringify(rec)), { id: b1.id, v: b1.v, type: b1.type, schema: b1.schema, anchor: b1.anchor,
+    shared: b1.shared, payload: b1.payload }, 'the GET\'s shape, built from the data element\'s item');
+  assert.deepEqual(Object.keys(rec), ['id', 'v', 'type', 'schema', 'anchor', 'shared', 'payload']);
+  assert.ok(Object.isFrozen(rec) && Object.isFrozen(rec.payload) && Object.isFrozen(rec.anchor), 'frozen, all the way down');
+  assert.equal(markerOf(win, 'b1').getAttribute('data-f-box-label'), 'framed', 'the fixture draw wrote its record\'s label');
+  assert.equal(record('nope'), null, 'an id the data element does not hold');
+  assert.equal(record('c1'), null, 'another type\'s item');
+  assert.equal(record(null), null);
+  const cctx = win.__commentCtx;
+  assert.ok(cctx && cctx.document === true, 'the comment\'s ctx was seen');
+  assert.equal(cctx.record, undefined, 'a built-in\'s ctx has no record, as live');
+});
+
+test('a comment on a markdown item draws from the payload\'s sources table; without the table it is unplaced', async () => {
+  const p = fixturePayload();
+  assert.deepEqual(p.sources['md-notes'], (() => {
+    const it = require('../lib/server/preview').pageItems(fixture().node, { sourceMap: true }).find((x) => x.md === 'md-notes');
+    return { src: it.src, map: it.map };
+  })(), 'the entry as pageItems(node, {sourceMap: true}) gives it');
+  const { win } = open(documentOf(p));
+  await settled(win);
+  const s1 = markerOf(win, 's1');
+  assert.ok(s1, 'drawn');
+  assert.deepEqual(classes(s1).slice(0, 2), ['el-marker', 'el-hit']);
+  assert.equal(s1.getAttribute('data-type'), 'comment');
+  assert.deepEqual([px(s1.style.left), px(s1.style.top)], [MD_RANGE_BOX[0], MD_RANGE_BOX[1]], 'at its range\'s top-left');
+  assert.equal(s1.title, 'Only three? (0 replies)');
+
+  const q = fixturePayload();
+  delete q.sources;
+  assert.equal(E.validatePayload(q), null);
+  const w2 = open(documentOf(q)).win;
+  await settled(w2);
+  assert.equal(markerOf(w2, 's1'), undefined, 'no table, no marker');
+  assert.equal(stats(w2).unplaced, 1, 'counted unplaced');
+});
+
 test('a plug-in type that defines nothing by load draws the generic mark; the other items still draw', async () => {
   const { win } = open(documentOf(fixturePayload()));
   await settled(win);
@@ -229,8 +289,8 @@ test('a plug-in type that defines nothing by load draws the generic mark; the ot
   assert.equal(b1.querySelector('.el-generic-name').textContent, 'f-box');
   assert.equal(b1.getAttribute('data-type'), 'f-box');
   assert.equal(b1.getAttribute('data-place'), null, 'a glyph, not a box');
-  assert.ok(markerOf(win, 'c1') && markerOf(win, 'h1'), 'the built-ins drew');
-  assert.deepEqual(stats(win), { drawn: 2, generic: 2, parked: 0, unplaced: 0, clipped: 0 });
+  assert.ok(markerOf(win, 'c1') && markerOf(win, 'h1') && markerOf(win, 's1'), 'the built-ins drew');
+  assert.deepEqual(stats(win), { drawn: 3, generic: 2, parked: 0, unplaced: 0, clipped: 0 });
 });
 
 test('a draw that throws: the generic mark, nothing thrown out of the runtime, the other items drawn', async () => {
@@ -246,8 +306,8 @@ test('a draw that throws: the generic mark, nothing thrown out of the runtime, t
   for (const c of ['el-marker', 'el-generic', 'el-standin']) assert.ok(classes(b1).includes(c), c);
   assert.equal(b1.getAttribute('data-place'), null, 'placed as a glyph');
   assert.notEqual(b1.style.display, 'none', 'shown');
-  assert.ok(markerOf(win, 'c1') && markerOf(win, 'h1') && markerOf(win, 'r1'));
-  assert.deepEqual(stats(win), { drawn: 2, generic: 2, parked: 0, unplaced: 0, clipped: 0 });
+  assert.ok(markerOf(win, 'c1') && markerOf(win, 'h1') && markerOf(win, 'r1') && markerOf(win, 's1'));
+  assert.deepEqual(stats(win), { drawn: 3, generic: 2, parked: 0, unplaced: 0, clipped: 0 });
   assert.ok(errors.some((e) => /f-box draw failed/.test(e)), 'reported to the console');
 });
 
@@ -296,7 +356,7 @@ test('a recorded orphan with no guess draws nothing and is not counted; a record
   w2.__wcMount.elements.define('f-box', fBoxDraw(w2).draw, q.types[0].assets);
   await settled(w2);
   assert.equal(markerOf(w2, 'z1'), undefined, 'no marker');
-  assert.deepEqual(stats(w2), { drawn: 3, generic: 1, parked: 0, unplaced: 1, clipped: 0 });
+  assert.deepEqual(stats(w2), { drawn: 4, generic: 1, parked: 0, unplaced: 1, clipped: 0 });
 });
 
 test('a recorded orphan the document finds is drawn as a guess (el-guess) at the element it found', async () => {
@@ -425,7 +485,14 @@ test('validatePayload accepts the fixture; the field lists are frozen', () => {
   const p = fixturePayload();
   p.stripped = [{ kind: 'asset', type: 'f-box', rel: 'big.png', bytes: 300000, reason: 'over the cap' }];
   assert.equal(E.validatePayload(p), null, 'the export cap\'s stripped list');
+  const q = fixturePayload();
+  assert.ok(isObjectWith(q.sources, 'md-notes'), 'the fixture carries the sources table');
+  q.sources['md-notes'].src = 'x'.repeat(MARKDOWN_MAX_CHARS);
+  q.sources['md-notes'].map.runs = Array.from({ length: 4 - q.sources['md-notes'].map.headings.length }, (_, i) => [i, i + 1, 1, 'exact']);
+  assert.equal(E.validatePayload(q), null, 'a row at its bound: src at MARKDOWN_MAX_CHARS, map at 4 entries per line');
+  assert.equal(E.SOURCE_MAP_PER_LINE, 4);
 });
+const isObjectWith = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 
 test('validatePayload refuses each malformed variant', () => {
   const cases = [
@@ -452,6 +519,16 @@ test('validatePayload refuses each malformed variant', () => {
     ['unsorted items', (p) => { p.items.reverse(); }, /items is not sorted/],
     ['v 2', (p) => { p.v = 2; }, /v is not 1/],
     ['a place outside PLACE_MODES', (p) => { p.types[0].place = 'band'; }, /place is not one of/],
+    ['sources not an object', (p) => { p.sources = []; }, /sources is not an object/],
+    ['a sources entry with no src', (p) => { delete p.sources['md-notes'].src; }, /sources\["md-notes"\] needs \{src, map\}/],
+    ['a sources entry with no map', (p) => { delete p.sources['md-notes'].map; }, /sources\["md-notes"\] needs \{src, map\}/],
+    ['a sources entry with an extra key', (p) => { p.sources['md-notes'].html = '<p>'; }, /unknown key html/],
+    ['a sources entry no item names', (p) => { p.sources['md-other'] = { ...p.sources['md-notes'] }; }, /no source-anchored item names the markdown item md-other/],
+    ['a src past MARKDOWN_MAX_CHARS', (p) => { p.sources['md-notes'].src = 'x'.repeat(MARKDOWN_MAX_CHARS + 1); }, /src is over MARKDOWN_MAX_CHARS \(32768 characters\): the markdown item md-notes/],
+    ['a map past 4 entries per line', (p) => {
+      const m = p.sources['md-notes'].map;
+      m.runs = Array.from({ length: 3 * 4 }, (_, i) => [i, i + 1, 1, 'exact']);
+    }, /map is over 4 entries per line of src \(3\): the markdown item md-notes/],
   ];
   for (const [what, mutate, want] of cases) {
     const p = fixturePayload();
@@ -533,8 +610,10 @@ test('the runtime: no work at require time, then memoised per key', () => {
 
 // The byte tripwire (B3's 5 % line; RULED BUDGET@typical-export a): the whole
 // runtime's compacted size, measured at U522, plus 128 B. A crossing stops and
-// asks; it is never a silent raise (U403b's precedent).
-const RUNTIME_WHOLE_BYTES = 18785;
+// asks; it is never a silent raise (U403b's precedent). Re-measured at U522's
+// relaunch (record(id), the sources install, anchors-src's one compact), on
+// the main session's engineering contract of 2026-11-03: 18,785 → 19,486.
+const RUNTIME_WHOLE_BYTES = 19486;
 test('the byte tripwire: the whole runtime under its measured size + 128 B; each cut reported', (t) => {
   const sizes = {};
   for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
