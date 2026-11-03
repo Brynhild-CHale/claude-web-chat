@@ -1384,6 +1384,7 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       // The ring (K.2-117): a comment entry's whole pin, for the network peer
       // a WEB_CHAT_HOST bind lets reach the daemon at basic.
       'GET /api/events': ['events[].pin'],
+      'GET /api/elements/search': ['hits'],
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
     // comment item quotes its pin, and an item's excerpt (U422) its passage;
@@ -1464,6 +1465,7 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
     },
     routes: {
       'GET /api/elements': ['elements[]'],
+      'GET /api/elements/search': ['hits[]'],
       'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
       'GET /preview/node/:id': ['comments[]'],
       'GET /api/graph/diff': ['elements.added[]', 'elements.removed[]', 'elements.changed[]', 'elements.orphaned[]'],

@@ -632,7 +632,7 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
   // frame left lib/server/routes with U327a: domain/comments emitComments sends
   // it as element:comment, projected through element-policy's private paths —
   // test/ws-projection.test.js.)
-  for (const k of ['elements.js GET /api/elements', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id', 'graph.js GET /api/graph/diff']) {
+  for (const k of ['elements.js GET /api/elements', 'graph.js GET /api/graph/node/:id', 'graph.js GET /preview/node/:id', 'graph.js GET /api/graph/diff', 'element-search.js GET /api/elements/search']) {
     assert.ok(keys.has(k), `the scan found no ${k}`);
   }
   for (const route of Object.keys(PRIVATE_RULES.routes)) {
