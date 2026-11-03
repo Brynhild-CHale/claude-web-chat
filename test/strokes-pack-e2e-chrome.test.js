@@ -38,13 +38,13 @@
 //     nothing; Mod+Z outside a field sends POST /api/elements/undo (U518's
 //     action, whatever tool is armed); a node preview creates nothing.
 //
-// TWO ENGINE GAPS THIS FILE NAMES (U565's hand-off, open issues; neither is
-// a product edit here):
-//   (a) a plug-in type's element:<type> frame refreshes the loader's records
-//       (ctx.record) but never the overlay's live rows, which only a hello or
-//       a reset fills — so a stroke drawn live dries to nothing until the next
-//       hello. The marker case below hands the overlay the row the way it
-//       takes one today, a hello (a reconnect), after the daemon's frame.
+//   - the element:scribble frame alone hands the overlay the stroke's live
+//     row (U512b's relay, element-types.js relayRows): the dry marker is
+//     drawn with no hello and no reset after the commit.
+//
+// ONE ENGINE GAP THIS FILE NAMES (U565's hand-off, an open issue; not a
+// product edit here; its gap (a), the frame that never reached the overlay's
+// live rows, U512b closed):
 //   (b) the live record ctx.record answers is the GET's, FLAT (the payload's
 //       keys beside id, v, type…), while the document runtime's (U522) nests
 //       them under `payload`; the fixture's draw reads `record.payload ||
@@ -285,12 +285,9 @@ test('the dry stroke: a box marker equal to the svg\'s rect, one path with data-
   // The daemon's frame for the add: the loader's records (ctx.record).
   await shell.frame({ type: `element:${TYPE}`, elements: records });
   assert.deepStrictEqual(ET.recordOf(TYPE, rec.id).points, rec.points);
-  // Gap (a): the overlay's live rows come from a hello or a reset; hand it
-  // the row the way it takes one today.
-  await shell.frame(helloFrame({ active: 'n1', mounts: [PANE], elements: [rec] }));
-  await shell.tick();
-  stubRects();
-  ov.requestDraw();
+  // The same frame hands the overlay the stroke's live row (U512b's relay):
+  // no hello, no reset.
+  assert.ok(ov.elementsOf('live').some((r) => r.id === rec.id && r.type === TYPE), 'the frame filled the live row');
   const marker = await waitUntil(() => markers().find((m) => m.querySelector(`path[data-el-id="${rec.id}"]`)),
     { timeout: 4000, what: 'the dry marker' });
   assert.equal(marker.dataset.place, 'box');
