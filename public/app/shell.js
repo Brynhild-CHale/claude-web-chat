@@ -1008,7 +1008,8 @@ function initKeyboard() {
     // toggle) fires once per press, never on the key's auto-repeat — the
     // registry's rule, not this dispatch's.
     const a = lookup(chordOf(e), isOverlayOpen() ? 'overlay' : 'page', { inField: editable, repeat: e.repeat === true });
-    if (a) { e.preventDefault(); a.run(); }
+    // ⌘⇧Z / Ctrl+Shift+Z is the browser's redo, never elements.undo (U518a).
+    if (a && !(a.id === 'elements.undo' && e.shiftKey && (e.metaKey || e.ctrlKey))) { e.preventDefault(); a.run(); }
   });
 }
 async function stepNode(dir) {
