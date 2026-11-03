@@ -349,7 +349,7 @@ test('the later sections are built, each under its one banner', () => {
   // test/anchors-range.test.js). No stub is left.
   const src = fs.readFileSync(ANCHORS_FILE, 'utf8');
   assert.ok(!src.includes('is not built'), 'no "not built" stub remains');
-  for (const banner of ['element', 'resolveAll', 'range', 'source']) {
+  for (const banner of ['element', 'resolveAll', 'range', 'source', 'point']) {
     assert.equal(src.split(`  // ── ${banner} ──\n`).length - 1, 1, `the ${banner} banner`);
   }
 });
