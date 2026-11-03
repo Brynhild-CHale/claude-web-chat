@@ -1,0 +1,6 @@
+{
+  "name": "strokes-fixture",
+  "version": "1.0.0",
+  "description": "The test suite's minimal strokes type: one box-placed scribble on an image, an svg or a canvas.",
+  "elements": ["scribble"]
+}
