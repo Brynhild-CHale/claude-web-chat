@@ -170,8 +170,9 @@ const dataElements = (html) => [...html.matchAll(DATA_EL)].map((m) => JSON.parse
 // The payload a document carries, whole again: its data element (which holds
 // each type row less its module and assets) with each row's module and assets
 // read back from that type's own inline module (typeElement's form: the
-// module's bytes, a newline, the one define line).
-const DEFINE = /\nwindow\.__wcMount\.elements\.define\(("(?:[^"\\]|\\.)*"), draw, (.*)\);$/;
+// module's bytes, a newline, the one define line, which names the type, its
+// default export, its assets and its glyph exports — U522a's fourth argument).
+const DEFINE = /\nwindow\.__wcMount\.elements\.define\(("(?:[^"\\]|\\.)*"), draw, (.*), \{glyph: typeof glyph === 'undefined' \? null : glyph, sourceGlyph: typeof sourceGlyph === 'undefined' \? null : sourceGlyph\}\);$/;
 function carried(html) {
   const [p] = dataElements(html);
   if (!p) return null;
@@ -247,7 +248,7 @@ test('a local browser download carries the resolver, the element runtime, the fi
   assert.ok(html.includes(resolver + docRuntime.runtimeElement(docRuntime.keyOf(p))), 'the element runtime right after the resolver');
   assert.equal(p.types.length, 1);
   assert.deepStrictEqual([p.types[0].type, p.types[0].place], ['xe-mark', 'box']);
-  assert.ok(html.includes(`<script type="module">${MARK_DRAW}\nwindow.__wcMount.elements.define("xe-mark", draw, {});</script>`), 'the fixture type\'s inline module, its exact bytes');
+  assert.ok(html.includes(`<script type="module">${MARK_DRAW}\nwindow.__wcMount.elements.define("xe-mark", draw, {}, {glyph: typeof glyph === 'undefined' ? null : glyph, sourceGlyph: typeof sourceGlyph === 'undefined' ? null : sourceGlyph});</script>`), 'the fixture type\'s inline module, its exact bytes, then the define line with its glyph exports (U522a)');
   assert.ok(html.indexOf('data-wc-elements') < html.indexOf('<script>(function () {\n  var data;'), 'the data element before the shell');
   assert.ok(!html.match(/id="wc-export-data"[^>]*>[^<]*/)[0].includes(W.shared), 'the element data never rides in wc-export-data');
   assert.deepStrictEqual(p.removed, ['xe-gone']);
