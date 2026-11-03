@@ -366,6 +366,28 @@ test('a scroll mid-stroke moves the canvas with the target on the next frame; a 
   parent.prepend(el);
 });
 
+test('a sample with no pressure reads the default; a begin re-lays the canvas last in the body (above #el-layer by tree order)', () => {
+  assert.ok(wet.begin(sheet(), { pointerId: 16 }));
+  const c = wetCanvases()[0];
+  assert.equal(c.nextSibling, null, 'last in the body at the begin');
+  wet.push([{ clientX: 50, clientY: 110, timeStamp: 1 }, { clientX: 51, clientY: 111, pressure: NaN, timeStamp: 2 }]);
+  let seen = null;
+  wet.paint((x, view) => { seen = [view.pressure(0), view.pressure(1)]; });
+  flush();
+  assert.deepStrictEqual(seen, [0.5, 0.5], 'no pressure and NaN read the Pointer Events default');
+  // Something laid after the canvas mid-stroke: the next begin puts it last again.
+  const late = W.document.createElement('div');
+  W.document.body.appendChild(late);
+  try {
+    assert.equal(c.nextSibling, late);
+    assert.ok(wet.begin(sheet(), { pointerId: 17 }));
+    assert.equal(wetCanvases()[0], c, 'the same canvas');
+    assert.equal(c.nextSibling, null, 'last in the body again');
+  } finally {
+    late.remove();
+  }
+});
+
 test('main.js inits the wet layer once, after the overlay', () => {
   const src = fs.readFileSync(path.join(REPO, 'public/app/main.js'), 'utf8');
   assert.equal((src.match(/initWetLayer\(\);/g) || []).length, 1);
