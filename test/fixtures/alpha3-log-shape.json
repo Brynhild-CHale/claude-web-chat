@@ -1,0 +1,140 @@
+{
+  "derived_from": "503b8f2f (ae-alpha.3)",
+  "record_types": [
+    "epoch",
+    "el",
+    "ver",
+    "commit",
+    "migration",
+    "close",
+    "ack",
+    "drop",
+    "answers"
+  ],
+  "record_keys": {
+    "el": [
+      "t",
+      "id",
+      "kind",
+      "created_at"
+    ],
+    "ver": [
+      "t",
+      "id",
+      "v",
+      "parent_v",
+      "seq",
+      "schema",
+      "payload",
+      "payload_hash",
+      "src_hash",
+      "original",
+      "writer",
+      "provenance",
+      "owner",
+      "author",
+      "at"
+    ],
+    "commit": [
+      "t",
+      "node",
+      "parent",
+      "created_at",
+      "pins",
+      "digest",
+      "at"
+    ]
+  },
+  "id_letters": [
+    "c",
+    "h",
+    "g",
+    "k"
+  ],
+  "id_prefix": {
+    "comment": "c",
+    "highlight": "h",
+    "box-grab": "g",
+    "chat-comment": "k"
+  },
+  "schemas": {
+    "comment@1": {
+      "type": "comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor"
+      ]
+    },
+    "highlight@1": {
+      "type": "highlight",
+      "keys": [
+        "anchor",
+        "shared",
+        "color",
+        "note"
+      ]
+    },
+    "box-grab@1": {
+      "type": "box-grab",
+      "keys": [
+        "anchor",
+        "shared",
+        "rect",
+        "meta",
+        "grab"
+      ]
+    },
+    "comment@2": {
+      "type": "comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor",
+        "chain"
+      ]
+    },
+    "chat-comment@1": {
+      "type": "chat-comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor",
+        "chain"
+      ]
+    }
+  },
+  "engine_kinds": [
+    "element",
+    "range",
+    "source",
+    "turn",
+    "item",
+    "item-range",
+    "diff-line"
+  ],
+  "siblings": [
+    "original",
+    "writer",
+    "provenance",
+    "owner"
+  ],
+  "node_id": "^n\\d+$",
+  "comment_manifest": {
+    "version": "1.1.0",
+    "schema": "comment@2",
+    "reads": [
+      "comment@1",
+      "comment@2"
+    ],
+    "anchors": [
+      "element",
+      "range",
+      "source"
+    ]
+  },
+  "parsed_conversations_max": 160
+}
