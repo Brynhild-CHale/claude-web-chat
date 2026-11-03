@@ -26,7 +26,8 @@
 //     the resolver answers `indexing`; after start() settles it follows the
 //     fake (`unavailable {rule: 'gone'}`); ensureConversation waits for ready
 //     and reaches the fake once; ready resolves when switched off;
-//   * ensureLoaded's duplicate rule: a repeated id keeps the first record.
+//   * ensureLoaded's duplicate rule: a repeated id keeps the first record, and a
+//     record dropped for its sessions holds no id (the old kept-list rule).
 // The Claude tier is a private fake (test-support/claude-home, isolate: true)
 // fed only synthetic transcripts (test-support/claude-records). A test never
 // requires design/ (CI has none).
@@ -343,6 +344,31 @@ test('ensureLoaded: a conversations.json with a repeated id keeps the first reco
   const conv = h.mirror.snapshot({ since: 0 }).conversations.find((c) => c.id === a);
   assert.ok(conv, 'the first record listed');
   assert.equal(h.mirror.conversationOf(b), null, 'the repeated record\'s session is not held');
+});
+
+test('ensureLoaded: a record dropped for its sessions does not hold its id — a later record of the id is kept (the old kept-list rule)', async (t) => {
+  withTempHome(t);
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+  const ch = claudeHome(t, { root, isolate: true });
+  const a = sid(1);
+  const c = sid(3);
+  const at = Date.now() - 60000;
+  for (const id of [a, c]) transcript(ch, id, at);
+  const holder = stored(ch, { id: c, lastActivity: at + 400, title: 'holder' });
+  // id a, but its only session is c's (already claimed): dropped, never kept.
+  const dropped = { ...stored(ch, { id: a, lastActivity: at + 500, title: 'dropped' }), sessions: [{ session_id: c, slug: ch.slug, reason: 'start', started_at: at, ended_at: null }], current_session_id: c };
+  const later = stored(ch, { id: a, lastActivity: at + 900, title: 'later' });
+  writeJsonAtomic(projectPaths(root).mirrorConversations, { v: 1, conversations: [holder, dropped, later] });
+  const h = facade(t, { root, ch });
+  await h.mirror.start();
+  const st = h.mirror.stats().conversations;
+  assert.equal(st.conversations, 2, 'the holder and the later record of a');
+  assert.equal(h.mirror.conversationOf(a), a, 'the later record of a holds its session');
+  assert.equal(h.mirror.conversationOf(c), c, 'the holder keeps its own');
+  const listed = h.mirror.snapshot({ since: 0 }).conversations.find((x) => x.id === a);
+  assert.ok(listed, 'a is listed');
 });
 
 test('READY_WAIT_MS stays 2 s', () => {
