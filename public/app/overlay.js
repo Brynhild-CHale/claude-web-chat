@@ -80,8 +80,39 @@
 // in the shadow root of each pane holding a group). Answers, reports and
 // orphans() are the page's alone: a host's state is the daemon's (D5).
 //
-// It makes no network call, sends no report (U314's, through onAnswers), and
-// assigns `hidden` only through the probe seam (U303's). Previews are
+// THE DETACHABLE GLYPH (U587, H.7; DECISIONS L.1 M4 a, K.2-151; RULED
+// U587@glyph-offset-store AI5 a). A type registered with `detach: {leader}`
+// (element-types.js passes it from element.json's `glyph: {detach: true}`;
+// the built-in comment adopts it first) gets its glyph dragged off its anchor
+// by the ENGINE — never by a pack, whose draw never sees layout — through a
+// listener on the page layer under the input-mode policy's pointer reading
+// (input-mode.js pointerTypeOf, never a second table): a pen or a mouse drags
+// once it travels past TAP_SLOP (a press that does not still clicks: the
+// thread opens); a finger drags only after a press-and-hold (GLYPH_HOLD_MS)
+// while it stays within the slop, so a pan that starts at once is never
+// stolen — the browser keeps it. A drag starts through the tray action guard
+// (element-types.js trayAction: a previewed node refuses it with
+// READONLY_HINT and nothing is written); its drop is the one write this file
+// makes — POST /api/elements/:id/glyph {dx, dy, corner} through http.js, per
+// element of the group — and the click that follows a drag is the drag's.
+// THE OFFSET (a row's `display.glyph`, the version's display sibling) is CSS
+// px from the corner of the anchor's box (its rect; a point's point) nearest
+// the drop, so the glyph follows its anchor through a re-layout; the glyph is
+// placed, clipped and kept off a frame by the same rules as an attached one,
+// at its offset point. THE LEADER is one <svg class="el-leader"> per detached
+// group, drawn under the markers from the nearest edge of the anchor's box to
+// the glyph, its box the group's clip and its line clipped to it, hidden when
+// it would cross a displayed frame; its style ('dotted', 'faint', 'hover':
+// GLYPH_LEADERS) is the type's (read per draw: the tool's setting), and it
+// collapses to 'hover' past LEADER_PANE_MAX detached glyphs on one pane or
+// with the glyph within LEADER_NEAR_PX of its anchor. 'hover' draws it only
+// while the glyph or its anchor is hovered, or after a tap on the glyph on
+// touch. A carried guess keeps its offset at the guess, its leader styled
+// as an orphan. A box group never detaches; no layer or placement mode is
+// added (HOST_NAMES unchanged), and the look is app.css's tokens.
+//
+// It makes no other network call, sends no report (U314's, through
+// onAnswers), and assigns `hidden` only through the probe seam (U303's). Previews are
 // read-only (D2): no create and no pick runs while previewing. Tranche 2 draws
 // in the live chrome only (F-DOCS (a)): a preview, export or replay document
 // draws no element.
@@ -96,7 +127,9 @@ import { hiddenProbe, installRetriggers } from './overlay-hidden.js';
 // the input-mode policy's answer, never a rule of this file's. input-mode.js
 // imports this module too: the cycle is safe because neither reads the other's
 // bindings while it evaluates (dispatchMode is read only inside onPointer).
-import { dispatchMode } from './input-mode.js';
+import { dispatchMode, pointerTypeOf } from './input-mode.js';
+import { isTap } from './sheet-model.js';
+import { request } from './http.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -155,6 +188,21 @@ export const HOST_NAMES = Object.freeze(['page', 'chat', 'turns']);
 // keeps and never draws): no other host may list one. A point row (4C.1,
 // U532) is placed in its pane as an element row is, at its x/y (pointAt).
 export const PAGE_KINDS = Object.freeze(['element', 'range', 'source', 'point']);
+// THE DETACHABLE GLYPH's numbers (U587, H.7; the header's paragraph). The
+// leaders are lib/packs/elements.js GLYPH_LEADERS', the corners and the bound
+// lib/server/domain/elements.js GLYPH_CORNERS / GLYPH_OFFSET_MAX — each held
+// equal by test/overlay-detach-glyph.test.js (the chrome cannot require lib/).
+export const GLYPH_LEADERS = Object.freeze(['dotted', 'faint', 'hover']);
+export const GLYPH_CORNERS = Object.freeze(['tl', 'tr', 'bl', 'br']);
+export const GLYPH_OFFSET_MAX = 4096;
+// How long a finger stays down, within the tap slop, before it may drag a glyph.
+export const GLYPH_HOLD_MS = 450;
+// A leader whose glyph sits this near its anchor's box collapses to 'hover'.
+export const LEADER_NEAR_PX = 8;
+// More detached glyphs than this on one pane: their leaders collapse to 'hover'.
+export const LEADER_PANE_MAX = 8;
+// The route a drop writes (lib/server/routes/element-glyph.js).
+export const glyphPath = (id) => `/api/elements/${encodeURIComponent(String(id))}/glyph`;
 
 // THE DRAW RULES: how an answer is drawn, first matching row wins. `how` and
 // `guess` null match anything. A section answer (re-resolved, how 'section')
@@ -223,6 +271,7 @@ const cfg = {
   now: () => performance.now(),
   budget_ms: DEFAULT_BUDGET_MS,
   clips: (el) => defaultClips(el),
+  hold_ms: GLYPH_HOLD_MS,
 };
 function defaultRectOf(x) {
   if (!x) return null;
@@ -251,7 +300,7 @@ let initialQueued = new Set();
 let initialScheduled = false;
 let sourcesPending = false;
 const mapCache = new Map();       // md id → {text, map}
-const types = new Map();          // type → {draw, create, input, glyph, move, place}
+const types = new Map();          // type → {draw, create, input, glyph, move, place, detach}
 const answerSubs = new Set();
 const armedSubs = new Set();
 let probe = null;
@@ -275,6 +324,16 @@ const scrollRoots = new WeakSet();
 const elTokens = new WeakMap();
 let nextToken = 1;
 const failed = new Map();         // id → {type, error} for a draw that threw
+// The detachable glyph's state (U587): the press on a glyph under way, the
+// click a drag owes, the hover-mode leaders drawn, the glyphs a touch tapped
+// (their hover leader shown), and the tray action guard (element-types.js
+// trayAction, loaded lazily: that module imports this one).
+let drag = null;
+let swallowClick = false;
+const hoverable = new Set();
+const tapShown = new Set();
+let trayGuard = null;
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0 };
 const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
@@ -300,6 +359,9 @@ function normRow(r) {
     pending: !!r.pending,
   };
   if (r.answered !== undefined) row.answered = !!r.answered;
+  // A detached glyph's offset (U587): the version's display sibling, as served.
+  const display = displayOf(r.display);
+  if (display) row.display = display;
   // The daemon's answer for a row that carries one (a host's row: {state,
   // explain, how, and its placement fields — an item-range's start and end, a
   // diff-line's file, line and side}), copied as given: the chrome invents no
@@ -311,6 +373,18 @@ function normRow(r) {
   // node's pin over a learned value draws masked.
   else { const a = servedAnswerOf(r); if (a) row.answer = a; }
   return row;
+}
+// A row's display {glyph: {dx, dy, corner}}, checked and frozen; null when it
+// holds no glyph offset (an attached glyph).
+function offsetOf(g) {
+  if (!g || typeof g !== 'object') return null;
+  if (!['dx', 'dy'].every((k) => Number.isFinite(g[k]) && Math.abs(g[k]) <= GLYPH_OFFSET_MAX)) return null;
+  if (!GLYPH_CORNERS.includes(g.corner)) return null;
+  return Object.freeze({ dx: g.dx, dy: g.dy, corner: g.corner });
+}
+function displayOf(d) {
+  const glyph = d && typeof d === 'object' ? offsetOf(d.glyph) : null;
+  return glyph ? Object.freeze({ glyph }) : null;
 }
 // A page record the daemon served masked (U415c: a learned value's fragment
 // inside its own words, so its quote holds a mark the pane's raw DOM never
@@ -798,6 +872,80 @@ function pointOfAnswer(raw) {
 function pointPlace(pt, r) {
   return typeof anchors.pointAt === 'function' ? anchors.pointAt({ pt }, r) : null;
 }
+// Whether a type's glyph detaches (registerType's `detach`, U587).
+function detachable(type) {
+  const t = types.get(type);
+  return !!(t && t.detach);
+}
+// A detached type's leader style now: its registration's (a function is read
+// per draw: the tool's setting), one of GLYPH_LEADERS, else the first.
+function leaderOf(type) {
+  const t = types.get(type);
+  let v = t && t.detach ? t.detach.leader : null;
+  if (typeof v === 'function') { try { v = v(); } catch { v = null; } }
+  return GLYPH_LEADERS.includes(v) ? v : GLYPH_LEADERS[0];
+}
+function leaderEl() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'el-leader');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.style.display = 'none';
+  svg.appendChild(document.createElementNS(SVG_NS, 'line'));
+  return svg;
+}
+// Write a detached group's leader from its measure (applyGroup's write slice):
+// its box the group's clip, its line the clipped segment; hidden when there is
+// none or it would cross a frame. The style is the type's, collapsed to
+// 'hover' by the density rule or a glyph near its anchor.
+function placeLeader(g, m) {
+  g.lastX = m.x;
+  g.lastY = m.y;
+  g.lastAbox = m.abox || null;
+  g.lastGbox = m.gbox || null;
+  const svg = g.leader;
+  if (!svg) return;
+  const L = m.leader;
+  g.leaderFramed = !!(L && L.framed);
+  if (!L || L.empty || L.framed) { svg.style.display = 'none'; hoverable.delete(g); return; }
+  const mode = g.dense || L.near ? 'hover' : leaderOf(g.type);
+  const c = m.clip;
+  const w = Math.max(0, c.right - c.left);
+  const h = Math.max(0, c.bottom - c.top);
+  svg.style.left = c.left + 'px';
+  svg.style.top = c.top + 'px';
+  svg.style.width = w + 'px';
+  svg.style.height = h + 'px';
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+  const line = svg.firstChild;
+  line.setAttribute('x1', String(L.sx - c.left));
+  line.setAttribute('y1', String(L.sy - c.top));
+  line.setAttribute('x2', String(L.ex - c.left));
+  line.setAttribute('y2', String(L.ey - c.top));
+  svg.dataset.leader = mode;
+  svg.classList.toggle('el-leader-orphan', g.kind === 'guess');
+  svg.style.display = '';
+  if (mode === 'hover') hoverable.add(g); else hoverable.delete(g);
+  syncLeaderOn(g);
+}
+// Whether a leader shows: always but in 'hover', where only while its glyph or
+// its anchor is hovered, a touch tapped the glyph, or the glyph is dragged.
+function syncLeaderOn(g) {
+  const svg = g.leader;
+  if (!svg) return;
+  const on = svg.dataset.leader !== 'hover' || !!g.hovered || tapShown.has(g.key)
+    || !!(drag && drag.started && drag.key === g.key);
+  svg.classList.toggle('el-leader-on', on);
+}
+const inBox = (b, x, y) => !!b && x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+// The hover reading: one passive listener, idle while no hover leader is drawn.
+function onHoverMove(e) {
+  if (!hoverable.size || e.pointerType === 'touch') return;
+  for (const g of hoverable) {
+    const on = inBox(g.lastAbox, e.clientX, e.clientY) || inBox(g.lastGbox, e.clientX, e.clientY);
+    if (on !== !!g.hovered) { g.hovered = on; syncLeaderOn(g); }
+  }
+}
 // A host's drawn set as marker groups: per type, the elements grouped by the
 // DOM element they resolve to (a range or a section, one group each). The
 // page's are the drawn scope's answers; another host's, its own answers (the
@@ -841,13 +989,21 @@ function buildGroups(h) {
     // A point answer (4C.1, U532) is keyed by its element AND its point, so
     // two points on one svg are two markers; the group keeps pt for pointAt.
     const pt = own && el && e.row.anchor && e.row.anchor.kind === 'point' ? pointOfAnswer(raw) : null;
-    const key = el ? `${type}|${kind}|e${tokenOf(el)}${box ? '|box' : ''}${pt ? `|p${pt.x},${pt.y}` : ''}` : `${type}|${kind}|${rangeKey(range)}`;
+    // A detached type's glyph (U587): its offset is the live row's display (an
+    // answer holds the row it was delivered for; a move upserts a newer one),
+    // and rows on one element with different offsets are separate markers.
+    const det = h.page && !box && detachable(type);
+    const cur = det ? (scopes[e.scope] && scopes[e.scope].rows.get(e.row.id)) || e.row : null;
+    const off = cur && cur.display ? cur.display.glyph : null;
+    const dkey = off ? `|d${off.dx},${off.dy},${off.corner}` : '';
+    const key = el ? `${type}|${kind}|e${tokenOf(el)}${box ? '|box' : ''}${pt ? `|p${pt.x},${pt.y}` : ''}${dkey}` : `${type}|${kind}|${rangeKey(range)}${dkey}`;
     let g = byKey.get(key);
     if (!g) {
       const mdItem = h.page && range ? marginItemOf(type, range) : null;
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, host: h.name, items: [],
         container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type, h.page ? null : h), mdItem, failed: false };
       if (pt) g.pt = pt;
+      if (det) { g.detach = true; g.offset = off; }
       if (box) {
         g.place = 'box';
         g.drawn = false;
@@ -863,6 +1019,11 @@ function buildGroups(h) {
   const out = [...byKey.values()];
   for (const g of out) g.items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  // THE DENSITY RULE (U587): past LEADER_PANE_MAX detached glyphs on one pane,
+  // their leaders collapse to 'hover'.
+  const perMount = new Map();
+  for (const g of out) if (g.detach && g.offset) perMount.set(g.mount, (perMount.get(g.mount) || 0) + 1);
+  for (const g of out) if (g.detach && g.offset && perMount.get(g.mount) > LEADER_PANE_MAX) g.dense = true;
   return out;
 }
 // A host's signature: the page's as it always was (its drawn scope first); a
@@ -924,7 +1085,8 @@ function runDraw(g, t) {
 }
 function rebuild(h, gs) {
   const layer = h.layer;
-  for (const m of [...layer.querySelectorAll('.el-marker')]) m.remove();
+  for (const m of [...layer.querySelectorAll('.el-marker, .el-leader')]) m.remove();
+  if (h.page) hoverable.clear();
   for (const g of gs) {
     const c = document.createElement('div');
     c.className = `el-marker ${g.cls}`;
@@ -951,6 +1113,13 @@ function rebuild(h, gs) {
     c.style.display = 'none';
     c._group = g;
     g.container = c;
+    // A detached glyph's leader (U587): drawn under the markers, placed by
+    // applyGroup at each measure.
+    if (g.detach) {
+      c.dataset.detach = '1';
+      g.leader = leaderEl();
+      layer.appendChild(g.leader);
+    }
     layer.appendChild(c);
     if (t) runDraw(g, t);
     else {
@@ -1054,6 +1223,7 @@ function wellOf(g, fr) {
 }
 function hide(g) {
   if (g.container) g.container.style.display = 'none';
+  if (g.leader) { g.leader.style.display = 'none'; hoverable.delete(g); }
 }
 
 // ── the never-draw rule (3C.1 finding (6)) ──────────────────────────────────
@@ -1175,6 +1345,21 @@ function measureGroup(g, fr, read) {
     if (!ir) return { res: 'unplaced' };
     x = ir.left;
   }
+  // A detached glyph (U587): at its offset from the corner of the anchor's box
+  // it is measured from — a drag's live offset while one is under way — so it
+  // follows its anchor through a re-layout; the box is kept for its leader.
+  let abox = null;
+  let off = null;
+  if (g.detach) {
+    abox = g.pt ? { left: x, top: y, right: x, bottom: y }
+      : { left: x, top: y, right: Math.max(x, r.left + r.width), bottom: Math.max(y, r.top + r.height) };
+    off = (drag && drag.started && drag.key === g.key && drag.offset) || g.offset;
+    if (off) {
+      const c = cornerOf(abox, off.corner);
+      x = c.x + off.dx;
+      y = c.y + off.dy;
+    }
+  }
   const clip = clipFrom(startEl, fr, read, well);
   const t = g.range ? types.get(g.type) : null;
   const spans = !!(t && t.move);
@@ -1194,11 +1379,66 @@ function measureGroup(g, fr, read) {
   // THE NEVER-DRAW RULE: a glyph whose painted box meets a displayed frame is
   // not drawn (a range with a move keeps its rectangles, its glyph inset away).
   const painted = { left: gx + left, top: gy + top, right: gx + gl.w - right, bottom: gy + gl.h - bottom };
-  if (censusFor(g, startEl, fr, read).some((b) => meets(painted, b))) {
+  const frames = censusFor(g, startEl, fr, read);
+  if (frames.some((b) => meets(painted, b))) {
     if (!spans) return { res: 'framed' };
     return { res: 'drawn', x, y, clip, inset: [gl.h, 0, 0, 0], framed: true };
   }
-  return { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
+  const m = { res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
+  if (abox) {
+    m.abox = abox;
+    m.gbox = { left: gx, top: gy, right: gx + gl.w, bottom: gy + gl.h };
+    if (off) m.leader = leaderOfBoxes(abox, m.gbox, clip, frames);
+  }
+  return m;
+}
+// ── the detachable glyph's geometry (U587) ─────────────────────────────────
+// A box's corner (GLYPH_CORNERS) as a point.
+function cornerOf(b, corner) {
+  return { x: corner === 'tr' || corner === 'br' ? b.right : b.left, y: corner === 'bl' || corner === 'br' ? b.bottom : b.top };
+}
+// The offset {dx, dy, corner} of point p from the corner of box b nearest it,
+// rounded to the half px and bounded (the daemon's grammar).
+function offsetFrom(p, b) {
+  let best = null;
+  for (const corner of GLYPH_CORNERS) {
+    const c = cornerOf(b, corner);
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (!best || d < best.d) best = { d, c, corner };
+  }
+  const step = (n) => Math.max(-GLYPH_OFFSET_MAX, Math.min(GLYPH_OFFSET_MAX, Math.round(n * 2) / 2)) + 0;
+  return Object.freeze({ dx: step(p.x - best.c.x), dy: step(p.y - best.c.y), corner: best.corner });
+}
+const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// The part of segment a→b inside box (Liang–Barsky), or null.
+function clipSegment(a, b, box) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [a.x - box.left, box.right - a.x, a.y - box.top, box.bottom - a.y];
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) { if (q[i] < 0) return null; continue; }
+    const t = q[i] / p[i];
+    if (p[i] < 0) { if (t > t1) return null; if (t > t0) t0 = t; } else { if (t < t0) return null; if (t < t1) t1 = t; }
+  }
+  return { a: { x: a.x + t0 * dx, y: a.y + t0 * dy }, b: { x: a.x + t1 * dx, y: a.y + t1 * dy } };
+}
+// THE LEADER: from the nearest edge point of the anchor's box to the glyph's
+// box, clipped to the group's clip; `near` when the glyph is within
+// LEADER_NEAR_PX of its anchor; `framed` when what is left crosses a displayed
+// frame (it is then not drawn: never over a frame).
+function leaderOfBoxes(abox, gbox, clip, frames) {
+  const cx = (gbox.left + gbox.right) / 2;
+  const cy = (gbox.top + gbox.bottom) / 2;
+  const s = { x: clampTo(cx, abox.left, abox.right), y: clampTo(cy, abox.top, abox.bottom) };
+  const e = { x: clampTo(s.x, gbox.left, gbox.right), y: clampTo(s.y, gbox.top, gbox.bottom) };
+  const near = Math.hypot(e.x - s.x, e.y - s.y) <= LEADER_NEAR_PX;
+  const seg = clipSegment(s, e, clip);
+  if (!seg) return { empty: true, near };
+  const framed = frames.some((f) => !!clipSegment(seg.a, seg.b, f));
+  return { sx: seg.a.x, sy: seg.a.y, ex: seg.b.x, ey: seg.b.y, near, framed };
 }
 // Measure a box group (boxRow) — READS ONLY, past measureGroup's shared
 // checks: the target's rect `r` ∩ its clip (clipFrom) is the painted box,
@@ -1240,6 +1480,7 @@ function applyGroup(g, m) {
     g.drawn = true;
   }
   c.style.display = '';
+  if (g.detach) placeLeader(g, m);
   if (t && t.move) {
     try { t.move(g, { ...drawCtx(g), x: m.x, y: m.y, clip: m.clip }); } catch (err) {
       console.error(`[web-chat] overlay: the '${g.type}' move failed`, err);
@@ -1673,7 +1914,10 @@ export function isHostRoot(el) {
 // marker sized to its target (boxRow, measureBox): the draw gets ctx.box
 // {w, h} and draws in the target's normalised space (an <svg viewBox="0 0 1
 // 1" preserveAspectRatio="none"> at 100 % of the marker), so a resize
-// rescales it with no second draw. An element whose type has none draws a
+// rescales it with no second draw. `detach` {leader?} (U587; leader one of
+// GLYPH_LEADERS or fn() → one, read per draw; default 'dotted'), a page
+// type's, gives its glyph the engine's drag, stored offset and leader (the
+// header's THE DETACHABLE GLYPH). An element whose type has none draws a
 // generic marker.
 export function registerType(type, spec) {
   if (typeof type !== 'string' || !type) throw new TypeError('registerType: a type name is required');
@@ -1703,8 +1947,19 @@ export function registerType(type, spec) {
   if (typeof tool !== 'string' || !tool) throw new TypeError('registerType: tool is an armed tool\'s name');
   const place = spec.place == null ? 'glyph' : spec.place;
   if (!PLACE_MODES.includes(place)) throw new TypeError(`registerType: place must be one of ${PLACE_MODES.join(', ')}`);
+  // `detach` {leader?} (U587): the engine's detachable glyph, a page type's.
+  let detach = null;
+  if (spec.detach != null) {
+    const d = spec.detach;
+    const l = d && typeof d === 'object' ? d.leader : undefined;
+    if (!d || typeof d !== 'object' || (l != null && typeof l !== 'function' && !GLYPH_LEADERS.includes(l))) {
+      throw new TypeError(`registerType: detach is {leader?}, leader one of ${GLYPH_LEADERS.join(', ')} or fn() → one`);
+    }
+    if (host === 'page') detach = Object.freeze({ leader: l == null ? GLYPH_LEADERS[0] : l });
+  }
+  if (detach) loadGuard();
   const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
-    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool, place };
+    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool, place, detach };
   types.set(type, entry);
   resetSigs(type);
   syncListening();
@@ -2090,6 +2345,176 @@ function capture(el, pointerId, h) {
   try { at.setPointerCapture(pointerId); } catch { /* the pointer is gone (no active pointer with that id) */ }
 }
 
+// ── the detachable glyph's drag (U587, H.7; the header's paragraph) ────────
+// The tray action guard, loaded once a detached type registers (a relative
+// lazy import: element-types.js imports this module). Until it has loaded no
+// drag starts (fail closed).
+function loadGuard() {
+  if (trayGuard) return;
+  import('./element-types.js').then((m) => {
+    if (typeof m.trayAction === 'function') trayGuard = m.trayAction;
+  }, (err) => console.error('[web-chat] overlay: the tray action guard did not load', err));
+}
+// The guard's answer for a drag starting now: false (a preview: READONLY_HINT
+// shown, nothing written) or true.
+function dragAllowed() {
+  if (!trayGuard) return false;
+  try { return trayGuard(() => true) === true; } catch { return false; }
+}
+function groupOfKey(key) {
+  return pageHost.groups.find((g) => g.key === key) || null;
+}
+function listenDrag(on) {
+  const f = on ? 'addEventListener' : 'removeEventListener';
+  window[f]('pointermove', onDragMove, true);
+  window[f]('pointerup', onDragUp, true);
+  window[f]('pointercancel', onDragCancel, true);
+}
+// A finger past its hold drags: its touchmove's default (a pan) is cancelled
+// from then on, so the browser does not take the gesture under the drag.
+function stopPan(e) { if (drag && drag.held && e.cancelable) e.preventDefault(); }
+function holdTouch(on) {
+  if (on) document.addEventListener('touchmove', stopPan, { capture: true, passive: false });
+  else document.removeEventListener('touchmove', stopPan, { capture: true });
+}
+function onGlyphDown(e) {
+  if (drag) return;   // one glyph press at a time: a palm under a pen's drag starts none
+  const m = e.target && e.target.closest ? e.target.closest('.el-marker') : null;
+  const g = m && m._group;
+  // A carried guess's and a section's press is the re-anchor seam's (their
+  // click), never a drag.
+  if (!g || !g.detach || g.failed || g.kind !== 'hit' || !Number.isFinite(g.lastX)) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const kind = pointerTypeOf(e);
+  drag = { pointerId: e.pointerId, kind, key: g.key, group: g, marker: m, x0: e.clientX, y0: e.clientY,
+    p0: { x: g.lastX, y: g.lastY }, held: kind !== 'touch', started: false, moved: false, offset: null, timer: null };
+  if (kind === 'touch') {
+    const mine = drag;
+    drag.timer = setTimeout(() => {
+      if (drag !== mine || mine.moved) return;
+      mine.held = true;
+      holdTouch(true);
+    }, cfg.hold_ms);
+  } else if (e.cancelable) {
+    e.preventDefault();   // no text selection or focus under a pen's or a mouse's drag
+  }
+  listenDrag(true);
+}
+function onDragMove(e) {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  const dx = e.clientX - drag.x0;
+  const dy = e.clientY - drag.y0;
+  if (!drag.started) {
+    if (isTap(dx, dy)) return;
+    drag.moved = true;
+    // A finger that travelled before its hold is a pan: the browser's, untouched.
+    if (!drag.held) { endDrag(); return; }
+    if (!dragAllowed()) { endDrag(); return; }
+    drag.started = true;
+    drag.marker.classList.add('el-dragging');
+    try { if (typeof drag.marker.setPointerCapture === 'function') drag.marker.setPointerCapture(e.pointerId); } catch { /* gone */ }
+  }
+  if (e.cancelable) e.preventDefault();
+  const g = groupOfKey(drag.key) || drag.group;
+  const abox = g.lastAbox || drag.group.lastAbox;
+  if (!abox) return;
+  drag.offset = offsetFrom({ x: drag.p0.x + dx, y: drag.p0.y + dy }, abox);
+  syncLeaderOn(g);
+  requestDraw();
+}
+function onDragUp(e) {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  const d = drag;
+  endDrag();
+  if (d.started) {
+    // The click this release makes is the drag's, never the glyph's own.
+    swallowClick = true;
+    setTimeout(() => { swallowClick = false; }, 0);
+    if (d.offset) commitMove(d);
+  } else if (d.kind === 'touch') {
+    // A tap on the glyph on touch shows (or hides) its hover leader.
+    if (tapShown.has(d.key)) tapShown.delete(d.key); else tapShown.add(d.key);
+    const g = groupOfKey(d.key);
+    if (g) syncLeaderOn(g);
+  }
+}
+function onDragCancel(e) {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  endDrag();
+}
+function endDrag() {
+  const d = drag;
+  drag = null;
+  if (!d) return;
+  if (d.timer) clearTimeout(d.timer);
+  holdTouch(false);
+  listenDrag(false);
+  if (d.marker) d.marker.classList.remove('el-dragging');
+  if (d.started) requestDraw();
+}
+function onLayerCapture(ev) {
+  if (!swallowClick) return;
+  swallowClick = false;
+  ev.stopPropagation();
+  ev.preventDefault();
+}
+// THE DROP: each element of the group takes the offset at once (its row's
+// display, so the glyph stays where it was dropped), then ONE request per
+// element through the tray action guard; the daemon's answer settles the
+// row's v and display, a refusal puts the row's display back (announced on
+// bus 'overlay:glyph-refused' {id, hint}).
+async function commitMove(d) {
+  const off = d.offset;
+  const ids = d.group.items.map((it) => String(it.id));
+  const S = scopes.live;
+  const before = new Map();
+  const rows = [];
+  for (const id of ids) {
+    const r = S.rows.get(id);
+    if (!r) continue;
+    before.set(id, r.display || null);
+    rows.push({ ...r, display: { glyph: off } });
+  }
+  if (!rows.length) return;
+  upsertElements('live', rows);
+  for (const id of before.keys()) {
+    let r;
+    try {
+      r = await Promise.resolve(trayGuard(() => request('POST', glyphPath(id), {
+        body: { dx: off.dx, dy: off.dy, corner: off.corner }, device: true,
+      })));
+    } catch (err) { r = { ok: false, hint: String((err && err.message) || err) }; }
+    const cur = S.rows.get(id);
+    if (!cur) continue;
+    if (r && r.ok && r.body && typeof r.body === 'object') {
+      upsertElements('live', [{ ...cur, v: r.body.v == null ? cur.v : r.body.v, display: r.body.display || null }]);
+    } else {
+      upsertElements('live', [{ ...cur, display: before.get(id) }]);
+      bus.emit('overlay:glyph-refused', { id, hint: (r && r.hint) || null });
+    }
+  }
+}
+// leaders() → the page's detached groups' leaders as drawn: {ids, drawn, mode,
+// on, orphan, framed, dense, box: {left, top, width, height}, line: {x1, y1,
+// x2, y2}} (client px; the line in the box's own coordinates). Read-only.
+export function leaders() {
+  const out = [];
+  for (const g of pageHost.groups) {
+    if (!g.leader) continue;
+    const svg = g.leader;
+    const line = svg.firstChild;
+    const num = (v) => (v == null || v === '' ? null : Number(String(v).replace('px', '')));
+    out.push({
+      ids: g.items.map((it) => it.id), drawn: svg.style.display !== 'none', mode: svg.dataset.leader || null,
+      on: svg.classList.contains('el-leader-on'), orphan: svg.classList.contains('el-leader-orphan'),
+      framed: !!g.leaderFramed, dense: !!g.dense,
+      box: { left: num(svg.style.left), top: num(svg.style.top), width: num(svg.style.width), height: num(svg.style.height) },
+      line: { x1: num(line.getAttribute('x1')), y1: num(line.getAttribute('y1')), x2: num(line.getAttribute('x2')), y2: num(line.getAttribute('y2')) },
+    });
+  }
+  return out;
+}
+
 // pick({kind}) → {promise, cancel}: the next qualifying press records an anchor
 // of that kind through the resolver (record, recordRange, recordSource,
 // recordPoint) and
@@ -2258,7 +2683,7 @@ export function elementsAt(x, y, opts) {
 
 // ── init ────────────────────────────────────────────────────────────────────
 // initOverlay(opts?) creates the layer once and wires its inputs; every call
-// may set the injectables: {rectOf, raf, now, budget_ms, clips}.
+// may set the injectables: {rectOf, raf, now, budget_ms, clips, hold_ms}.
 export function initOverlay(opts = {}) {
   for (const k of ['rectOf', 'raf', 'now', 'clips']) {
     if (opts[k] != null) {
@@ -2269,6 +2694,10 @@ export function initOverlay(opts = {}) {
   if (opts.budget_ms != null) {
     if (!(opts.budget_ms >= 0)) throw new TypeError('initOverlay: budget_ms must be a number >= 0');
     cfg.budget_ms = opts.budget_ms;
+  }
+  if (opts.hold_ms != null) {
+    if (!(opts.hold_ms >= 0)) throw new TypeError('initOverlay: hold_ms must be a number >= 0');
+    cfg.hold_ms = opts.hold_ms;
   }
   if (inited) return;
   inited = true;
@@ -2282,6 +2711,10 @@ export function initOverlay(opts = {}) {
   pageHost.layer = layer;
   registry.set('page', pageHost);
   layer.addEventListener('click', onLayerClick);
+  // The detachable glyph (U587): its press, the click a drag owes, the hover.
+  layer.addEventListener('pointerdown', onGlyphDown);
+  layer.addEventListener('click', onLayerCapture, true);
+  document.addEventListener('pointermove', onHoverMove, { capture: true, passive: true });
   onHello(takeLive);
   onFrame('reset', takeLive);
   onFrame('markdown', scheduleSources);

@@ -3607,3 +3607,19 @@ html.framed #topbar > #btn-graph { margin-left: auto; }
    look (#el-layer-chat / #el-layer-turns .el-marker.el-masked, above) on the
    page layer, so a pin whose words hold a learned value looks masked. */
 #el-layer .el-marker.el-masked { border: 1.5px dashed currentColor; border-radius: var(--wc-radius-sm); }
+/* ===== the detachable glyph's leader (U587, H.7) ==============================
+   overlay.js draws one <svg class="el-leader"> per detached glyph in #el-layer,
+   under the markers: its box is the glyph's clip, its line the segment from the
+   anchor's box to the glyph. The mechanism ships here; the look is the
+   maintainer's to tune (tokens only). data-leader is the type's style —
+   dotted, faint, or hover (shown only with .el-leader-on: the glyph or its
+   anchor hovered, a touch tap, a drag) — and .el-leader-orphan a carried
+   guess's. */
+#el-layer .el-leader { position: absolute; overflow: hidden; pointer-events: none; }
+#el-layer .el-leader line { stroke: var(--wc-muted); stroke-width: 1.5; stroke-linecap: round; fill: none; }
+#el-layer .el-leader[data-leader="dotted"] line,
+#el-layer .el-leader[data-leader="hover"] line { stroke-dasharray: 2 3; }
+#el-layer .el-leader[data-leader="faint"] line { stroke: var(--wc-border); opacity: .6; }
+#el-layer .el-leader[data-leader="hover"]:not(.el-leader-on) { visibility: hidden; }
+#el-layer .el-leader.el-leader-orphan line { stroke: var(--wc-gold); stroke-dasharray: 4 3; opacity: .8; }
+#el-layer .el-marker.el-dragging { cursor: grabbing; }
