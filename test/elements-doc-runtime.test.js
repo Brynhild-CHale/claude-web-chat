@@ -397,6 +397,21 @@ test('a glyph whose anchor lies outside its pane\'s host is clipped, not drawn',
   } finally { BOXES['p.lead'] = saved; }
 });
 
+test('a glyph whose painted box meets a displayed frame is not drawn (the overlay\'s never-draw rule)', async () => {
+  BOXES['iframe.emb'] = [0, 0, 50, 50];
+  try {
+    const node = fixture().node;
+    node.mounts[0].html = node.mounts[0].html.replace('</div>', '<iframe class="emb"></iframe></div>');
+    const p = fixturePayload();
+    const { win } = open(documentOf(p, node));
+    win.__wcMount.elements.define('f-box', fBoxDraw(win).draw, p.types[0].assets);
+    await settled(win);
+    assert.equal(markerOf(win, 'c1').style.display, 'none', 'the pin over the frame is not drawn');
+    assert.notEqual(markerOf(win, 'h1').style.display, 'none', 'a glyph clear of the frame still is');
+    assert.equal(stats(win).clipped, 1);
+  } finally { delete BOXES['iframe.emb']; }
+});
+
 test('a comment with no reply of Claude\'s is not drawn answered', async () => {
   const p = fixturePayload();
   p.items[1].payload.replies = [{ text: 'A note of my own.', claude: false }];
