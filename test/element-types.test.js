@@ -444,3 +444,76 @@ test('a listed type with remote.see full is absent from a remote read viewer\'s 
   assert.ok(!remote.body.types.some((x) => x.type === 'sticky'), 'a remote read viewer does not');
   assert.deepStrictEqual(remote.body.types.map((x) => x.type), [...BUILTIN_ELEMENT_TYPE_NAMES].sort(), 'the built-ins still listed');
 });
+
+// ── the schema row (annotation engine tranche 4, 4A.2; U513) ───────────────
+// A listed plug-in type's element.json `payload` declaration registers its
+// schema row in the element log (lib/core/element-log registerSchema); none,
+// or a malformed one, leaves the type listed and drawing but not writable.
+test('a listed plug-in type with a payload declaration is registered and writable; one with none or a malformed one lists, is unwritable and logs one line', (t) => {
+  const { schemaRow, isPluginType, createElementLog } = require('../lib/core/element-log');
+  const { createRedactor } = require('../lib/core/redact');
+  const root = project(t);
+  approveInProcess(root, { name: 'decl-pack', type: 'tq-decl', json: { payload: { keys: ['anchor', 'shared', 'note'], max_bytes: 2048 } } });
+  approveInProcess(root, { name: 'bare-pack', type: 'tq-bare' });
+  approveInProcess(root, { name: 'bad-pack', type: 'tq-bad', json: { payload: { keys: ['shared', 'note'] } } });
+  const lines = [];
+  const et = createElementTypes({ root, log: (l) => lines.push(l) });
+  for (const type of ['tq-decl', 'tq-bare', 'tq-bad']) {
+    assert.equal(et.listed(type), true, `${type} lists`);
+    assert.equal(et.readable(type, `${type}@1`), true, `${type} draws its schema`);
+  }
+  const row = schemaRow('tq-decl@1');
+  assert.ok(row && row.plugin, 'the declared type\'s row is registered');
+  assert.deepStrictEqual([...row.keys], ['anchor', 'shared', 'note', 'meta']);
+  assert.equal(row.maxBytes, 2048);
+  assert.equal(isPluginType('tq-decl'), true);
+  assert.equal(schemaRow('tq-bare@1'), null);
+  assert.equal(schemaRow('tq-bad@1'), null);
+  assert.equal(isPluginType('tq-bare'), false);
+  const un = et.stats().unwritable;
+  assert.deepStrictEqual(un.map((x) => x.type), ['tq-bad', 'tq-bare']);
+  assert.match(un[0].why, /payload keys names anchor and shared \(missing anchor\)/);
+  assert.match(un[1].why, /declares no payload/);
+  assert.equal(lines.length, 2, lines.join('\n'));
+  assert.match(lines[0], /element type "tq-bad" is listed but not writable: element\.json's payload/);
+  assert.match(lines[1], /element type "tq-bare" is listed but not writable: element\.json declares no payload/);
+  // A recompute registers again (idempotent) and logs nothing new.
+  et.invalidate();
+  assert.equal(et.listed('tq-decl'), true);
+  assert.strictEqual(schemaRow('tq-decl@1'), row);
+  assert.equal(lines.length, 2);
+  assert.deepStrictEqual(et.stats().unwritable.map((x) => x.type), ['tq-bad', 'tq-bare']);
+  // Built-ins register nothing and are never unwritable.
+  for (const type of BUILTIN_ELEMENT_TYPE_NAMES) assert.ok(!un.some((x) => x.type === type), type);
+  // The registered type writes through the element log: a p id.
+  const log = createElementLog({ file: path.join(tmpDir('wc-et-log-'), 'log.jsonl'), redactor: createRedactor() });
+  t.after(() => log.close());
+  log.load();
+  const id = log.mintId('tq-decl');
+  assert.equal(id, 'p1');
+  log.ensureElement({ id, kind: 'tq-decl', created_at: 1 });
+  assert.equal(log.appendVersion({ id, schema: 'tq-decl@1', payload: { anchor: null, shared: false, note: 'n' }, at: 1 }).v, 1);
+  assert.throws(() => log.mintId('tq-bare'), /registered plug-in type/, 'an undeclared type mints nothing');
+});
+
+test('the same schema name declared again with other keys in this process is refused: listed, unwritable, one line; the first row stays', (t) => {
+  const { schemaRow } = require('../lib/core/element-log');
+  const root = project(t);
+  approveInProcess(root, { name: 'redecl-pack', type: 'tq-redecl', json: { payload: { keys: ['anchor', 'shared', 'a'] } } });
+  const lines = [];
+  const et = createElementTypes({ root, log: (l) => lines.push(l) });
+  assert.equal(et.listed('tq-redecl'), true);
+  const row = schemaRow('tq-redecl@1');
+  assert.ok(row);
+  // A second registry (another daemon in this process) lists an edited copy:
+  // the same schema name with other keys.
+  const f = path.join(projectPaths(root).elementTypesDir, 'tq-redecl', 'element.json');
+  fs.writeFileSync(f, JSON.stringify(elementJson('tq-redecl', { payload: { keys: ['anchor', 'shared', 'a', 'b'] } })));
+  rerecord(root, 'redecl-pack', 'tq-redecl');
+  const et2 = createElementTypes({ root, log: (l) => lines.push(l) });
+  assert.equal(et2.listed('tq-redecl'), true);
+  assert.deepStrictEqual(et2.stats().unwritable.map((x) => x.type), ['tq-redecl']);
+  assert.match(et2.stats().unwritable[0].why, /registered with other keys/);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.strictEqual(schemaRow('tq-redecl@1'), row, 'schemas are additive: the first row stays');
+});

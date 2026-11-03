@@ -341,3 +341,17 @@ test('diff_nodes\' description names the elements section, its change kinds and 
   assert.match(description, /never text/);
   assert.match(description, /private element is withheld/);
 });
+
+// A plug-in type's versions (annotation engine tranche 4, 4A.2; U513): its
+// registered row's keys read like a built-in's, so a changed declared key is
+// an edit.
+test('changesOf over two plug-in versions names edited (and shared, anchor as for a built-in)', () => {
+  const { registerSchema } = require('../lib/core/element-log');
+  const { changesOf } = require('../lib/server/diff');
+  registerSchema('tq-diff@1', { type: 'tq-diff', keys: ['anchor', 'shared', 'points', 'color'] });
+  const a = { schema: 'tq-diff@1', payload: { anchor: null, shared: true, points: [[1, 2, 0.5, 10]], color: '#c03' } };
+  assert.deepEqual(changesOf(a, { ...a, payload: { ...a.payload, color: '#03c' } }), ['edited']);
+  assert.deepEqual(changesOf(a, { ...a, payload: { ...a.payload, points: [[1, 2, 0.5, 10], [3, 4, 0.6, 18]] } }), ['edited']);
+  assert.deepEqual(changesOf(a, { ...a, payload: { ...a.payload, shared: false } }), ['shared']);
+  assert.deepEqual(changesOf(a, { ...a }), []);
+});

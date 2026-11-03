@@ -388,9 +388,9 @@ test('maxElementSeqIn: the torn-bytes scanner reads h and g ids as it reads c id
   assert.equal(maxElementSeqIn('{"t":"el","id": "g18","kind":"box-grab"'), 18);
   assert.equal(maxElementSeqIn('"id":"c3" "id":"h17" "id":"g18" "seq":4'), 18);
   assert.equal(maxElementSeqIn('"id":"x99" "id":"n42" "id":"cap77"'), 0, 'only the table\'s letters (a node id or a capture id is not an element)');
-  // The scanner's letters are exactly ID_PREFIX's (its regex is a literal: this holds the two equal).
+  // The scanner's letters are exactly ID_PREFIX's plus the plug-in letter (its regex is a literal: this holds the two equal; U513).
   for (const l of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-    assert.equal(maxElementSeqIn(`"id":"${l}21"`), Object.values(ID_PREFIX).includes(l) ? 21 : 0, l);
+    assert.equal(maxElementSeqIn(`"id":"${l}21"`), [...Object.values(ID_PREFIX), el.PLUGIN_ID_LETTER].includes(l) ? 21 : 0, l);
   }
 
   // A torn tail holding an h or g id raises the mint floor.

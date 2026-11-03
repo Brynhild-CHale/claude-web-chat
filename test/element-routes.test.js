@@ -989,3 +989,90 @@ test('a clean 32-character prefix that opens on a long word is served as stored,
   }, { timeout: 6000, what: 'the redactor learned the other value' });
   for (const q of await served()) assert.equal(q.prefix, quote.prefix, 'a value learned elsewhere: the clean prefix is served as stored');
 });
+
+// ── a plug-in type (annotation engine tranche 4, 4A.2; U513) ────────────────
+// A pack's type installed in process through lib/packs/install's approve path
+// (installFromStage, via 'approve': a reviewed install with a record and a
+// ledger entry), as test/toolbar-tools-route.test.js does; the registry is
+// told with invalidate() (an in-process install emits no packs event). Its
+// element.json `payload` declaration registers its schema row at list time.
+const pluginPacks = require('../lib/packs/install');
+const { packFixture } = require('../test-support/packs');
+const PLUGIN_DRAW = "export default function draw(group) { group.container.textContent = 'x'; }\n";
+function approvePlugin(d, { name, type, json = {} }) {
+  const element = { type, family: 'page', remote: { see: 'read', send: 'full' }, schema: `${type}@1`, reads: [`${type}@1`], anchors: ['element', 'range'], ...json };
+  const stageDir = packFixture({
+    name, version: '1.0.0', components: [], skill: false,
+    manifest: { name, version: '1.0.0', description: 'A fixture plug-in element type.', elements: [type] },
+    extraFiles: {
+      [`elements/${type}/element.json`]: JSON.stringify(element, null, 2) + '\n',
+      [`elements/${type}/draw.js`]: PLUGIN_DRAW,
+    },
+  });
+  pluginPacks.installFromStage({ stageDir, source: { via: 'test' }, tier: 'local', root: d.root, via: 'approve' });
+  d.srv.elementTypes.invalidate();
+}
+const STROKE = [[10.5, 20.25, 0.5, 1730000000000], [11, 21, 0.625, 1730000000008]];
+
+test('a listed plug-in type with a payload declaration: POST writes a p-id element, puts its reference and sends its element:<type> frame; PATCH appends v2 (parent_v 1); GET serves the payload keys', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  approvePlugin(d, { name: 'tq-ink-pack', type: 'tq-ink', json: { payload: { keys: ['anchor', 'shared', 'points', 'color'] } } });
+  await render(api, 'm1');
+  const seen = await frames(t, d);
+  const next = srv.elements.nextSeq();
+  const r = await ok(api.post('/api/elements', { type: 'tq-ink', anchor: RANGE('m1'), payload: { points: STROKE, color: '#c03' } }), 'POST tq-ink');
+  const e = r.element;
+  assert.equal(e.id, `p${next}`, 'the plug-in letter + the one seq');
+  assert.equal(e.type, 'tq-ink');
+  assert.equal(e.schema, 'tq-ink@1');
+  assert.equal(e.v, 1);
+  assert.deepEqual(e.anchor, RANGE('m1'));
+  assert.equal(e.shared, true, 'the route\'s shared default is unchanged');
+  assert.deepEqual(e.points, STROKE);
+  assert.equal(e.color, '#c03');
+  assert.equal(e.meta, null, 'meta is reserved and unwritten');
+  assert.equal(srv.elements.log.element(e.id).kind, 'tq-ink');
+  assert.equal(srv.elements.version(e.id, 1).schema, 'tq-ink@1');
+  assert.deepEqual(srv.state.elements, [`${e.id}@1`]);
+  const frame = await waitUntil(() => seen.find((f) => f.type === 'element:tq-ink'), { timeout: 5000, what: 'element:tq-ink frame' });
+  assert.deepEqual(frame.elements.map((x) => [x.id, x.v, x.color]), [[e.id, 1, '#c03']]);
+
+  const p = await ok(api.patch(`/api/elements/${e.id}`, { payload: { color: '#03c' } }), 'PATCH tq-ink');
+  assert.equal(p.element.v, 2);
+  assert.equal(p.element.color, '#03c');
+  assert.deepEqual(p.element.points, STROKE);
+  assert.equal(srv.elements.version(e.id, 2).parent_v, 1);
+  assert.deepEqual(srv.state.elements, [`${e.id}@2`], 'the reference follows the new version');
+  const top = await ok(api.patch(`/api/elements/${e.id}`, { color: '#0c3' }), 'PATCH a top-level payload key');
+  assert.equal(top.element.v, 3);
+  const bad = await api.patch(`/api/elements/${e.id}`, { payload: { color: { nested: true } } });
+  assert.equal(bad.status, 400, 'the generic bound refuses an edit');
+  assert.match(bad.json.detail, /color is null, a boolean/);
+  const refused = await api.post('/api/elements', { type: 'tq-ink', anchor: RANGE('m1'), payload: { points: [[1, 2, 3, 4, 5, 6, 7, 8, 9]] } });
+  assert.equal(refused.status, 400, 'the generic bound refuses an add');
+  assert.equal(refused.json.error, 'the payload does not fit the type\'s schema');
+
+  const g = await ok(api.get('/api/elements?type=tq-ink'));
+  assert.equal(g.elements.length, 1);
+  const got = g.elements[0];
+  assert.deepEqual([got.id, got.v, got.type, got.schema], [e.id, 3, 'tq-ink', 'tq-ink@1']);
+  for (const k of ['anchor', 'shared', 'points', 'color', 'meta']) assert.ok(k in got, `GET serves ${k}`);
+  assert.deepEqual(got.points, STROKE);
+  assert.equal(got.color, '#0c3');
+});
+
+test('a plug-in type: unlisted → 400 unknown element type; listed without a payload declaration → 400 element type not writable, the hint naming element.json\'s payload', async (t) => {
+  const d = await withServer(t);
+  const { api } = d;
+  const un = await api.post('/api/elements', { type: 'tq-nolist', anchor: null, payload: {} });
+  assert.equal(un.status, 400);
+  assert.equal(un.json.error, 'unknown element type');
+  approvePlugin(d, { name: 'tq-bare-pack', type: 'tq-bare' });
+  assert.equal(d.srv.elementTypes.listed('tq-bare'), true);
+  const w = await api.post('/api/elements', { type: 'tq-bare', anchor: null, payload: {} });
+  assert.equal(w.status, 400);
+  assert.equal(w.json.error, 'element type not writable');
+  assert.match(w.json.hint, /element\.json \("payload"/);
+  assert.deepEqual(d.srv.elementTypes.stats().unwritable.map((x) => x.type), ['tq-bare']);
+});
