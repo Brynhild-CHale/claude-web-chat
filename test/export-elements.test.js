@@ -399,3 +399,51 @@ test('`live` exports the live surface\'s elements with no recorded answer; the c
   assert.equal(Number(r.text.match(COUNT_LINE)[1]), 2, 'the live private notes counted, not carried');
   assert.deepStrictEqual(hasAny(r.text, PRIVATE_WORDS), []);
 });
+
+// U525b (PQ-4F-1 read privacy-first): a document reads an element's privacy by
+// its LATEST version, whatever v the node pinned. The scenario's mark and
+// shared comment ride the node at their shared versions; the user then makes
+// both private, so no file carries either (the node itself is never
+// rewritten); the local browser's in-place preview still draws them; shared
+// again, every file draws them at the pinned v.
+test('an element shared at the node\'s commit, then made private: absent from the node\'s export for every reader (the left-out count names it), drawn in the local browser\'s in-place preview; shared again, drawn everywhere at the pinned v', async (t) => {
+  const d = await daemon(t, 'read');
+  const { node, ids } = await scenario(d);
+  const nodeBefore = JSON.stringify(d.srv.graph.nodes.get(node));
+  const pinnedV = () => {
+    const [p] = dataElements(exp.buildExportHtml(ctxOf(d), node, NOW).html);
+    return Object.fromEntries(p.items.map((it) => [it.id, it.v]));
+  };
+  const pinned = pinnedV();
+  assert.ok(pinned[ids.mark] && pinned[ids.shared], 'both ride the node while shared');
+  const SHARED_WORDS = [W.shared, W.reply, W.mark];
+  const files = async () => [
+    ['the local browser\'s download', (await d.api.get(`/api/export/${node}`)).text],
+    ['lib/client\'s file', fs.readFileSync((await d.call(`/api/export/${node}?format=file`)).body.path, 'utf8')],
+    ['a remote read viewer\'s download', String((await d.call(`/api/export/${node}`, REMOTE)).body)],
+    ['buildExportHtml', exp.buildExportHtml(ctxOf(d), node, NOW).html],
+  ];
+  const inPlace = async () => (await d.api.get(`/preview/node/${encodeURIComponent(node)}`)).text;
+
+  for (const id of [ids.mark, ids.shared]) await ok(d.api.patch(`/api/elements/${id}`, { shared: false }), `make ${id} private`);
+  for (const [who, html] of await files()) {
+    assert.ok(!quoted(html, ids.mark) && !quoted(html, ids.shared), `${who}: no id of an element whose latest version is private`);
+    assert.deepStrictEqual(hasAny(html, SHARED_WORDS), [], `${who}: none of its text`);
+    const [p] = dataElements(html);
+    assert.ok(p && p.items.some((it) => it.id === ids.hl), `${who}: the still-shared highlight drawn`);
+  }
+  const dl = (await d.api.get(`/api/export/${node}`)).text;
+  assert.equal(Number(dl.match(COUNT_LINE)[1]), 4, 'the left-out count names the two made private beside the two always private');
+  const preview = await inPlace();
+  assert.ok(preview.includes(W.mark) && preview.includes(W.shared), 'the local browser\'s in-place preview still draws the pinned version');
+  assert.strictEqual(JSON.stringify(d.srv.graph.nodes.get(node)), nodeBefore, 'the node is never rewritten');
+
+  for (const id of [ids.mark, ids.shared]) await ok(d.api.patch(`/api/elements/${id}`, { shared: true }), `share ${id} again`);
+  for (const [who, html] of await files()) {
+    const [p] = dataElements(html);
+    const v = Object.fromEntries(p.items.map((it) => [it.id, it.v]));
+    assert.equal(v[ids.mark], pinned[ids.mark], `${who}: the mark drawn at the pinned v`);
+    assert.equal(v[ids.shared], pinned[ids.shared], `${who}: the comment drawn at the pinned v`);
+    assert.deepStrictEqual(hasAny(html, SHARED_WORDS), SHARED_WORDS, `${who}: with its text`);
+  }
+});

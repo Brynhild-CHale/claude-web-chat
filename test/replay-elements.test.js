@@ -496,3 +496,71 @@ test('a step whose node carries no element records adds nothing: its frame is to
     assert.equal(frameOf(payload, i), a + payload.themes[s.theme] + b + c + s.node + dd);
   }
 });
+
+// U525b (PQ-4F-1 read privacy-first): a document reads an element's privacy by
+// its LATEST version, whatever v each node pinned. The first step's comment
+// and mark ride every node shared; the user then makes both private, so no
+// replay document a reader without seesPrivate gets carries either — the
+// local browser's in-place /replay still draws them — and, shared again,
+// every document draws them at the pinned v.
+test('an element shared at the nodes\' commits, then made private: absent from the replay download, a rendered .html, the headless view and the player read by lib/client or a remote read viewer; drawn in the local browser\'s /replay; shared again, drawn everywhere at the pinned v', async (t) => {
+  const seedRead = ({ root: r }) => {
+    writeJsonAtomic(userPaths().tunnelConfig, {
+      hostname: 'wc.example.test', style: 'flat',
+      access: { team: 'testteam', aud: 'test-aud-0123456789' },
+      allow: { emails: ['me@example.com'], domains: [] },
+      remote: { mirror: { [path.resolve(r)]: 'read' } },
+    });
+  };
+  const { d, nodes, ids, q } = await scenario(t, { root: tmpRoot('wc-replay-el-latest-'), seed: seedRead });
+  const client = require('../lib/client');
+  const PU = [ids.comments[0], ids.marks[0]];
+  // id → the set of v every step of a document draws it at.
+  const drawnVs = (html) => {
+    const out = new Map();
+    for (const s of payloadOf(html).steps) {
+      if (!s.elements) continue;
+      const data = JSON.parse(/data-wc-elements>([\s\S]*?)<\/script>/.exec(s.elements.data)[1]);
+      for (const it of data.items) (out.get(it.id) || out.set(it.id, new Set()).get(it.id)).add(it.v);
+    }
+    return out;
+  };
+  const pinned = drawnVs((await d.api.get(`/replay${q}`)).text);
+  for (const id of PU) assert.ok(pinned.has(id), `${id} rides the nodes while shared`);
+  const nodesBefore = nodes.map((id) => JSON.stringify(d.srv.graph.nodes.get(id)));
+  const withoutPrivate = async () => {
+    const rendered = await ok(d.api.post('/api/replay/render', { format: 'replay', from: nodes[0], to: nodes[2] }), 'render replay');
+    const fetched = await d.anonApi.get(`/api/replay/file/${encodeURIComponent(path.basename(rendered.path))}`, REMOTE);
+    assert.equal(fetched.status, 200, fetched.text);
+    const viaClient = await client.request(d.port, 'GET', `/replay${q}`, null, { timeout: 10000 });
+    assert.equal(viaClient.status, 200);
+    return [
+      ['the replay download (a browser\'s)', (await d.api.get(`/api/replay/html${q}`)).text],
+      ['a rendered .html', fs.readFileSync(rendered.path, 'utf8')],
+      ['the rendered .html a read viewer fetches', fetched.text],
+      ['the headless view a GIF is drawn from', (await d.api.get(`/replay${q}&shared_only=1&level=read`)).text],
+      ['the player read by lib/client', String(viaClient.body)],
+      ['a remote read viewer\'s player', (await d.anonApi.get(`/replay${q}`, REMOTE)).text],
+      ['a remote read viewer\'s download', (await d.anonApi.get(`/api/replay/html${q}`, REMOTE)).text],
+    ];
+  };
+
+  for (const id of PU) await ok(d.api.patch(`/api/elements/${id}`, { shared: false }), `make ${id} private`);
+  for (const [who, html] of await withoutPrivate()) {
+    const drawn = drawnIds(html);
+    for (const id of PU) assert.equal(drawn.has(id), false, `${who}: ${id} not drawn (its latest version is private)`);
+    assert.equal(html.includes(SHARED(1)), false, `${who}: none of its text`);
+    assert.ok(drawn.has(ids.marks[1]) && html.includes(SHARED(3)), `${who}: the still-shared elements drawn`);
+  }
+  const local = (await d.api.get(`/replay${q}`)).text;
+  for (const id of PU) assert.deepStrictEqual(drawnVs(local).get(id), pinned.get(id), `the local browser's /replay draws ${id} at the pinned v`);
+  assert.ok(local.includes(SHARED(1)), 'with its text');
+  assert.deepStrictEqual(nodes.map((id) => JSON.stringify(d.srv.graph.nodes.get(id))), nodesBefore, 'no node is rewritten');
+
+  for (const id of PU) await ok(d.api.patch(`/api/elements/${id}`, { shared: true }), `share ${id} again`);
+  for (const [who, html] of await withoutPrivate()) {
+    const vs = drawnVs(html);
+    for (const id of PU) assert.deepStrictEqual(vs.get(id), pinned.get(id), `${who}: ${id} drawn again at the pinned v`);
+    assert.ok(html.includes(SHARED(1)), `${who}: with its text`);
+  }
+});
