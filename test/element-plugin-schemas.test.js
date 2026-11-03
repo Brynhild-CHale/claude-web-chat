@@ -18,6 +18,7 @@ const el = require('../lib/core/element-log');
 const { createRedactor } = require('../lib/core/redact');
 const { stableStringify } = require('../lib/core/stable-json');
 const { projectPaths } = require('../lib/core/paths');
+const { execFileSync } = require('child_process');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
 
 const {
@@ -228,6 +229,9 @@ test('the bound refuses an over-size payload, a nested object, a long string, a 
   });
   assert.ok(okay.v >= 1);
   assert.equal(log.versionsOf('p2').length, 0, 'a refused write lands nothing');
+  // The list limits are inclusive: exactly PLUGIN_ARRAY_MAX numbers, or tuples, pass.
+  assert.ok(put({ ...base, a: Array(PLUGIN_ARRAY_MAX).fill(1) }).v >= 1, '4,096 numbers');
+  assert.ok(put({ ...base, z: Array(PLUGIN_ARRAY_MAX).fill([1, 2]) }).v >= 1, '4,096 tuples');
 });
 
 test('a 1,200-point stroke is accepted under the bound', (t) => {
@@ -333,4 +337,41 @@ test('payloadDeclProblem over good and bad declarations', () => {
     assert.ok(typeof why === 'string' && re.test(why), `${JSON.stringify(d)} → ${why}`);
   }
   assert.match(payloadDeclProblem({ keys: ['anchor', 'shared'] }, 'highlight'), /built-in type/);
+});
+
+// record() of a version whose schema has no row in this process (an older
+// plug-in schema, or a removed type's: the log's load never validates a
+// schema) serves the payload's stored keys, so a draw and the generic mark
+// still have them (lib/server/domain/elements record). The version is written
+// by another process, which registered the row; this one never does.
+test('the store\'s record() of a version whose schema has no row here serves its stored payload keys', (t) => {
+  const dir = tmpDir(t);
+  const file = projectPaths(dir).elementsLog;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const writer = path.join(dir, 'write-gone.js');
+  fs.writeFileSync(writer, [
+    `const el = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'core', 'element-log'))});`,
+    `const { createRedactor } = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'core', 'redact'))});`,
+    "el.registerSchema('tq-gone@1', { type: 'tq-gone', keys: ['anchor', 'shared', 'points', 'color'] });",
+    `const log = el.createElementLog({ file: ${JSON.stringify(file)}, redactor: createRedactor() });`,
+    'log.load();',
+    "const id = log.mintId('tq-gone');",
+    "log.ensureElement({ id, kind: 'tq-gone', created_at: 1 });",
+    "log.appendVersion({ id, schema: 'tq-gone@1', payload: { anchor: null, shared: false, points: [[1, 2, 0.5, 10]], color: '#c03' }, at: 2 });",
+    'log.close();',
+    'process.stdout.write(id);',
+  ].join('\n'));
+  const id = execFileSync(process.execPath, [writer], { encoding: 'utf8' });
+  assert.equal(id, 'p1');
+  assert.equal(schemaRow('tq-gone@1'), null, 'this process has no row for it');
+  const { createElementStore } = require('../lib/server/domain/elements');
+  const { createState } = require('../lib/server/state');
+  const store = createElementStore({ paths: projectPaths(dir), state: createState(), graph: { active: null }, redactor: createRedactor(), bootId: 'test:1' });
+  t.after(() => store.close());
+  const r = store.record(id, 1);
+  assert.equal(r.type, 'tq-gone');
+  assert.equal(r.schema, 'tq-gone@1');
+  assert.equal(r.shared, false);
+  assert.deepEqual(r.points, [[1, 2, 0.5, 10]]);
+  assert.equal(r.color, '#c03');
 });
