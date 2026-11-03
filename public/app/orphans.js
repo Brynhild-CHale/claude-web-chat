@@ -58,6 +58,7 @@ export const PICK_HINTS = Object.freeze({
   element: 'click the element in a pane to anchor it to',
   range: 'select the text in a pane to anchor it to',
   source: 'select the text in a markdown item to anchor it to',
+  point: 'click inside an image, an svg or a canvas in a pane to anchor it to',
 });
 export const LEAVE_HINT = 'Left as it is — nothing written.';
 export const NO_GUESS_HINT = 'The guess is gone from the page — pick a new place instead.';
@@ -78,7 +79,7 @@ function rowOf(id, scope = drawnScopeOf()) {
 }
 function kindOf(row) {
   const k = row && isObj(row.anchor) ? row.anchor.kind : null;
-  return k === 'element' || k === 'range' || k === 'source' ? k : null;
+  return k === 'element' || k === 'range' || k === 'source' || k === 'point' ? k : null;
 }
 // The element's last-known place, by mount (a pane, or a markdown item).
 function placeOf(o, row) {
