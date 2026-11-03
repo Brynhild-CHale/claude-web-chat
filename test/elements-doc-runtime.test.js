@@ -500,6 +500,16 @@ test('the runtime is cut per key: a comment-only document carries no highlight d
   assert.throws(() => E.runtimeSource('box-grab'), /no runtime section/);
 });
 
+test('the runtime is compacted by anchors-src\'s exported compact: elements-doc-src.js has no compact of its own', () => {
+  const text = fs.readFileSync(require.resolve('../lib/server/runtime/elements-doc-src'), 'utf8');
+  assert.doesNotMatch(text, /function compact\(|compact\s*=\s*(function|\()/, 'no second compaction rule');
+  assert.equal(typeof anchorsSrc.compact, 'function');
+  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
+    const sections = key ? key.split('+') : [];
+    assert.strictEqual(E.runtimeSource(key), anchorsSrc.compact(E.runtimeText(sections)), key || '(core)');
+  }
+});
+
 test('the runtime: no work at require time, then memoised per key', () => {
   const key = require.resolve('../lib/server/runtime/elements-doc-src');
   const saved = require.cache[key];
