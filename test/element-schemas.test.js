@@ -268,6 +268,23 @@ test('comment@1: an engine element, range and source record is kept as given; a 
   assert.equal(el.isEngineRecord(PIN_LOCATOR), false, 'a converted locator carries a form');
 });
 
+// U532 (4C.1; RULED U531-U532@point-record-kind a): a point is the element
+// record with kind 'point' and x, y, aspect flat beside it — kept as given, so
+// its hashes are over the record as sent; the recognition stays narrow.
+test('comment@1: an engine point record is kept as given (its hash the record\'s); one carrying a form key is still converted', () => {
+  const point = { v: 1, kind: 'point', mount: 'm1', at: { path: [0, 1], sib: 0 },
+    fp: { tag: 'svg', id: null, cls: ['chart'], head: '', attrs: ['viewBox'], parent: 'div.fig' },
+    rows: [{ depth: 1, shape: 'svg', sigs: {}, key: null, head: '' }], x: 0.25, y: 0.75, aspect: 1.7778 };
+  assert.ok(el.isEngineRecord(point));
+  const p = payloadOf({ text: 't', anchor: point });
+  assert.equal(p.anchor, point, 'the same record, untouched');
+  assert.equal(stableHash(p.anchor), stableHash(point));
+  assert.equal(stableHash(p), stableHash({ text: 't', replies: [], anchor: point }));
+  const formed = { ...point, form: 'x' };
+  assert.equal(el.isEngineRecord(formed), false);
+  assert.deepEqual(payloadOf({ text: 't', anchor: formed }).anchor, convertAnchor(formed));
+});
+
 test('comment@1: a version storing an engine anchor round-trips and its copy matches', (t) => {
   const dir = tmpDir(t);
   const log = openIn(t, dir);

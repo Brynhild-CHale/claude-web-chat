@@ -89,7 +89,7 @@ test('each built-in element.json passes validateElement with 0 errors, and the m
 test('the engine fields: schema, reads and anchors (box grab: page only, ruling U328c@grab-after-send a)', () => {
   const want = {
     // F.6 (U406): the comment writes comment@2 (a chained comment) and reads both.
-    comment: { schema: 'comment@2', reads: ['comment@1', 'comment@2'], anchors: ['element', 'range', 'source'] },
+    comment: { schema: 'comment@2', reads: ['comment@1', 'comment@2'], anchors: ['element', 'range', 'source', 'point'] },
     highlight: { schema: 'highlight@1', reads: ['highlight@1'], anchors: ['range', 'source'] },
     'box-grab': { schema: 'box-grab@1', reads: ['box-grab@1'], anchors: ['page'] },
     // tranche 3, U415 (RULED CHAT@type a): the chat comment, on the chat anchors.
