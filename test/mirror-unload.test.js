@@ -24,7 +24,7 @@
 //   * with no api.pinned on the transcripts source nothing is unloaded (the real
 //     transcripts.js has none at this head);
 //   * engine.ensureConversation and engine.indexing route to the source's api;
-//   * the number: floor(PARSED_RAM_BYTES / 416,958 B) = 160, never below 20.
+//   * the number: floor(PARSED_RAM_BYTES / 172,212 B) = 389, never below 20.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -120,10 +120,10 @@ function boot(t, { api = {}, parsedMax, timers, onUnloaded = null, extra = [] } 
 
 // ── the number ───────────────────────────────────────────────────────────────
 
-test('the budget\'s number: floor(64 MiB / the measured 416,958 B per parsed conversation) = 160, never below 20, read from the retention table', () => {
+test('the budget\'s number: floor(64 MiB / the measured 172,212 B per parsed conversation) = 389, never below 20, read from the retention table', () => {
   assert.equal(PARSED_RAM_BYTES, 64 * 1024 * 1024);
-  assert.equal(PARSED_CONVERSATIONS_MAX, Math.max(20, Math.floor(PARSED_RAM_BYTES / 416958)));
-  assert.equal(PARSED_CONVERSATIONS_MAX, 160);
+  assert.equal(PARSED_CONVERSATIONS_MAX, Math.max(20, Math.floor(PARSED_RAM_BYTES / 172212)));
+  assert.equal(PARSED_CONVERSATIONS_MAX, 389);
   assert.equal(PARSED_CONVERSATIONS_MAX, valueOf('parsed-conversations-max'));
 });
 
