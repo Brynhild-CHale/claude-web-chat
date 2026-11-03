@@ -42,13 +42,12 @@
 //     row (U512b's relay, element-types.js relayRows): the dry marker is
 //     drawn with no hello and no reset after the commit.
 //
-// ONE ENGINE GAP THIS FILE NAMES (U565's hand-off, an open issue; not a
-// product edit here; its gap (a), the frame that never reached the overlay's
-// live rows, U512b closed):
-//   (b) the live record ctx.record answers is the GET's, FLAT (the payload's
-//       keys beside id, v, type…), while the document runtime's (U522) nests
-//       them under `payload`; the fixture's draw reads `record.payload ||
-//       record`, so it draws in both realms until one shape is chosen.
+// THE RECORD'S ONE SHAPE (U565's gap (b), closed by U522b on finding
+// U565@ctx-record-shape; its gap (a), the frame that never reached the
+// overlay's live rows, U512b closed): ctx.record(id) answers the GET's
+// record, FLAT (the payload's keys beside id, v, type…), in the live chrome
+// and in a document alike; the fixture's draw reads `record.points` with no
+// fallback, and a record never carries a nested `payload`.
 const test = require('node:test');
 const { before, after, beforeEach } = test;
 const assert = require('node:assert');
@@ -312,7 +311,8 @@ test('the dry stroke: a box marker equal to the svg\'s rect, one path with data-
   assert.deepStrictEqual(rows.map((r) => r.id), [rec.id]);
   assert.equal(rows[0].points, undefined, 'the overlay row carries no points');
   const read = ET.recordOf(TYPE, rows[0].id);
-  assert.deepStrictEqual((read.payload || read).points, rec.points, 'ctx.record answers the committed points');
+  assert.deepStrictEqual(read.points, rec.points, 'ctx.record answers the committed points, flat');
+  assert.equal(read.payload, undefined, 'the GET\'s record nests no payload');
 
   // An edit through the frame alone (the row untouched): redrawn from the record.
   const edited = { ...rec, v: 2, points: [0, 0, 0.5, 0, 1, 1, 0.5, 8] };
@@ -367,7 +367,7 @@ test('draw() on its own: a stroke\'s colour is its --wc- token through currentCo
   const file = path.join(tmp, 'draw-direct.mjs');
   fs.writeFileSync(file, DRAW_SRC);
   const mod = await import(pathToFileURL(file).href);
-  const rec = { id: 'p9', type: TYPE, v: 1, payload: { points: [0.1, 0.2, 0.5, 0, 0.6, 0.7, 0.5, 8], stride: 4, width: 0.01, colour: 'accent' } };
+  const rec = { id: 'p9', type: TYPE, v: 1, points: [0.1, 0.2, 0.5, 0, 0.6, 0.7, 0.5, 8], stride: 4, width: 0.01, colour: 'accent' };
   const ctx = { box: { w: 200, h: 100 }, record: (id) => (id === rec.id ? rec : null) };
   const drawIn = (kind) => {
     const container = W.document.createElement('div');
@@ -376,7 +376,7 @@ test('draw() on its own: a stroke\'s colour is its --wc- token through currentCo
   };
   const live = drawIn('live');
   const path0 = live.querySelector(`path[data-el-id="${rec.id}"]`);
-  assert.ok(path0, 'drawn from the nested record (the document runtime\'s shape)');
+  assert.ok(path0, 'drawn from the flat record (the one shape, both realms)');
   assert.equal(path0.style.color, 'var(--wc-accent)', 'the colour token');
   assert.equal(live.querySelector('svg').getAttribute('opacity'), null, 'a live group is not faded');
   const guess = drawIn('guess');

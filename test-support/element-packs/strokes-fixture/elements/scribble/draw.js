@@ -10,8 +10,7 @@ export default function draw(group, ctx) {
   if (group.kind === 'guess') svg.setAttribute('opacity', '0.4');
   const w = ctx.box ? ctx.box.w : 0;
   for (const it of group.items) {
-    const r = ctx.record ? ctx.record(it.id) : null;
-    const p = r && (r.payload || r);
+    const p = ctx.record ? ctx.record(it.id) : null;
     if (!p || !Array.isArray(p.points)) continue;
     let line = '';
     for (let i = 0; i + 1 < p.points.length; i += p.stride || 4) line += (i ? ' L' : 'M') + p.points[i] + ' ' + p.points[i + 1];
