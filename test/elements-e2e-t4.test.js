@@ -532,6 +532,11 @@ test('the world: an approved strokes pack, its private strokes, describe, undo, 
     assert.equal(rec.quote.exact, 'quick');
     const rg = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: rec, payload: { text: 'wcu590 on a word', shared: true } }), 'a range comment')).pin;
     assert.equal(rg.anchor.kind, 'range');
+    // The point comment's glyph dragged off its anchor through the real route
+    // (U587, AI5): a version with its parent's payload and a display sibling —
+    // the AG-1 check below counts it among the residuals.
+    const mv = await ok(d.anonApi.post(`/api/elements/${pt.id}/glyph`, { dx: 12, dy: -8, corner: 'tl' }), 'a glyph move');
+    assert.deepEqual([mv.id, mv.v, mv.display], [pt.id, pt.v + 1, { glyph: { dx: 12, dy: -8, corner: 'tl' } }], JSON.stringify(mv));
     const node = await commit(d.api, 'points and ranges');
     const kinds = require('../lib/server/runtime/anchors-src').kindsOf(d.srv.graph.nodes.get(node));
     assert.ok(['element', 'point', 'range'].every((k) => kinds.includes(k)), `the node's resolver cut: ${kinds}`);
@@ -564,7 +569,8 @@ test('the world: an approved strokes pack, its private strokes, describe, undo, 
     assert.deepStrictEqual((await domOf())[0].anchor, anchor, 'the host reads the anchor whole');
     assert.deepStrictEqual((await domOf(REMOTE))[0].anchor, anchor, 'read keeps it');
     const basic = await call('GET', '/api/events?since=0', null, PEER);
-    if (basic.status === 200) {
+    assert.equal(basic.status, 200, 'a network peer reads the ring (basic): the strip below is the check, never skipped');
+    {
       const ev = (basic.body.events || []).filter((e) => e.kind === 'dom' && e.mountId === 'e4e');
       assert.ok(ev.length && ev.every((e) => !('anchor' in e)), 'basic: no anchor');
       assert.ok(!has(basic.body, 'wcu590-run'), 'basic: no pane text');
@@ -616,6 +622,7 @@ test('the world: an approved strokes pack, its private strokes, describe, undo, 
     }
     assert.ok(residual.plugin_versions > 0, 'the world wrote p-id versions (the named residual)');
     assert.ok(residual.point_anchors > 0, 'and a point record (the named residual)');
+    assert.ok(residual.display_siblings > 0, 'and a glyph move\'s display sibling (the named residual: alpha.3 ignores it, the glyph drawn attached)');
     // Node files: the ids and the comment counts alpha.3 reads.
     const gdir = projectPaths(d.root).graphDir;
     const files = fs.readdirSync(gdir).filter((f) => f.endsWith('.json'));
