@@ -1,0 +1,290 @@
+// The render-impact answer (annotation engine PLAN.md 4F.2; INK@render-impact;
+// IMPACT@counts; rulings U563@private-count (a), U563-U580@catalogue-tool-edits
+// (a)): POST /api/render, POST /api/components/:name/use and POST /api/clear
+// answer how many annotations sit on the item they wrote or removed — counts
+// only, present only when non-zero — and GET /api/mounts carries each annotated
+// pane's counts and, after a viewer's resolution report, the post-resolve
+// verdict by_state. lib/server/domain/annotation-impact is the engine.
+//
+// Who is who: lib/client (client.request: no fetch metadata) is Claude's tools,
+// a local caller that gets the `private` count; a remote viewer is a loopback
+// request carrying the portal's X-WC-Remote: 1, at the project's `full` opt-in
+// in the sandbox's tunnel.json, which never counts a private element.
+
+const test = require('node:test');
+const assert = require('node:assert');
+const path = require('path');
+const { withServer, waitUntil, wsConnect, tmpRoot } = require('../test-support/helpers');
+const { writeJsonAtomic } = require('../lib/core/fsjson');
+const { userPaths } = require('../lib/core/paths');
+const client = require('../lib/client');
+const { annotationsOn, byState } = require('../lib/server/domain/annotation-impact');
+
+const T = 20000;
+const REMOTE = Object.freeze({ 'X-WC-Remote': '1' });
+const TUNNEL = Object.freeze({
+  hostname: 'wc.example.test',
+  style: 'flat',
+  access: { team: 'testteam', aud: 'test-aud-0123456789' },
+  allow: { emails: ['me@example.com'], domains: [] },
+});
+const PRIVATE_NOTE = 'wc-u563-private-note-mark';
+const SHARED_NOTE = 'wc-u563-shared-note-mark';
+
+const RANGE = (mount, exact = 'Hello') => ({ v: 1, kind: 'range', mount, quote: { exact, prefix: '', suffix: '' }, pos: { start: 0, end: exact.length } });
+const LOCATOR = (mount) => ({ mount, selector: 'p', text: 'Hello', ordinal: 0 });
+
+async function ok(p, what = 'request') {
+  const r = await p;
+  assert.ok(r.status >= 200 && r.status < 300 && (!r.json || r.json.ok !== false), `${what}: ${r.status} ${r.text}`);
+  return r.json;
+}
+
+// A daemon whose project is opted in at `full` for remote viewers, with
+// `call` (lib/client: Claude's tools) and `remote` (lib/client + X-WC-Remote).
+async function boot(t) {
+  const root = tmpRoot('wc-u563-');
+  const d = await withServer(t, {
+    root,
+    seed: () => writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror: { [path.resolve(root)]: 'full' } } }),
+  });
+  d.call = async (method, p, body, headers = {}) => {
+    const r = await client.request(d.port, method, p, body, { headers, timeout: 10000 });
+    return { status: r.status, json: r.body, text: JSON.stringify(r.body) };
+  };
+  d.remote = (method, p, body) => d.call(method, p, body, REMOTE);
+  return d;
+}
+
+// A pane a local driver owns (lib/driver leases its owner).
+const driverRender = (d, id) => require('../lib/driver').createDriver({ owner: 'x', port: d.port }).render({ id, html: '<p>Hello driver</p>' });
+const render = (d, id, html = '<p>Hello world</p>') => ok(d.call('POST', '/api/render', { id, html }), `render ${id}`);
+const highlight = async (d, mount, payload = {}) => (await ok(d.anonApi.post('/api/elements', {
+  type: 'highlight', anchor: RANGE(mount), payload: { color: 'gold', note: SHARED_NOTE, ...payload },
+}), `highlight on ${mount}`)).element;
+const comment = async (d, mount, payload = {}) => (await ok(d.anonApi.post('/api/elements', {
+  type: 'comment', anchor: LOCATOR(mount), payload: { text: SHARED_NOTE, shared: true, ...payload },
+}), `comment on ${mount}`)).element;
+
+// m1: three highlights (one private) and one shared comment.
+async function annotate(d, mount) {
+  const h1 = await highlight(d, mount);
+  const h2 = await highlight(d, mount);
+  const hp = await highlight(d, mount, { note: PRIVATE_NOTE, shared: false });
+  const c = await comment(d, mount);
+  return { h1, h2, hp, c };
+}
+
+const noLeak = (answer, els) => {
+  const s = JSON.stringify(answer);
+  assert.ok(!s.includes(PRIVATE_NOTE) && !s.includes(SHARED_NOTE), 'no note text in the answer');
+  for (const e of els) assert.ok(!s.includes(e.id), `no element id (${e.id}) in the answer`);
+  assert.ok(!s.includes('"anchor"') && !s.includes('quote') && !s.includes('selector'), 'no anchor in the answer');
+};
+
+test('render over a pane holding 3 highlights (one private) and 1 comment answers the counts only — the private one in `private`, its note, id and anchor nowhere', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  const els = await annotate(d, 'm1');
+  const r = await ok(d.call('POST', '/api/render', { id: 'm1', html: '<p>Hello again</p>' }), 're-render m1');
+  assert.deepStrictEqual(r.annotations, {
+    item: 'm1', total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.id, 'm1');
+  noLeak(r, Object.values(els));
+  // The answer's other fields are setMount's, unchanged.
+  const { annotations, ...rest } = r;
+  assert.deepStrictEqual(Object.keys(rest).sort(), ['id', 'ok', 'owner']);
+});
+
+test('render over an unannotated pane answers exactly {ok, id, owner}; an annotation on ANOTHER pane is not counted', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  await render(d, 'm2');
+  await annotate(d, 'm2');
+  const r = await ok(d.call('POST', '/api/render', { id: 'm1', html: '<p>Hello there</p>' }), 're-render m1');
+  assert.deepStrictEqual(r, { ok: true, id: 'm1', owner: 'claude' });
+  assert.ok(!('annotations' in r));
+  // A refused render (an owned pane, no force) carries no field.
+  await driverRender(d, 'svc');
+  await highlight(d, 'svc');
+  const refused = (await d.call('POST', '/api/render', { id: 'svc', html: '<p>mine</p>' })).json;
+  assert.equal(refused.ok, false);
+  assert.ok(!('annotations' in refused), 'a refused render carries none');
+});
+
+test('use_component over an annotated pane answers the same field; over an unannotated one, setMount\'s answer as it was', async (t) => {
+  const d = await boot(t);
+  await ok(d.call('POST', '/api/components', { name: 'w-impact', source: '<p>Hello W</p>' }), 'save');
+  await render(d, 'm1');
+  const els = await annotate(d, 'm1');
+  const r = await ok(d.call('POST', '/api/components/w-impact/use', { id: 'm1' }), 'use over m1');
+  assert.deepStrictEqual(r.annotations, { item: 'm1', total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 });
+  noLeak(r, Object.values(els));
+  const plain = await ok(d.call('POST', '/api/components/w-impact/use', { id: 'm9' }), 'use over m9');
+  assert.deepStrictEqual(plain, { ok: true, id: 'm9', owner: 'claude' });
+});
+
+test('clear by id answers what went (read before the removal), a markdown item\'s included; a foreign-owned refusal carries no field', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  await annotate(d, 'm1');
+  const r = await ok(d.call('POST', '/api/clear', { id: 'm1' }), 'clear m1');
+  assert.deepStrictEqual(r, { ok: true, annotations: { item: 'm1', total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 } });
+  assert.ok(!d.srv.state.mounts.has('m1'), 'the pane went');
+
+  // A markdown item (one id space): a highlight anchored by md.
+  await ok(d.call('POST', '/api/markdown', { id: 'md-a', text: '## Hello' }), 'markdown');
+  const hm = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: { ...RANGE('md-a'), mount: 'md-a' }, payload: {} }), 'md highlight')).element;
+  assert.ok(hm.id);
+  const md = await ok(d.call('POST', '/api/clear', { id: 'md-a' }), 'clear md-a');
+  assert.deepStrictEqual(md.annotations, { item: 'md-a', total: 1, by_type: { highlight: 1 }, shared: 1, private: 0 });
+
+  // An unannotated clear answers {ok: true} exactly.
+  await render(d, 'm2');
+  assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', { id: 'm2' }), 'clear m2'), { ok: true });
+
+  // A foreign-owned pane: the soft refusal, no field.
+  await driverRender(d, 'svc');
+  await highlight(d, 'svc');
+  const refused = (await d.call('POST', '/api/clear', { id: 'svc' })).json;
+  assert.equal(refused.ok, false);
+  assert.equal(refused.owned, true);
+  assert.ok(!('annotations' in refused));
+  assert.ok(d.srv.state.mounts.has('svc'), 'the refused pane stays');
+});
+
+test('a bulk clear answers the total over the removed panes only — a pinned kept pane\'s annotations are not counted', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  await render(d, 'm2');
+  await render(d, 'm3');
+  await annotate(d, 'm1');
+  await highlight(d, 'm2');
+  await highlight(d, 'm2');
+  // m2 pinned by the user: the browser owns pane chrome (pane:state over the WS).
+  const sock = wsConnect(d.port, '/ws');
+  t.after(() => { try { sock.terminate(); } catch {} });
+  await new Promise((res, rej) => { sock.once('open', res); sock.once('error', rej); });
+  sock.send(JSON.stringify({ type: 'pane:state', id: 'm2', pane_state: { pinned: true } }));
+  await waitUntil(() => d.srv.state.mounts.get('m2').pane_state?.pinned === true, { timeout: T, what: 'm2 pinned' });
+
+  const r = await ok(d.call('POST', '/api/clear', {}), 'bulk clear');
+  assert.deepStrictEqual(r.kept, ['m2']);
+  assert.deepStrictEqual(r.annotations, { items: ['m1'], total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 });
+  assert.ok(d.srv.state.mounts.has('m2') && !d.srv.state.mounts.has('m1') && !d.srv.state.mounts.has('m3'));
+
+  // A bulk clear over nothing annotated answers as it always did.
+  await render(d, 'm4');
+  assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', { force: true }), 'forced bulk clear'), {
+    ok: true, annotations: { items: ['m2'], total: 2, by_type: { highlight: 2 }, shared: 2, private: 0 },
+  });
+  await render(d, 'm5');
+  assert.deepStrictEqual(await ok(d.call('POST', '/api/clear', {}), 'plain bulk clear'), { ok: true });
+
+  // A bulk clear refused whole for a foreign pane carries no field.
+  await render(d, 'm6');
+  await highlight(d, 'm6');
+  await driverRender(d, 'svc');
+  const refused = (await d.call('POST', '/api/clear', {})).json;
+  assert.equal(refused.ok, false);
+  assert.ok(!('annotations' in refused));
+});
+
+test('a remote request (X-WC-Remote) to /api/clear and /api/components/:name/use counts no private element and carries no private key', async (t) => {
+  const d = await boot(t);
+  await ok(d.call('POST', '/api/components', { name: 'w-impact', source: '<p>Hello W</p>' }), 'save');
+  await render(d, 'm1');
+  const els = await annotate(d, 'm1');
+  const used = await ok(d.remote('POST', '/api/components/w-impact/use', { id: 'm1' }), 'remote use');
+  assert.deepStrictEqual(used.annotations, { item: 'm1', total: 3, by_type: { comment: 1, highlight: 2 }, shared: 3 });
+  assert.ok(!('private' in used.annotations));
+  noLeak(used, Object.values(els));
+
+  // A pane holding only a private highlight: nothing a remote viewer may count.
+  await render(d, 'm2');
+  await highlight(d, 'm2', { note: PRIVATE_NOTE, shared: false });
+  const onlyPrivate = await ok(d.remote('POST', '/api/clear', { id: 'm2', force: true }), 'remote clear m2');
+  assert.deepStrictEqual(onlyPrivate, { ok: true });
+
+  const cleared = await ok(d.remote('POST', '/api/clear', { id: 'm1', force: true }), 'remote clear m1');
+  assert.deepStrictEqual(cleared, { ok: true, annotations: { item: 'm1', total: 3, by_type: { comment: 1, highlight: 2 }, shared: 3 } });
+  noLeak(cleared, Object.values(els));
+});
+
+test('GET /api/mounts: an annotated pane carries its counts; after a resolution report, by_state {exact, re_resolved, orphaned}; a remote read leaves private out', async (t) => {
+  const d = await boot(t);
+  await render(d, 'm1');
+  await render(d, 'm2');
+  const els = await annotate(d, 'm1');
+
+  const before = await ok(d.call('GET', '/api/mounts'), 'mounts');
+  const row = (j, id) => j.mounts.find((m) => m.id === id);
+  assert.deepStrictEqual(row(before, 'm1').annotations, { total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1 });
+  assert.ok(!('by_state' in row(before, 'm1').annotations), 'no by_state before any report');
+  assert.ok(!('annotations' in row(before, 'm2')), 'an unannotated pane row is as it was');
+
+  // The socket's report message, as test/reports-local.test.js sends it.
+  const frames = [];
+  const sock = wsConnect(d.port, '/ws');
+  t.after(() => { try { sock.terminate(); } catch {} });
+  sock.on('message', (m) => { try { frames.push(JSON.parse(m.toString())); } catch {} });
+  await new Promise((res, rej) => { sock.once('open', res); sock.once('error', rej); });
+  await waitUntil(() => frames.some((f) => f.type === 'hello'), { timeout: T, what: 'hello' });
+  const hello = frames.find((f) => f.type === 'hello');
+  const gen = hello.mounts.find((m) => m.id === 'm1').gen;
+  const pinV = d.srv.state.comments.find((c) => c.id === els.c.id).v;
+  sock.send(JSON.stringify({
+    type: 'report', surface: hello.surface, mounts: [{
+      mount: 'm1', gen, items: [
+        { id: els.h1.id, v: els.h1.v, state: 'exact' },
+        { id: els.h2.id, v: els.h2.v, state: 're-resolved' },
+        { id: els.hp.id, v: els.hp.v, state: 'orphaned' },
+        { id: els.c.id, v: pinV, state: 'exact' },
+      ],
+    }],
+  }));
+  await waitUntil(() => d.srv.reports.stats().accepted === 4, { timeout: T, what: 'the report accepted' });
+
+  const after = await ok(d.call('GET', '/api/mounts'), 'mounts after');
+  assert.deepStrictEqual(row(after, 'm1').annotations, {
+    total: 4, by_type: { comment: 1, highlight: 3 }, shared: 3, private: 1,
+    by_state: { exact: 2, re_resolved: 1, orphaned: 1 },
+  });
+  noLeak(row(after, 'm1').annotations, Object.values(els));
+
+  const remote = await ok(d.remote('GET', '/api/mounts'), 'remote mounts');
+  assert.deepStrictEqual(row(remote, 'm1').annotations, {
+    total: 3, by_type: { comment: 1, highlight: 2 }, shared: 3,
+    by_state: { exact: 2, re_resolved: 1, orphaned: 0 },
+  });
+});
+
+test('annotationsOn (the engine): a version the log cannot place is skipped; a legacy locator pin counts on its mount; counts only', () => {
+  const store = {
+    version: (id, v) => (id === 'h1' && v === 1 ? { payload: { anchor: { mount: 'm1' }, shared: true } } : null),
+    typeOf: () => 'highlight',
+  };
+  const state = {
+    elements: ['h1@1', 'h9@1', 'junk'],
+    comments: [{ id: 'c1', locator: { mount: 'm1' }, shared: false, text: 'secret' }, { id: 'c2', anchor: { mount: 'm2' } }],
+    mounts: new Map(), markdown: new Map(),
+  };
+  assert.deepStrictEqual(annotationsOn(state, store, 'm1'), { item: 'm1', total: 2, by_type: { comment: 1, highlight: 1 }, shared: 1, private: 1 });
+  assert.deepStrictEqual(annotationsOn(state, store, 'm1', { remote: true }), { item: 'm1', total: 1, by_type: { highlight: 1 }, shared: 1 });
+  assert.deepStrictEqual(annotationsOn(state, store, ['m1', 'm2', 'm3']), { items: ['m1', 'm2'], total: 3, by_type: { comment: 2, highlight: 1 }, shared: 2, private: 1 });
+  assert.equal(annotationsOn(state, store, 'm3'), null);
+  assert.equal(annotationsOn(state, null, 'm2', { remote: true }) && annotationsOn(state, null, 'm2', { remote: true }).total, 1, 'with no store, the pins still count');
+  assert.equal(annotationsOn(state, store, []), null);
+  // byState: the newest held answer per element, over the ids given only.
+  const ids = new Set(['a', 'b']);
+  assert.deepStrictEqual(byState([
+    { id: 'a', state: 'orphaned', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
+    { id: 'a', state: 'exact', surface: 1, gen: 1, storeEpoch: 0, at: 2 },
+    { id: 'b', state: 're-resolved', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
+    { id: 'z', state: 'exact', surface: 1, gen: 0, storeEpoch: 0, at: 1 },
+  ], ids), { exact: 1, re_resolved: 1, orphaned: 0 });
+  assert.equal(byState([], ids), null);
+  assert.equal(byState([{ id: 'z', state: 'exact' }], ids), null);
+});
