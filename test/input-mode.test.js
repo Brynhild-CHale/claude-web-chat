@@ -34,6 +34,16 @@
 //     for a press that went on to the page, and released with the finger;
 //   - the well's touch-action per state: manipulation, and none only while a
 //     strokes tool is armed with finger-draws on (pinch-zoom off).
+//   - the strokes input policy on a target (U515; annotation engine 4A.2):
+//     with finger-draws off and a strokes tool armed, two touches whose first
+//     landed on a marked fixed-aspect target (an svg in a pane root that took
+//     the strokes sheet, a light-DOM [data-fixed-aspect]) pan the well —
+//     scrollBy called, both clicks stopped; a finger elsewhere, or one on a
+//     target alone, is the page's; a touch while a pen is down is ignored (the
+//     palm rule unchanged); with finger-draws on, the pan from a target still
+//     cancels the stroke through cancelGesture; route() and dispatchMode
+//     answer on a target exactly as on static content (POINTER_TABLE
+//     unchanged).
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -589,4 +599,176 @@ test('isInteractive: a [tabindex="-1"] focus sink inside a host root is no contr
   try {
     assert.equal(IM.isInteractive(sr.querySelector('.s-sink')), true, 'a [tabindex="-1"] div in a pane');
   } finally { pane.remove(); }
+});
+
+// ── the strokes input policy on a target (U515; annotation engine 4A.2) ──────
+// A pane host (.mount-host) whose open root holds an svg, a light-DOM
+// [data-fixed-aspect] sheet, and the well's scroller with scrollBy recorded.
+// jsdom has no adoptedStyleSheets: a per-root stub, as highlight-chrome's.
+let TG;
+function targets() {
+  if (TG) return TG;
+  const d = W.document;
+  const wrap = d.createElement('div');
+  wrap.id = 'im-targets';
+  const host = d.createElement('div');
+  host.className = 'mount-host';
+  wrap.appendChild(host);
+  const sr = host.attachShadow({ mode: 'open' });
+  sr.innerHTML = '<svg class="t-svg"><rect class="t-rect" width="9" height="9"></rect></svg><p class="t-p">prose</p>';
+  const sheet = d.createElement('div');
+  sheet.setAttribute('data-fixed-aspect', '');
+  sheet.innerHTML = '<span class="t-in">ink</span>';
+  wrap.appendChild(sheet);
+  d.getElementById('main').appendChild(wrap);
+  TG = { host, rect: sr.querySelector('.t-rect'), svg: sr.querySelector('.t-svg'), p: sr.querySelector('.t-p'), sheetIn: sheet.querySelector('.t-in'), sheet };
+  return TG;
+}
+function withStrokes(fd, fn) {
+  let adopted = new WeakMap();
+  Object.defineProperty(W.ShadowRoot.prototype, 'adoptedStyleSheets', {
+    configurable: true, get() { return adopted.get(this) || []; }, set(v) { adopted.set(this, [...v]); },
+  });
+  const created = [];
+  const off = ov.registerType('imt-strokes', { draw() {}, input: 'strokes', create: (inp) => created.push([inp.phase, inp.event.pointerId]) });
+  const sc = W.document.getElementById('main').closest('.well-wrap') || W.document.scrollingElement;
+  const calls = [];
+  sc.scrollBy = (o) => calls.push(o);
+  IM.installInputMode();
+  IM.setFingerDraws(fd);
+  ov.setArmed('imt-strokes');
+  try {
+    return fn({ created, calls });
+  } finally {
+    ov.setArmed(null);
+    off();
+    delete sc.scrollBy;
+    delete W.ShadowRoot.prototype.adoptedStyleSheets;
+    adopted = null;
+    IM.setFingerDraws('auto');
+    W.localStorage.removeItem(IM.FINGER_DRAWS_KEY);
+    W.localStorage.removeItem(IM.PEN_SEEN_KEY);
+  }
+}
+const clickOf = (el, pointerId) => {
+  const ev = new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId, detail: 1 });
+  el.dispatchEvent(ev);
+  return ev;
+};
+
+test('the strokes policy: finger-draws off, two touches from a target pan the well (scrollBy, both clicks stopped); a finger elsewhere is the page\'s', () => {
+  const tg = targets();
+  const empty = { touches: [], pan: null, clicks: [] };
+  withStrokes('off', ({ created, calls }) => {
+    assert.equal(IM.strokesArmed(), true);
+    assert.equal(IM.fingerStrokes(), false, 'finger-draws off');
+    assert.equal(tg.host.hasAttribute(IM.STROKES_ATTR), true, 'the pane host is marked');
+    for (const [name, el] of [['an svg in a pane', tg.rect], ['a light-DOM [data-fixed-aspect]', tg.sheetIn]]) {
+      calls.length = 0;
+      const heard = [];
+      const onClick = (e) => heard.push(e.pointerId);
+      W.document.addEventListener('click', onClick, true);
+      try {
+        touchAt(el, 'pointerdown', 141, { isPrimary: true, clientX: 100, clientY: 300 });
+        touchAt(el, 'pointerdown', 142, { clientX: 200, clientY: 300 });
+        assert.deepEqual(IM.touchesForTests(), { touches: [141, 142], pan: [141, 142], clicks: [] }, `${name}: a pan`);
+        touchAt(el, 'pointermove', 141, { clientX: 100, clientY: 280 });
+        touchAt(el, 'pointermove', 142, { clientX: 200, clientY: 280 });
+        assert.deepEqual(calls, [{ left: -0, top: 10 }, { left: -0, top: 10 }], `${name}: the well scrolled by the midpoint's travel, per move`);
+        touchAt(el, 'pointerup', 141, { clientX: 100, clientY: 280 });
+        touchAt(el, 'pointerup', 142, { clientX: 200, clientY: 280 });
+        assert.equal(clickOf(el, 141).defaultPrevented, true, `${name}: the first finger's click stopped`);
+        assert.equal(clickOf(el, 142).defaultPrevented, true, `${name}: the second finger's click stopped`);
+        assert.deepEqual(heard, [], `${name}: no click reached the page`);
+        assert.deepEqual(IM.touchesForTests(), empty);
+      } finally { W.document.removeEventListener('click', onClick, true); }
+    }
+    assert.deepEqual(created, [], 'finger-draws off: nothing drew');
+    // A finger elsewhere (static content off a target), then a second: the
+    // browser's pan, as today; each finger's reading is the page's.
+    calls.length = 0;
+    for (const el of [fixtures().static[0], tg.p]) {
+      touchAt(el, 'pointerdown', 143, { isPrimary: true });
+      assert.deepEqual(IM.touchesForTests({ routes: true }).routes, { 143: 'page' }, 'a single finger elsewhere routes to the page');
+      touchAt(el, 'pointerdown', 144);
+      assert.deepEqual(IM.touchesForTests(), { touches: [143, 144], pan: null, clicks: [] }, 'no pan off a target');
+      touchAt(el, 'pointercancel', 143);
+      touchAt(el, 'pointercancel', 144);
+    }
+    // One finger on a target alone: the page's (the named limit).
+    touchAt(tg.rect, 'pointerdown', 145, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests({ routes: true }).routes, { 145: 'page' });
+    touchAt(tg.rect, 'pointermove', 145, { clientY: 60 });
+    touchAt(tg.rect, 'pointerup', 145);
+    assert.deepEqual(calls, [], 'no scrollBy for one finger, nor off a target');
+    assert.deepEqual(IM.touchesForTests(), empty);
+    // A second finger first on a target, the first elsewhere: the first's.
+    touchAt(tg.p, 'pointerdown', 146, { isPrimary: true });
+    touchAt(tg.rect, 'pointerdown', 147);
+    assert.equal(IM.touchesForTests().pan, null, 'the first finger decides');
+    touchAt(tg.p, 'pointercancel', 146);
+    touchAt(tg.rect, 'pointercancel', 147);
+  });
+  // A host the policy has not marked (nothing armed): no pan from it.
+  touchAt(tg.rect, 'pointerdown', 148, { isPrimary: true });
+  touchAt(tg.rect, 'pointerdown', 149);
+  assert.equal(IM.touchesForTests().pan, null, 'nothing armed: never a pan');
+  assert.equal(tg.host.hasAttribute(IM.STROKES_ATTR), false, 'disarm cleared the mark');
+  touchAt(tg.rect, 'pointercancel', 148);
+  touchAt(tg.rect, 'pointercancel', 149);
+});
+
+test('the strokes policy: a touch while a pen is down is ignored (the palm rule unchanged); with finger-draws on, the pan from a target cancels the stroke through cancelGesture', () => {
+  const tg = targets();
+  withStrokes('off', () => {
+    tg.rect.dispatchEvent(new W.PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 151, isPrimary: true, buttons: 1 }));
+    touchAt(tg.rect, 'pointerdown', 152, { isPrimary: true });
+    touchAt(tg.rect, 'pointerdown', 153);
+    const snap = IM.touchesForTests({ routes: true });
+    assert.deepEqual(snap.routes, { 152: 'ignore', 153: 'ignore' }, 'a resting palm on a target, under a pen: ignored');
+    assert.equal(snap.pan, null, 'and no pan starts while a pen is down');
+    touchAt(tg.rect, 'pointerup', 152);
+    touchAt(tg.rect, 'pointerup', 153);
+    tg.rect.dispatchEvent(new W.PointerEvent('pointerup', { bubbles: true, composed: true, pointerType: 'pen', pointerId: 151, isPrimary: true }));
+  });
+  withStrokes('on', ({ created, calls }) => {
+    touchAt(tg.rect, 'pointerdown', 154, { isPrimary: true });
+    assert.deepEqual(created, [['pointerdown', 154]], 'finger-draws on: the finger draws on the target');
+    touchAt(tg.rect, 'pointerdown', 155);
+    assert.deepEqual(created, [['pointerdown', 154], ['pointercancel', 154]], 'the second finger cancels the stroke toward the tool');
+    touchAt(tg.rect, 'pointermove', 154, { clientY: 90 });
+    touchAt(tg.rect, 'pointermove', 155, { clientY: 90 });
+    assert.ok(calls.length > 0, 'and pans');
+    touchAt(tg.rect, 'pointercancel', 154);
+    touchAt(tg.rect, 'pointercancel', 155);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+  });
+});
+
+test('the strokes policy: route() and dispatchMode answer on a target exactly as on static content (POINTER_TABLE and dispatchMode unchanged)', () => {
+  const tg = targets();
+  const st = fixtures().static[0];
+  const tap = { dx: 0, dy: 0 };
+  const pan = { dx: TAP_SLOP + 10, dy: 2 };
+  let n = 0;
+  withStrokes('off', () => {
+    for (const el of [tg.rect, tg.svg, tg.sheetIn, tg.sheet]) {
+      for (const pointer of ['pen', 'mouse', 'touch', '']) {
+        for (const kind of ['nothing', 'taps', 'strokes', 'selection']) {
+          for (const fd of [false, true]) {
+            for (const pd of [false, true]) {
+              for (const g of [tap, pan]) {
+                const s = { armed: kind === 'nothing' ? null : { type: `t-${kind}` }, input: kind === 'nothing' ? null : kind, fingerDraws: fd, penDown: pd, gesture: g };
+                assert.equal(IM.route(evAt(pointer, el), s), IM.route(evAt(pointer, st), s), `${pointer} ${kind} fd=${fd} pen=${pd}`);
+                n++;
+              }
+            }
+          }
+          if (kind !== 'nothing') assert.deepEqual(IM.dispatchMode(evAt(pointer, el), kind), IM.dispatchMode(evAt(pointer, st), kind));
+        }
+      }
+    }
+  });
+  assert.equal(n, 4 * 4 * 4 * 2 * 2 * 2);
+  assert.deepEqual(Object.keys(IM.POINTER_TABLE).sort(), ['mouse', 'pen', 'touch']);
 });
