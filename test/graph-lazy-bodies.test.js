@@ -240,7 +240,8 @@ test('lazy bodies: a body that cannot be read after boot answers empty, marks th
     assert.ok(!('markdown' in n) && !('order' in n), `${how}: no page sequence`);
     assert.equal(n.trigger.message, 'markdown and a comment', `${how}: the header stands`);
     assert.ok(g.unreadableBodies.has('n1'), `${how}: marked`);
-    assert.equal(g.lazyStats().unreadable, 1);
+    // One fault, one unreadable body, and NO resident body: an empty stand-in is not the node's body.
+    assert.deepEqual(g.lazyStats(), { headers: 6, resident: 0, faults: 1, unreadable: 1, faulted_ids: ['n1'] }, `${how}: lazyStats`);
     n.bookmarked = true;
     assert.throws(() => g.writeNode(n), (e) => e.code === 'NODE_BODY_UNREADABLE', `${how}: writeNode refuses`);
     assert.deepEqual(fs.existsSync(f) ? fs.readFileSync(f) : null, bytes, `${how}: the file is untouched`);
