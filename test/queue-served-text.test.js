@@ -431,7 +431,7 @@ test('(g) GET /api/events: a live Push\'s wake entry serves its note masked at l
 
 // The routes mounted bare (no daemon): with no redactor wired the note is
 // served as stored, by the park and by the ring; with one that knows the
-// value, masked; with one that throws, as stored.
+// value, masked; with one that throws or answers out of shape, as stored.
 async function bareRoutes(t, redactor) {
   const state = createState();
   const bus = createBus();
@@ -449,13 +449,15 @@ async function bareRoutes(t, redactor) {
   return { state, bus, get };
 }
 
-test('(h) the routes mounted with no redactor serve the park\'s and the wake entry\'s note as stored; with a redactor that knows the value, masked; with one that throws, as stored', async (t) => {
+test('(h) the routes mounted with no redactor serve the park\'s and the wake entry\'s note as stored; with a redactor that knows the value, masked; with one that throws or answers out of shape, as stored', async (t) => {
   const value = `wcbare${crypto.randomBytes(12).toString('hex')}`;
   const note = `note names ${value}`;
   const knows = createRedactor();
   knows.addKnown(value, 'capture-token');
   const throws = { text: () => { throw new Error('boom'); } };
-  for (const [name, redactor, servedMasked] of [['none', undefined, false], ['knows', knows, true], ['throws', throws, false]]) {
+  // One that answers out of shape (not a string): as stored too.
+  const shapeless = { text: () => ({ masked: true }) };
+  for (const [name, redactor, servedMasked] of [['none', undefined, false], ['knows', knows, true], ['throws', throws, false], ['shapeless', shapeless, false]]) {
     const r = await bareRoutes(t, redactor);
     queue.deliver(r.state, r.bus, [], { note, park: true });
     queue.emitWake(r.bus, [], { note });
