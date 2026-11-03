@@ -663,6 +663,109 @@ test('a withdrawal leaves a committed node\'s picture as committed — in memory
   assert.deepEqual(JSON.parse(JSON.stringify(inNode())), committed);
 });
 
+// The node's in-place preview projects a committed picture entry per reader
+// (U525c; GT-22 F9 at 06f4023f, PQ-4F-1, form 10 BB2 a): a member made private
+// after the commit leaves the embedded entry for every reader without
+// seesPrivate — no id, no id@v, no url naming it, no describe (the union bbox
+// covering it) — while the entry's id, digest and dimensions stay; the local
+// browser (seesPrivate) gets the entry as committed; a reader whose element
+// payload is null (a remote viewer at off) gets no element reference at all.
+// The node is never rewritten, and the captures route answers as it did.
+test('node preview: a committed picture entry names a member made private since only to a reader with seesPrivate; the entry\'s id and digest stay for every reader; a null payload drops every element reference', async (t) => {
+  const b = await boot(t);
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  const mid = await b.post({ dx: 0.05 });
+  const last = await b.post({ dx: 0.1 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  assert.equal((await settled(srv, cap.id)).state, 'ready');
+  const all = [`${a.id}@1`, `${mid.id}@1`, `${last.id}@1`];
+  const end = await ok(d.api.post('/api/turn-end', { author: 'claude' }), 'commit');
+  assert.ok(end.node_id, JSON.stringify(end));
+  const node = srv.graph.nodes.get(end.node_id);
+  const committed = JSON.parse(JSON.stringify(node.captures.find((c) => c.id === cap.id)));
+  assert.deepEqual(committed.distilled.elements, all);
+  assert.ok(committed.distilled.describe && committed.distilled.describe.bbox, 'committed with its describe');
+  assert.equal(committed.image.state, 'ready');
+  const nodeFile = path.join(projectPaths(d.root).graphDir, `${end.node_id}.json`);
+  const fileBefore = fs.readFileSync(nodeFile, 'utf8');
+  const listedBefore = await client.request(d.port, 'GET', '/api/captures');
+
+  await ok(d.anonApi.patch(`/api/elements/${mid.id}`, { shared: false }), 'un-share the middle stroke');
+  await settle(10);
+  const listedAfter = await client.request(d.port, 'GET', '/api/captures');
+
+  const route = `/preview/node/${end.node_id}`;
+  const embedded = (html) => {
+    const m = /const NODE = (\{[\s\S]*?\});\n/.exec(html);
+    assert.ok(m, 'the document embeds the node');
+    const n = JSON.parse(m[1]);
+    const entry = (n.captures || []).find((c) => c.id === cap.id);
+    assert.ok(entry, 'the picture entry rides');
+    return entry;
+  };
+  const bboxText = JSON.stringify(committed.distilled.describe.bbox);
+  const namesMid = (text) => text.includes(`"${mid.id}"`) || new RegExp(`\\b${mid.id}@\\d`).test(text) || text.includes(`element:${mid.id}"`);
+  const keepsPicture = (entry, who) => {
+    assert.equal(entry.id, cap.id, `${who}: the entry's id`);
+    assert.equal(entry.seq, committed.seq, `${who}: its seq`);
+    assert.equal(entry.ts, committed.ts, `${who}: its taken-at`);
+    assert.equal(entry.source, committed.source, `${who}: its source (the type)`);
+    assert.deepEqual(entry.image, committed.image, `${who}: the image (digest, dimensions) as committed`);
+  };
+
+  // (a) the local browser (seesPrivate): the entry as committed.
+  const ownRes = await d.anonApi.get(route);
+  assert.equal(ownRes.status, 200, 'the local browser\'s preview');
+  const own = embedded(ownRes.text);
+  assert.deepEqual(own, committed, 'the local seesPrivate reader sees the entry as committed');
+
+  // (b) lib/client (local, no seesPrivate: what Claude's tools read through):
+  // the private member and its extent are gone, the shared members and the
+  // picture stay. (The test helper's `api` sends fetch metadata, so it reads
+  // as a local browser, as `anonApi` does.)
+  const readers = [
+    ['lib/client', () => client.request(d.port, 'GET', route)],
+  ];
+  for (const [who, get] of readers) {
+    const r = await get();
+    assert.equal(r.status, 200, who);
+    const html = typeof r.body === 'string' ? r.body : r.text;
+    const entry = embedded(html);
+    keepsPicture(entry, who);
+    assert.deepEqual(entry.distilled.elements, [`${a.id}@1`, `${last.id}@1`], `${who}: the shared members stay`);
+    assert.equal(entry.url, `element:${last.id}`, `${who}: the url names the newest member it may`);
+    assert.equal(entry.distilled.describe, undefined, `${who}: no describe (its bbox covers the private member)`);
+    assert.ok(!namesMid(JSON.stringify(entry)), `${who}: the entry names no private member: ${JSON.stringify(entry)}`);
+    assert.ok(!html.includes(bboxText), `${who}: the union bbox reaches no part of the document`);
+  }
+
+  // (c) a remote viewer at off: no element payload, so no element reference.
+  const remote = await client.request(d.port, 'GET', route, null, { headers: REMOTE });
+  assert.equal(remote.status, 200);
+  const far = embedded(typeof remote.body === 'string' ? remote.body : remote.text);
+  keepsPicture(far, 'remote');
+  assert.deepEqual(far.distilled.elements, [], 'remote: no id@v at all');
+  assert.equal(far.url, '', 'remote: no element url');
+  assert.equal(far.distilled.describe, undefined, 'remote: no describe');
+  for (const id of [a.id, mid.id, last.id]) {
+    assert.ok(!new RegExp(`\\b${id}@\\d`).test(JSON.stringify(far)) && !JSON.stringify(far).includes(`element:${id}"`), `remote: no reference to ${id}`);
+  }
+
+  // (d) nothing rewritten: the node in memory and on disk as committed; the
+  // captures route answers by its own projection, as before this unit.
+  assert.deepEqual(JSON.parse(JSON.stringify(node.captures.find((c) => c.id === cap.id))), committed, 'the node is untouched');
+  assert.equal(fs.readFileSync(nodeFile, 'utf8'), fileBefore, 'the node file is untouched');
+  assert.equal(listedBefore.status, 200);
+  assert.equal(listedAfter.status, 200);
+  const after = listedAfter.body.captures.find((c) => c.id === cap.id);
+  assert.deepEqual(after.distilled.elements, [`${a.id}@1`, `${last.id}@1`], 'the route\'s own withdrawal');
+  assert.equal(after.image.state, 'withdrawn');
+  assert.ok(!namesMid(JSON.stringify(listedAfter.body)));
+});
+
 test('inspect_capture: the url\'s element is read by the element log\'s own id test — a plug-in type\'s id as U513 mints it and a box grab\'s — and the description and inputSchema are 503b8f2f\'s', async (t) => {
   const b = await boot(t);
   const minted = await b.post({});
