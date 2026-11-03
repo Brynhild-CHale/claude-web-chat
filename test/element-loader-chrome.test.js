@@ -6,8 +6,9 @@
 //
 // jsdom runs no module fetched from a URL, so the loader's importer is
 // injected (initElementTypes({importModule})); one case hands it a real ES
-// module off the disk (a file:// URL under a temp dir) to hold the contract
-// over a real module.
+// module off the disk (test-support/fixtures/element-type/draw.js, written as
+// a .mjs under a temp dir and imported by its file:// URL) to hold the
+// contract over a real module.
 //
 // Pinned here:
 //   - a listed plug-in row → one import of exactly
@@ -36,7 +37,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { bootShell, helloFrame, DEFAULT_ROUTES } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
-const { DRAW: FIXTURE_DRAW } = require('../test-support/element-type-fixture');
+// The one tracked draw.js: the contract over a real ES module.
+const FIXTURE_DRAW_JS = path.join(__dirname, '..', 'test-support', 'fixtures', 'element-type', 'draw.js');
 const { mediaOf } = require('../lib/core/element-assets');
 
 const SHA = 'a'.repeat(64);
@@ -153,8 +155,10 @@ test('a listed plug-in row: one import of exactly its draw.js URL; default draw 
 test('a real ES module off the disk: `export default function draw` plus a named `export function create` loads and draws', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-loader-'));
   try {
+    // The tracked fixture draw.js, written as a .mjs so Node reads it as an
+    // ES module without a package type.
     const file = path.join(dir, 'draw.mjs');
-    fs.writeFileSync(file, `${FIXTURE_DRAW}export function create() { return 'made'; }\nexport const glyph = { dx: -8, dy: -8, w: 16, h: 16 };\n`);
+    fs.writeFileSync(file, fs.readFileSync(FIXTURE_DRAW_JS, 'utf8'));
     const real = (url) => import(pathToFileURL(file).href + `?u=${encodeURIComponent(url)}`);
     ET.initElementTypes({ importModule: real });
     await relist([plugRow('disk', { draw: { sha256: SHA } })]);
