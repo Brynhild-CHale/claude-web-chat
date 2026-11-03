@@ -39,12 +39,35 @@ answer **in the thread**, not in chat.
 ## What a pin is on
 
 - **A point of a pane** — `anchor_label` like `plan: "Timeline"`.
+- **A point on an image, an svg or a canvas** — `anchor.kind` is `'point'`, with `x` and
+  `y` (0 to 1 across and down that target) and its `aspect`. The `anchor_label` names the
+  pane and the target's own text when it has some (`chart: "Q1 Q2 Q3"`), else
+  `chart (whole pane)`: it does not say where, so read `x` and `y` — `x: 0.8, y: 0.1` is the
+  top right of the chart.
+- **A word** — a tap on text pins that word as a range: `anchor.quote.exact` is the word,
+  and the `anchor_label` quotes it (`notes: "deadline"`). Answer about that word where it
+  stands.
+- A comment whose glyph the user dragged away from its spot (a leader line ties it back) is
+  still about its anchor; only the glyph moved.
 - **A markdown item** — `md-2: on section "Options"` for a pin on the heading itself,
   `md-2: "the words…" — on section "Options"` for one on prose. Answer about that section.
 - **Other annotations** — a comment made over a highlight, a box grab or another comment
   also carries `chain` and `chain_label`, e.g. `on highlight h7 › box grab g3 › pane m1 ›
   section "Options"`: the comment is about those elements, smallest first. A member the
   user keeps private reads `a private element` (no type, no id) — don't ask what it is.
+
+## Strokes under or beside a comment
+
+An element pack's strokes tool (ink) draws free-form strokes, private by default. A comment
+made over a shared stroke group names it in its `chain` (`on ink p12 › pane m1`). Before you
+ask for a picture of the strokes, read what they already say in words: the group's queue
+item and its records describe it — `shape` (circle, underline, strike, arrow, check, cross
+or other) with its `confidence`, `count` (how many strokes), `bbox` (where they sit in the
+target, 0 to 1) and `text_under`, the words the strokes were drawn over. A circle round
+"Q3" with a note asking "why?" needs no picture. Ask for one only when the words and the
+shape do not answer: `inspect_capture({capture_id: 'element:<id>'})` on one of the group's
+elements draws it and returns it beside the clipped HTML. A private stroke never reaches
+you, and its member reads `a private element`.
 
 ## Chat pins
 
