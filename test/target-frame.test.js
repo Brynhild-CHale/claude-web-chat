@@ -30,7 +30,8 @@
 //     throwing deriver is logged and the stroke still commits; duplicate names
 //     are refused;
 //   - pushing 10,000 samples allocates O(log n) buffers (a counting wrapper
-//     over Float64Array construction) and reads the rect once per push;
+//     over Float64Array construction), reads the rect once per push, and
+//     the per-sample path builds no array or object (a source pin);
 //   - a stored stroke record re-resolves after its pane re-renders with the
 //     svg moved one sibling down (strokesOn finds it on the moved svg); with
 //     the svg removed it answers orphaned and, with no guess, orphans() lists
@@ -389,6 +390,18 @@ test('pushing 10,000 samples performs O(log n) buffer growths and reads the rect
   const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
   assert.equal(r.ok, true);
   assert.ok(posts()[0].body.payload.points.length / 4 <= ST.STROKE_POINTS_MAX, 'decimated to the bound');
+  // No array per sample: the per-sample path (take, and push's sample loop)
+  // builds no array, object or typed array — the counting wrapper above sees
+  // only Float64Array, so the source holds the rest.
+  const src = fs.readFileSync(path.join(REPO, 'public/app/target-frame.js'), 'utf8');
+  const take = /\n  function take\(s\) \{\n([\s\S]*?)\n  \}\n/.exec(src);
+  assert.ok(take, 'take(s) found');
+  const loop = /\n    for \(let i = 0; i < list\.length; i\+\+\) \{\n([\s\S]*?)\n    \}\n/.exec(src);
+  assert.ok(loop, 'push\'s sample loop found');
+  for (const [what, body] of [['take', take[1].replace(/^.*grow\(\);$/m, '')], ['the sample loop', loop[1]]]) {
+    assert.doesNotMatch(body, /\bnew\b|\[[^\]]*,|\{\s*\w+\s*[:,}]|\.\.\.|\b(slice|map|concat|filter|from|of)\(|\bArray\b/,
+      `${what} allocates nothing per sample`);
+  }
 });
 
 // ── re-anchoring ──────────────────────────────────────────────────────────
