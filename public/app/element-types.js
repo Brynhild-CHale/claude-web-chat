@@ -90,9 +90,11 @@
 //               the listing's draw sha256 as its ?d= cache key (U511's
 //               route); in a document, the inlined data: URI (U522). null for
 //               a rel mediaOf refuses, one with a leading slash or a '..'
-//               segment, or one that starts 'assets/'. The chrome reaches
-//               mediaOf through the `mediaOf` seam of initElementTypes; with
-//               none handed in, asset() answers null (fails closed).
+//               segment, or one that starts 'assets/'. The chrome imports
+//               mediaOf from /app/element-assets.js (the daemon serves
+//               lib/core/element-assets' own source); initElementTypes'
+//               `mediaOf` seam replaces it, and with null asset() answers
+//               null (fails closed).
 //
 // TARGETS (K.2-78). A registration may name what its tool's presses land on:
 // `targets: 'items'` (the default) — a pane's content and a markdown item —
@@ -128,6 +130,7 @@ import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
 import { READONLY_HINT, showReaimNote } from './topbar.js';
 import { toolbarState } from './toolbar-state.js';
+import { mediaOf as assetMediaOf } from './element-assets.js';
 
 export const TYPES_PATH = '/api/elements/types';
 export const DRAW_STATES = Object.freeze(['parked', 'draw-failed', 'unknown-type']);
@@ -153,7 +156,7 @@ const PLUGIN = Symbol('element-types.plugin');
 // here, B1): the URL is drawPath's, built from a listed row alone.
 const defaultImport = (url) => import(url);
 let importModule = defaultImport;
-let mediaOfFn = null;             // lib/core/element-assets mediaOf, handed in
+let mediaOfFn = assetMediaOf;     // lib/core/element-assets mediaOf, served (/app/element-assets.js)
 
 // ── the listing ─────────────────────────────────────────────────────────────
 // initElementTypes({overlay, importModule, mediaOf}) — idempotent. `overlay`

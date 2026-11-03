@@ -39,7 +39,6 @@ const { bootShell, helloFrame, DEFAULT_ROUTES } = require('../test-support/chrom
 const { waitUntil } = require('../test-support/helpers');
 // The one tracked draw.js: the contract over a real ES module.
 const FIXTURE_DRAW_JS = path.join(__dirname, '..', 'test-support', 'fixtures', 'element-type', 'draw.js');
-const { mediaOf } = require('../lib/core/element-assets');
 
 const SHA = 'a'.repeat(64);
 const SHA2 = 'b'.repeat(64);
@@ -102,7 +101,7 @@ before(async () => {
   // The boot instance (main.js's box grab, highlight and comment register
   // through it): the importer injected before any plug-in row is listed.
   ET = await shell.importApp('element-types.js');
-  ET.initElementTypes({ importModule: fakeImport, overlay: stub, mediaOf });
+  ET.initElementTypes({ importModule: fakeImport, overlay: stub });
   realOv = await shell.importApp('overlay.js');
   anchors = (await shell.importApp('anchors.js')).default;
   st = await shell.importApp('state.js');
@@ -338,13 +337,17 @@ test('ctx.asset(rel): the same-origin assets URL with ?d=<sha> for an allowed as
   for (const bad of ['x.js', 'lib/inline.js', '../draw.js', 'fonts/../x.png', '/mark.png', 'assets/mark.png', 'draw.js', 'page.html', '', null, 7]) {
     assert.equal(asset(bad), null, `refused: ${JSON.stringify(bad)}`);
   }
-  // No grammar handed in: null (fails closed).
+  // A null grammar through the seam: null (fails closed). The default goes
+  // back as the module the chrome itself imported: the served
+  // /app/element-assets.js (test-support/served-modules.js), the same instance.
+  const served = await shell.importApp('element-assets.js');
   ET.initElementTypes({ mediaOf: null });
   try {
     assert.equal(asset('mark.png'), null);
   } finally {
-    ET.initElementTypes({ mediaOf });
+    ET.initElementTypes({ mediaOf: served.mediaOf });
   }
+  assert.equal(asset('mark.png'), `/api/elements/types/sticker/assets/mark.png?d=${SHA}`, 'the served default restored');
   // A built-in's ctx is the overlay's, untouched.
   let builtinCtx = null;
   const off = ET.registerElementType('comment', { draw: (g, ctx) => { builtinCtx = ctx; } });
