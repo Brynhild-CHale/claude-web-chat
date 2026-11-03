@@ -40,6 +40,17 @@
 // re-place on the overlay's own redraws (a pane's settle, a scroll, a resize,
 // a preview transition, a layout change of the well); nothing here polls.
 //
+// THE DETACHABLE GLYPH (U587, H.7; DECISIONS L.1 M4 a, K.2-151). The comment
+// is the first type to adopt the engine's detachable glyph, through its
+// manifest alone (element.json `glyph: {detach: true, leader: 'dotted'}`, the
+// leader offered per tool in its small settings): element-types.js hands the
+// flag to the overlay with the registration, and the overlay owns the drag,
+// the stored offset and the leader. This module re-implements neither: it
+// relays each pin's `display` (the version's display sibling, as the daemon
+// serves it) on its row, live and for a previewed node (the node read's pins
+// at the v the node pins), and its marker's click is the thread's only when
+// no drag took it (the overlay swallows a drag's click).
+//
 // THE TOOL. Pin mode IS the comment tool armed in the chrome's ONE armed-tool
 // state (overlay.js setArmed / armed / onArmedChange, K.2-3), armed through
 // tools.js: setPinMode / togglePinMode are thin wrappers, so ✎, C, the bottom
@@ -280,11 +291,14 @@ function rowOf(pin, anchor) {
     anchor, shared: pin.shared !== false,
     replies: Array.isArray(pin.replies) ? pin.replies.length : 0, answered: answeredOf(pin),
     ...(answer ? { answer } : {}),
+    // A detached glyph's offset (U587): the overlay places the glyph by it.
+    ...(isObj(pin.display) ? { display: pin.display } : {}),
   };
 }
 const sameRow = (a, b) => !a.pending && a.v === b.v && a.shared === b.shared && a.replies === b.replies
   && !!a.answered === !!b.answered && JSON.stringify(a.anchor) === JSON.stringify(b.anchor)
-  && JSON.stringify(a.answer || null) === JSON.stringify(b.answer || null);
+  && JSON.stringify(a.answer || null) === JSON.stringify(b.answer || null)
+  && JSON.stringify(a.display || null) === JSON.stringify(b.display || null);
 
 // The overlay's live comment rows brought to match the live pins: new or
 // changed ones upserted, nothing touched otherwise; and, for a frame (the
@@ -352,7 +366,24 @@ async function onPreview(d) {
   const r = await request('GET', `${ELEMENTS_PATH}?type=${TYPE}&node=${encodeURIComponent(id)}`);
   if (previewId !== id || !view.previewing || !r.ok || !r.body || !Array.isArray(r.body.elements)) return;
   previewComments = new Map(r.body.elements.filter(validPin).map((p) => [p.id, p]));
+  relayPreviewDisplay();
   retitle();
+}
+// A previewed node's lean rows carry no display (U587): each pin the node read
+// serves at the row's own v hands its glyph offset to the overlay's preview row,
+// so the node draws the placement as it was.
+function relayPreviewDisplay() {
+  if (!mods) return;
+  const ov = mods.overlay;
+  const fresh = [];
+  for (const row of ov.elementsOf('preview')) {
+    if (row.type !== TYPE || row.pending) continue;
+    const pin = previewComments.get(row.id);
+    if (!pin || !isObj(pin.display) || pin.v !== row.v) continue;
+    if (JSON.stringify(row.display || null) === JSON.stringify(pin.display)) continue;
+    fresh.push({ ...row, display: pin.display });
+  }
+  if (fresh.length) ov.upsertElements('preview', fresh);
 }
 function onView() {
   if (!view.previewing) { previewId = null; previewComments = new Map(); }

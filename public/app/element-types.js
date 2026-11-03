@@ -96,6 +96,17 @@
 //               `mediaOf` seam replaces it, and with null asset() answers
 //               null (fails closed).
 //
+// THE DETACHABLE GLYPH (U587, H.7; DECISIONS L.1 M4 a, K.2-151). A type
+// whose listing row's toolbar carries element.json's `glyph: {detach: true,
+// leader?}` — the built-in comment's first — is registered on the overlay
+// with `detach: {leader}` (registerElementType's own `detach` option, when
+// given, wins): the overlay owns the drag, the stored offset and the leader
+// line (overlay.js), so no type ships either. The leader is read per draw:
+// the tool's small setting `leader` (toolbar-state settingsOf) when it names
+// one of overlay.js GLYPH_LEADERS, else the manifest's, else the first; a
+// toolbar change asks the overlay for one draw while a detached type is
+// registered. Nothing else here knows the glyph.
+//
 // TARGETS (K.2-78). A registration may name what its tool's presses land on:
 // `targets: 'items'` (the default) — a pane's content and a markdown item —
 // or `targets: 'panes'` — a pane's content only, so a press outside every
@@ -151,7 +162,7 @@ import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
 import { READONLY_HINT, showReaimNote } from './topbar.js';
-import { toolbarState } from './toolbar-state.js';
+import { toolbarState, settingsOf, onToolbarChange } from './toolbar-state.js';
 import { mediaOf as assetMediaOf } from './element-assets.js';
 
 export const TYPES_PATH = '/api/elements/types';
@@ -204,6 +215,8 @@ export function initElementTypes(opts = {}) {
   if (!createTrayOff) registerCreateTray(ov);
   if (inited) return;
   inited = true;
+  // A detached type's leader follows its tool's setting at once (U587).
+  onToolbarChange(() => { if (detachedTypes.size && typeof ov.requestDraw === 'function') ov.requestDraw(); });
   onHello(() => { loadTypes(); });
   onFrame('components', () => { loadTypes(); });
   // A reset (a wipe, a new graph) re-reads every plug-in type's records, as
@@ -377,13 +390,35 @@ export function targetsOf(type) {
   return entry ? entry.spec.targets : null;
 }
 
+// The detachable glyph's carriage (U587): the overlay's `detach` option for
+// a type, from its registration or its listing row's toolbar `glyph`, or null.
+const detachedTypes = new Set();
+function detachOf(type, spec) {
+  if (spec && spec.detach != null) return spec.detach;
+  const row = listing.get(type);
+  const g = row && row.toolbar && typeof row.toolbar === 'object' ? row.toolbar.glyph : null;
+  if (!g || typeof g !== 'object' || g.detach !== true) return null;
+  const leaders = Array.isArray(overlayModule.GLYPH_LEADERS) ? overlayModule.GLYPH_LEADERS : [];
+  const fallback = leaders.includes(g.leader) ? g.leader : leaders[0];
+  return {
+    leader: () => {
+      let s = null;
+      try { s = settingsOf(type); } catch { s = null; }
+      return s && leaders.includes(s.leader) ? s.leader : fallback;
+    },
+  };
+}
+
 function reregister(type) {
   const entry = registrations.get(type);
   if (!entry) return;
   try { entry.unregister(); } catch {}
   const { spec } = entry;
+  const detach = detachOf(type, spec);
+  if (detach) detachedTypes.add(type); else detachedTypes.delete(type);
   entry.unregister = ov.registerType(type, {
     ...spec,
+    ...(detach ? { detach } : {}),
     draw: (group, ctx) => gatedDraw(type, spec, group, ctx),
     ...(typeof spec.move === 'function' ? { move: (group, ctx) => gatedMove(spec, group, ctx) } : {}),
   }) || (() => {});
