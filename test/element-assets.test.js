@@ -85,3 +85,14 @@ test('sniff: each allowed format\'s bytes pass; bytes that do not match their ex
   assert.ok(sniff(PNG, mediaOf('assets/a.js')));
   assert.ok(sniff('not bytes', mediaOf('draw.js')));
 });
+
+test('browserModuleSource: the served mediaOf answers exactly as this module\'s, over the allowlist and the refusals (U512\'s asset(rel))', async () => {
+  const { browserModuleSource, mediaOf: hostMediaOf } = require('../lib/core/element-assets');
+  const src = browserModuleSource();
+  const mod = await import('data:text/javascript,' + encodeURIComponent(src));
+  const rels = ['draw.js', 'assets/mark.png', 'assets/fonts/hand.woff2', 'assets/a.SVG', 'assets/x.webp', 'assets/x.js', 'assets/../draw.js',
+    'assets//x.png', '/assets/x.png', 'assets/x\u202e.png', 'assets/x\u0007.png', 'assets/a\\b.png', 'lib/x.png', 'assets/' + 'a'.repeat(300) + '.png', '', 'assets/x',
+    'assets/x\u200b.png', 'assets/./x.png', null, 7];
+  for (const rel of rels) assert.deepEqual(mod.mediaOf(rel), hostMediaOf(rel), rel);
+  assert.equal(browserModuleSource(), src, 'memoised');
+});
