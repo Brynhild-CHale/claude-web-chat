@@ -444,6 +444,22 @@ const REVIEWED = new Map([
   ['graph.js fn:execNewGraph', 'deletes every pin (deleteComment); never serves'],
 ]);
 
+// The document routes U521 keyed in PRIVATE_RULES.routes (their element
+// payload's `doc_elements.items[]`, applied by lib/server/document-elements.js
+// documentElements through readerOf) before their owners wire them: each may
+// be keyed but not found, or found with no projection, until its owner's
+// unit lands. An entry whose route now passes is stale and fails, as a stale
+// REVIEWED entry does — so the list only shrinks.
+const PENDING_DOCUMENTS = new Map([
+  // U523 (the pane preview draws its elements).
+  ['graph.js GET /preview/pane/:node/:mount', 'U523'],
+  // U524 (the export draws its elements).
+  ['export.js GET /api/export/:ref', 'U524'],
+  // U525 (the replay documents draw their elements).
+  ['replay.js GET /replay', 'U525'],
+  ['replay.js GET /api/replay/html', 'U525'],
+]);
+
 // Source with comments and string/template contents blanked to spaces
 // (offsets kept), so a brace, paren or match inside either never counts.
 function blank(src) {
@@ -530,11 +546,20 @@ function frameAt(src, b, at) {
 // and not a key named node.
 const WHOLE_NODE = /\bnode\b(?!\s*(?:\.|\[|\?\.|:))/;
 const SINK = /\bres\.json\(|\.send\(|\brenderNodePreview\(/g;
+// A document builder: it hands the document element records whatever its
+// arguments (U521), so a GET that calls one is a carrier.
+const DOC_SINK = /\b(?:documentElements|buildExportHtml|writeExport|buildReplay)\(/g;
+// What a keyed handler applies: dropPrivate, graph.js's privateFor over it, or
+// readerOf (documentElements applies dropPrivate through the route's row).
+const PROJECTION = /\b(?:dropPrivate|privateFor|readerOf)\(/;
 
 // The census of `files` (absolute paths): what it found, and what is missing.
-function privateCensus(files) {
+// `pending` (PENDING_DOCUMENTS by default) tolerates a keyed document route
+// with no projection yet; one of its entries found WITH a projection is stale.
+function privateCensus(files, pending = PENDING_DOCUMENTS) {
   const problems = [];
   const found = [];
+  const projected = new Set();
   for (const file of files) {
     const rel = path.basename(file);
     const src = fs.readFileSync(file, 'utf8');
@@ -560,7 +585,8 @@ function privateCensus(files) {
       found.push({ key, what });
       if (span && span.route.startsWith('GET ') && Object.hasOwn(PRIVATE_RULES.routes, span.route)) {
         const body = b.slice(span.start, span.end);
-        if (!/\b(?:dropPrivate|privateFor)\(/.test(body)) problems.push(`${rel}:${line(at)}: ${span.route} is keyed in PRIVATE_RULES.routes but its handler applies no dropPrivate`);
+        if (PROJECTION.test(body)) projected.add(key);
+        else if (!pending.has(key)) problems.push(`${rel}:${line(at)}: ${span.route} is keyed in PRIVATE_RULES.routes but its handler applies no dropPrivate`);
         return;
       }
       if (!REVIEWED.has(key)) problems.push(`${rel}:${line(at)}: ${what} in ${carrier}, which neither PRIVATE_RULES.routes keys nor this test reviews`);
@@ -574,6 +600,13 @@ function privateCensus(files) {
       if (end === -1) { problems.push(`${rel}:${line(m.index)}: the scan found no end to a sink`); continue; }
       if (WHOLE_NODE.test(b.slice(open + 1, end))) place(m.index, 'a whole node served');
     }
+    for (const m of b.matchAll(DOC_SINK)) {
+      const span = spanAt(m.index);
+      if (span && span.route.startsWith('GET ')) place(m.index, 'a document builder');
+    }
+  }
+  for (const key of pending.keys()) {
+    if (projected.has(key)) problems.push(`PENDING_DOCUMENTS names ${JSON.stringify(key)}, which now applies its projection — drop it`);
   }
   return { problems, found };
 }
@@ -636,6 +669,7 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
     assert.ok(keys.has(k), `the scan found no ${k}`);
   }
   for (const route of Object.keys(PRIVATE_RULES.routes)) {
+    if ([...PENDING_DOCUMENTS.keys()].some((k) => k.endsWith(` ${route}`))) continue; // its owner's unit wires it
     assert.ok(found.some((f) => f.key.endsWith(` ${route}`)), `PRIVATE_RULES.routes keys ${route}, which no route file serves pins or a node from`);
   }
 
@@ -660,6 +694,57 @@ test('census: every .comments read and whole-node body in lib/server/routes is k
   assert.notEqual(cut, elements, 'the planted copy lost its dropPrivate');
   fs.writeFileSync(unwired, cut);
   assert.match(privateCensus([unwired]).problems.join('\n'), /GET \/api\/elements is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/);
+});
+
+// The documents' half of the census (U521): a document builder in a GET is a
+// carrier; a keyed one applies readerOf (or dropPrivate); PENDING_DOCUMENTS
+// tolerates its four entries and fails on a stale one.
+test('census: a document builder in a GET is a carrier; readerOf is its projection; a pending entry that now passes is stale', (t) => {
+  const { problems, found } = privateCensus(routeFiles());
+  assert.deepStrictEqual(problems, []);
+  const keys = new Set(found.filter((f) => f.what === 'a document builder').map((f) => f.key));
+  for (const k of ['export.js GET /api/export/:ref', 'replay.js GET /replay', 'replay.js GET /api/replay/html']) {
+    assert.ok(keys.has(k), `the scan found the document builder in ${k}`);
+  }
+  for (const k of PENDING_DOCUMENTS.keys()) {
+    const route = k.slice(k.indexOf(' ') + 1);
+    assert.ok(Object.hasOwn(PRIVATE_RULES.routes, route), `${k}: PRIVATE_RULES.routes keys it`);
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-private-census-docs-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // A GET that calls buildExportHtml with no readerOf, in a route no row keys
+  // and no pending entry names, and the same under a keyed route of a file
+  // PENDING_DOCUMENTS does not name: both reported.
+  const planted = path.join(dir, 'planted.js');
+  fs.writeFileSync(planted, `function mountPlanted(app, ctx) {
+  app.get('/api/planted-doc/:ref', (req, res) => { res.send(buildExportHtml(ctx, req.params.ref).html); });
+  app.get('/api/export/:ref', (req, res) => { res.send(buildExportHtml(ctx, req.params.ref).html); });
+}
+module.exports = { mountPlanted };
+`);
+  const p = privateCensus([planted]).problems;
+  assert.equal(p.length, 2, p.join('\n'));
+  assert.ok(p.some((l) => /a document builder in GET \/api\/planted-doc\/:ref, which neither PRIVATE_RULES\.routes keys nor this test reviews/.test(l)), p.join('\n'));
+  assert.ok(p.some((l) => /GET \/api\/export\/:ref is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/.test(l)), p.join('\n'));
+  // With readerOf in the handler, the keyed one passes.
+  fs.writeFileSync(planted, `function mountPlanted(app, ctx) {
+  app.get('/api/export/:ref', (req, res) => { const reader = readerOf(ctx.audience, req); res.send(buildExportHtml(ctx, req.params.ref, reader).html); });
+}
+`);
+  assert.deepStrictEqual(privateCensus([planted]).problems, []);
+  // export.js wired (its handler names readerOf) while PENDING_DOCUMENTS still
+  // names it: stale.
+  const wired = path.join(dir, 'export.js');
+  const real = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/routes/export.js'), 'utf8');
+  const cut = real.replace('const opts = { mode: modeParam(req.query.mode) };', 'const opts = { mode: modeParam(req.query.mode), reader: readerOf(ctx.audience, req) };');
+  assert.notEqual(cut, real, 'the planted copy names readerOf');
+  fs.writeFileSync(wired, cut);
+  assert.match(privateCensus([wired]).problems.join('\n'), /PENDING_DOCUMENTS names "export\.js GET \/api\/export\/:ref", which now applies its projection/);
+  assert.deepStrictEqual(privateCensus([wired], new Map()).problems, [], 'with no pending entry, the wired copy passes');
+  // And unwired, with no pending entry, it is reported.
+  assert.match(privateCensus([path.join(REPO_ROOT, 'lib/server/routes/export.js')], new Map()).problems.join('\n'),
+    /GET \/api\/export\/:ref is keyed in PRIVATE_RULES\.routes but its handler applies no dropPrivate/);
 });
 
 // ── the chrome: a 403 read (a remote basic shell) ───────────────────────────
