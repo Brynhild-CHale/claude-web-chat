@@ -198,7 +198,8 @@ test('a record that cannot be merged leaves the defaults', () => {
 // The key matrix's events (test/hotkeys-shell.test.js's axes): every chord
 // chordOf makes of them is one the toolbar record's grammar accepts — there is
 // no second chord grammar — except the Mod+ chords, which that grammar refuses
-// by design (no record may bind one), and of which the chrome claims only ⌘K.
+// by design (no record may bind one), and of which the chrome claims two fixed
+// defaults, ⌘K and ⌘Z (elements.undo, U518; this matrix presses neither Z).
 test('chordOf: every chord it makes of the matrix\'s events is lib/core/toolbar-record\'s', () => {
   const keys = [...'qpgntsrcmb'].map((k) => ({ key: k }))
     .concat([{ key: '[' }, { key: ']' }, { key: '?' }, { key: '/', shiftKey: true }, { key: '/' },
@@ -431,4 +432,51 @@ test('tools.last: rebound in the user record, unbound by a project record, inert
   assert.match(hk.bindingsView().find((b) => b.chord === 'J').inert, /user record only/);
   assert.equal(idOf(hk.lookup('Space', 'page')), 'tools.last', 'the default holds');
   await records();
+});
+
+// The engine's undo (U518; AI13 U518@undo-item-and-chord (a)): Mod+Z is a
+// fixed chrome default — registerAction takes it as it takes ⌘K, the record
+// grammar refuses it (no record can name or unbind it) — and a user record may
+// ADD a [Shift+]<Key> binding to the action. whenField false: a field keeps
+// its own undo.
+function undoFixture(rec = {}) {
+  const ran = [];
+  const reg = hk.createRegistry({ records: () => rec });
+  reg.registerAction({ id: 'chrome.palette', label: 'palette', defaultChord: 'Mod+K', context: ['page', 'overlay'],
+    whenField: true, rebindable: false, run: () => ran.push('chrome.palette') });
+  reg.registerAction({ id: 'elements.undo', label: 'Undo the last annotation on this pane', defaultChord: 'Mod+Z',
+    context: 'page', whenField: false, rebindable: true, legend: null, run: () => ran.push('elements.undo') });
+  return { reg, ran };
+}
+
+test('elements.undo: registerAction accepts the fixed Mod+Z default for a chrome action; Mod+Z resolves on the page, never in a field', () => {
+  const { reg, ran } = undoFixture();
+  const a = reg.lookup('Mod+Z', 'page');
+  assert.equal(a.id, 'elements.undo');
+  assert.equal(a.tier, 'default');
+  a.run();
+  assert.deepEqual(ran, ['elements.undo']);
+  assert.equal(reg.lookup('Mod+Z', 'page', { inField: true }), null, 'a field keeps its own undo');
+  assert.equal(reg.lookup('Mod+Z', 'overlay'), null, 'the page\'s key only');
+  assert.equal(reg.keyFor('elements.undo'), '⌘Z');
+  assert.equal(reg.actionOf('elements.undo').legend, null, 'no legend row');
+  assert.equal(hk.chordOf({ key: 'z', metaKey: true }), 'Mod+Z');
+  assert.equal(hk.chordOf({ key: 'z', ctrlKey: true }), 'Mod+Z');
+});
+
+test('elements.undo: a record naming Mod+Z is refused by the grammar; a user binding Shift+U → elements.undo resolves beside Mod+Z', () => {
+  const { normalizeUser } = require('../lib/core/toolbar-record');
+  assert.equal(validChord('Mod+Z'), null, 'the grammar refuses Mod+: no record can name it');
+  assert.throws(() => normalizeUser({ v: 1, bindings: { 'Mod+Z': null } }), /not a bindable chord/);
+  assert.throws(() => normalizeUser({ v: 1, bindings: { 'Mod+Z': chrome('chrome.graph') } }), /not a bindable chord/);
+  const { record } = normalizeUser({ v: 1, bindings: { 'Shift+U': chrome('elements.undo') } });
+  const { reg, ran } = undoFixture({ user: record, project: null });
+  const a = reg.lookup('Shift+U', 'page');
+  assert.equal(a.id, 'elements.undo');
+  assert.equal(a.tier, 'user');
+  a.run();
+  assert.equal(reg.lookup('Mod+Z', 'page').id, 'elements.undo', 'the fixed default still answers');
+  assert.deepEqual(ran, ['elements.undo']);
+  assert.deepEqual(reg.keysFor('elements.undo').slice().sort(), ['⇧U', '⌘Z'].sort());
+  assert.equal(reg.lookup('Shift+U', 'page', { inField: true }), null, 'never in a field, whichever key');
 });

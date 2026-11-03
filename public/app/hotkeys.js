@@ -11,8 +11,11 @@
 //                    binding names. A second registration of an id throws.
 //       defaultChord a chord, a list of chords, or null. A chord is the
 //                    toolbar record's (lib/core/toolbar-record validChord:
-//                    `[Shift+]<Key>`), except the one fixed `Mod+K` row, which
-//                    no record can name (Mod+ is never bindable).
+//                    `[Shift+]<Key>`), except the two fixed Mod+ rows — `Mod+K`
+//                    (the palette) and `Mod+Z` (elements.undo, U518) — chrome
+//                    defaults no record can name or unbind (Mod+ is never
+//                    bindable); a user record may still ADD a `[Shift+]<Key>`
+//                    binding to a rebindable one (elements.undo is).
 //       context      'page' | 'overlay' | 'replay' | 'drawer' | 'sheet', or a
 //                    list of them: where the action answers. The shell looks
 //                    up 'page', or 'overlay' while the graph overlay owns the
