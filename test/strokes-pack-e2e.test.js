@@ -300,3 +300,34 @@ test('the user tier, the way U566\'s global install takes it: staged global, app
   assert.ok(row, 'listed once approved');
   assert.equal(row.tier, 'system', 'the listing names the user tier \'system\'');
 });
+
+// GT-22's per-sample allocation clause (U561a): the fixture's create hands the
+// wet layer ONE held options object on every pointermove dispatch, its
+// predicted set per call — never a fresh `{ predicted }` per event.
+test('the fixture\'s create hands wet.push the SAME options object on every pointermove dispatch, its predicted set per call', async () => {
+  const src = fs.readFileSync(path.join(TYPE_DIR, 'draw.js'), 'utf8');
+  const mod = await import(`data:text/javascript;base64,${Buffer.from(src).toString('base64')}`);
+  const calls = [];
+  const handle = { frame: { target: {} }, push() {}, commit() {}, cancel() {} };
+  const wet = {
+    begin() { return true; },
+    push(samples, opts) { calls.push({ samples, opts, predicted: opts ? opts.predicted : undefined }); return samples.length; },
+    paint() { return true; },
+    end() {}, cancel() {},
+  };
+  const ctx = { wet, stroke: { begin: () => handle } };
+  const ev = (type) => ({ type, pointerId: 7 });
+  mod.create({ phase: 'pointerdown', event: ev('pointerdown'), samples: [], predicted: [] }, ctx);
+  const s1 = [{ clientX: 1, clientY: 2 }], p1 = [{ clientX: 3, clientY: 4 }];
+  const s2 = [{ clientX: 5, clientY: 6 }], p2 = [];
+  mod.create({ phase: 'pointermove', event: ev('pointermove'), samples: s1, predicted: p1 }, ctx);
+  mod.create({ phase: 'pointermove', event: ev('pointermove'), samples: s2, predicted: p2 }, ctx);
+  mod.create({ phase: 'pointerup', event: ev('pointerup'), samples: [], predicted: [] }, ctx);
+  assert.equal(calls.length, 2, 'one wet.push per pointermove');
+  assert.strictEqual(calls[0].samples, s1);
+  assert.strictEqual(calls[1].samples, s2);
+  assert.ok(calls[0].opts && typeof calls[0].opts === 'object');
+  assert.strictEqual(calls[1].opts, calls[0].opts, 'the same options object across dispatches');
+  assert.strictEqual(calls[0].predicted, p1, 'predicted set for the first call');
+  assert.strictEqual(calls[1].predicted, p2, 'and for the second');
+});
