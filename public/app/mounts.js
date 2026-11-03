@@ -15,6 +15,8 @@ import { applyPaneTheme } from './theme.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
 import { togglePaneHistory } from './pane-history.js';
+import anchors from './anchors.js';
+import { createEventAnchors } from './event-anchor.js';
 import {
   layoutPage, setPage, pageFromFrame, placeOf, runOf, commitRunOrder,
   COLS, ROW_PX, GAP_PX, ROWS_MIN, ROWS_MAX, SPAN_MIN,
@@ -752,6 +754,27 @@ function mountPane(m) {
     const p = panes.get(id);
     if (p && !p._applyingForm) p._lastGestureAt = Date.now();
   };
+  // The event-time anchor (public/app/event-anchor.js, PLAN 4D.1): an
+  // engagement warms the pane's index, and a click/change/submit's anchor is
+  // taken in the CAPTURE phase — before the pane's own handlers run, so a pane
+  // that rewrites its list on click still reports the element clicked. The
+  // report itself stays in the bubble phase below (a pane that stops
+  // propagation still reports nothing, as before).
+  // A fault here never reaches the pane: the event simply carries no anchor.
+  const engage = () => {
+    if (view.previewing) return;
+    try { eventAnchors().engage(root); } catch (err) { console.error('[web-chat] event anchor: engage failed', err); }
+  };
+  for (const type of ['pointerdown', 'focusin', 'keydown']) root.addEventListener(type, engage, true);
+  const noteAnchor = (e) => {
+    if (view.previewing) return;
+    const p = panes.get(id);
+    if (p && p._applyingForm) return;
+    let anchor = null;
+    try { anchor = eventAnchors().anchorAt(root, e.target, id); } catch (err) { console.error('[web-chat] event anchor failed', err); }
+    eventAnchorOf.set(e, anchor);
+  };
+  for (const type of ['click', 'change', 'submit']) root.addEventListener(type, noteAnchor, true);
   root.addEventListener('click', (e) => { markGesture(); reportEvent('click', e, id); });
   root.addEventListener('change', (e) => { markGesture(); reportEvent('change', e, id); emitFormState(id); });
   root.addEventListener('submit', (e) => { markGesture(); reportEvent('submit', e, id); });
@@ -931,6 +954,7 @@ function runUnmount(fn) {
 function releasePane(rec) {
   if (!rec || rec.released) return;
   rec.released = true;
+  if (rec.root && eventAnchorsOne) eventAnchorsOne.release(rec.root);
   if (rec.abort) {
     try { rec.abort.abort(); } catch (e) { console.error('[web-chat] a pane\'s abort listener failed', e); }
   }
@@ -1320,6 +1344,16 @@ export function syncReadonly() {
 }
 bus.on('viewport', syncReadonly);
 
+// The one event-time anchor engine (public/app/event-anchor.js) over the
+// served anchors module, made at its first use; and each event's anchor, as
+// the capture phase took it, for reportEvent to send.
+let eventAnchorsOne = null;
+function eventAnchors() {
+  if (!eventAnchorsOne) eventAnchorsOne = createEventAnchors({ anchors, MutationObserver: window.MutationObserver });
+  return eventAnchorsOne;
+}
+const eventAnchorOf = new WeakMap();
+
 function reportEvent(type, e, mountId) {
   if (view.previewing) return;
   // Synthetic events from a form-state rehydrate are not user activity — don't
@@ -1339,6 +1373,8 @@ function reportEvent(type, e, mountId) {
     name: t?.getAttribute?.('name') || null,
     value: window.__wcMount.isValueExcluded(t) ? null : (t?.value ?? null),
     dataset: t?.dataset ? { ...t.dataset } : null,
+    // the clicked element's anchor record, taken in the capture phase, or null
+    anchor: eventAnchorOf.get(e) || null,
   };
   send({ type: 'event', payload });   // queued while the socket is down
 }

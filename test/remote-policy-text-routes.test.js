@@ -54,7 +54,7 @@ test('TEXT_RULES.routes: the node read withholds comments and lean_elements, the
   assert.ok(node.includes('comments') && node.includes('lean_elements'), JSON.stringify(node));
   assert.ok(TEXT_RULES.routes['GET /preview/node/:id'].includes('comments'));
   assert.ok(!TEXT_RULES.routes['GET /preview/node/:id'].includes('lean_elements'), 'the preview route builds no lean rows');
-  assert.deepStrictEqual([...TEXT_RULES.routes['GET /api/events']], ['events[].pin']);
+  assert.deepStrictEqual([...TEXT_RULES.routes['GET /api/events']], ['events[].pin', 'events[].anchor']);
 });
 
 const PIN = { id: 'c1', seq: 1, shared: true, text: PIN_TEXT, anchor: ANCHOR, replies: [{ author: 'user', text: PIN_TEXT }], v: 1 };

@@ -1449,7 +1449,7 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       'GET /api/health': LOCK_PATHS,
       // The ring (K.2-117): a comment entry's whole pin, for the network peer
       // a WEB_CHAT_HOST bind lets reach the daemon at basic.
-      'GET /api/events': ['events[].pin'],
+      'GET /api/events': ['events[].pin', 'events[].anchor'],
       'GET /api/elements/search': ['hits'],
     },
     // A queue item's own text by kind (the annotation engine, finding 3): a
