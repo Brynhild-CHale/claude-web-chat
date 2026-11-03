@@ -1124,10 +1124,24 @@ test('stop() leaves no open handle: a process that runs the whole lifecycle exit
   assert.equal(stats.conversations.watching, 0, 'the sessions-file watch is gone');
 });
 
+test('ready resolves on a stop() with no start() — a never-started mirror strands no waiter (U571)', async (t) => {
+  const h = setup(t);
+  let settled = false;
+  h.mirror.ready.then(() => { settled = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(settled, false, 'pending before the stop');
+  await h.mirror.stop();
+  await h.mirror.ready;
+  assert.equal(settled, true);
+});
+
 test('a source registered after start starts at once, and ready resolves once start has finished', async (t) => {
   const h = setup(t);
+  // U571 (REGISTRY@deferred-ready): ready is a deferred pending from construction,
+  // never resolved before the start (re-pinned from "ready before start() holds nobody").
   const before = await Promise.race([h.mirror.ready.then(() => 'ready'), new Promise((r) => setTimeout(() => r('pending'), 50))]);
-  assert.equal(before, 'ready', 'ready before start() holds nobody');
+  assert.equal(before, 'pending', 'ready before start() is pending');
+  assert.equal(h.mirror.ready, h.mirror.ready, 'one deferred');
   const started = h.mirror.start();
   assert.equal(h.mirror.start(), started, 'start is idempotent');
   await h.mirror.ready;

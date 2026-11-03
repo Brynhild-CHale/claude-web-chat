@@ -131,6 +131,11 @@ const PATTERNS = [
       // calls process.exit — it has to be a process that can actually exit.
       'test/daemon-portfile-ownership.test.js': 1,
       'test/stop-cli.test.js': 1,
+      // One bare-server helper (bareServer, torn down on t.after): U571 pins the
+      // boot order BEFORE any listen (createServer alone never starts the
+      // mirror), start()'s own fixed-port listen and a failed bind — none of
+      // which withServer can reach, since it always listens itself.
+      'test/mirror-registry-after-listen.test.js': 1,
     },
   },
   {
