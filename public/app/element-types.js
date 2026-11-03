@@ -660,33 +660,11 @@ function relayRows(type, recs) {
   const have = new Map(ov.elementsOf('live').filter((r) => r.type === type).map((r) => [r.id, r]));
   const ids = new Set(recs.map((r) => String(r.id)));
   const gone = [...have.keys()].filter((id) => !ids.has(id));
-  const fresh = recs.filter((r) => !sameRow(have.get(String(r.id)), r)).map((r) => ({ ...r, type }));
+  const same = typeof ov.sameRow === 'function' ? ov.sameRow : () => false;
+  const fresh = recs.map((r) => ({ ...r, type })).filter((r) => !same(have.get(String(r.id)), r));
   if (gone.length) ov.removeElements('live', gone);
   if (fresh.length) ov.upsertElements('live', fresh);
 }
-// Whether the overlay's row already draws what this record would give it:
-// every field normRow keeps, compared as JSON (a false "changed" only costs
-// an upsert; a record carrying a host answer is always upserted).
-const jsonOf = (x) => { try { return JSON.stringify(x); } catch { return undefined; } };
-function sameRow(h, r) {
-  if (!h || h.pending || r.pending || (r.answer && typeof r.answer === 'object')) return false;
-  const want = jsonOf({
-    v: r.v == null ? null : r.v,
-    schema: typeof r.schema === 'string' ? r.schema : null,
-    shared: r.shared === undefined ? null : !!r.shared,
-    replies: Number.isFinite(r.replies) ? r.replies : 0,
-    answered: r.answered === undefined ? undefined : !!r.answered,
-    anchor: r.anchor == null ? null : r.anchor,
-    display: r.display == null ? null : r.display,
-    answer: typeof ov.servedAnswerOf === 'function' ? ov.servedAnswerOf(r) : null,
-  });
-  const got = jsonOf({
-    v: h.v, schema: h.schema, shared: h.shared, replies: h.replies, answered: h.answered,
-    anchor: h.anchor, display: h.display == null ? null : h.display, answer: h.answer == null ? null : h.answer,
-  });
-  return want !== undefined && want === got;
-}
-
 // record(id) for a plug-in type's draw: the record, or null.
 export function recordOf(type, id) {
   const p = plugins.get(type);
@@ -720,10 +698,16 @@ function pluginCtx(spec, ctx) {
 
 // settings() for a plug-in type's draw and move (U512c; THE PLUG-IN SETTINGS
 // in the header): read per call, so a toolbar change is read at the next one.
+// Before GET /api/toolbar lands (or after it failed) the toolbar view has no
+// tools[] row for the type: the listing row's toolbar.settings (element.json's
+// declaration, defaults included) answers instead of {small: {}, large: {}}
+// (U590, contract (r)).
 function settingsFor(type) {
   let a = null;
   try { a = overlayModule.armed(); } catch { a = null; }
-  return a && a.type === type ? settingsSnapshot(type, a.profile) : defaultSettings(type);
+  const row = listing.get(type);
+  const fallback = row && row.toolbar && typeof row.toolbar === 'object' ? row.toolbar.settings || null : null;
+  return a && a.type === type ? settingsSnapshot(type, a.profile, fallback) : defaultSettings(type, fallback);
 }
 
 // ── the tray action guard (TRAY@guard) ─────────────────────────────────────

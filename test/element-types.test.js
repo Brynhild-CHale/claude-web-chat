@@ -520,3 +520,30 @@ test('the same schema name declared again with other keys in this process is ref
   assert.equal(lines.length, 1, lines.join('\n'));
   assert.strictEqual(schemaRow('tq-redecl@1'), row, 'schemas are additive: the first row stays');
 });
+
+// U590 (engineering contract (f)): U514 refuses a malformed payload
+// declaration at review, so no approve reaches the registry's own refusal. An
+// installed type written by an older build can still carry one: seeded here
+// directly (the element.json rewritten and re-recorded in packs.json and the
+// ledger, bypassing approve), it lists, is unwritable, and logs one line.
+test('an installed, ledgered type whose element.json payload is malformed (no approve) lists, is unwritable and logs one line', (t) => {
+  const { schemaRow, isPluginType } = require('../lib/core/element-log');
+  const root = project(t);
+  approveInProcess(root, { name: 'old-pack', type: 'tq-malformed', json: { payload: { keys: ['anchor', 'shared', 'note'] } } });
+  const f = path.join(projectPaths(root).elementTypesDir, 'tq-malformed', 'element.json');
+  fs.writeFileSync(f, JSON.stringify(elementJson('tq-malformed', { payload: { keys: ['shared', 'note'] } }), null, 2) + '\n');
+  rerecord(root, 'old-pack', 'tq-malformed');
+  const lines = [];
+  const et = createElementTypes({ root, log: (l) => lines.push(l) });
+  assert.equal(et.listed('tq-malformed'), true, 'listed: the record and the ledger hold its bytes');
+  assert.equal(et.readable('tq-malformed', 'tq-malformed@1'), true, 'it still draws');
+  assert.deepStrictEqual(et.stats().unwritable.map((x) => x.type), ['tq-malformed']);
+  assert.match(et.stats().unwritable[0].why, /missing anchor/);
+  assert.equal(schemaRow('tq-malformed@1'), null, 'no schema row: never writable');
+  assert.equal(isPluginType('tq-malformed'), false);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /element type "tq-malformed" is listed but not writable/);
+  et.invalidate();
+  assert.equal(et.listed('tq-malformed'), true);
+  assert.equal(lines.length, 1, 'a recompute logs nothing new');
+});

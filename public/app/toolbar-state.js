@@ -172,9 +172,13 @@ const NO_SETTINGS = Object.freeze({ small: Object.freeze({}), large: Object.free
 const SETTINGS_LEVELS = Object.freeze(['small', 'large']);
 const snapshots = new WeakMap();   // a view → Map('<saved?>|<type>|<profile>' → snapshot)
 
-function snapshotOf(type, values) {
+// `fallback`: a declaration to read when the toolbar view has no tools[] row
+// for the type (GET /api/toolbar not landed yet, or failed) — the element-types
+// listing row's toolbar.settings, element.json's own (U590, contract (r)).
+const hasToolRow = (type) => view.tools.some((t) => t.type === type);
+function snapshotOf(type, values, fallback = null) {
   const row = view.tools.find((t) => t.type === type);
-  const decl = row && isObject(row.settings) ? row.settings : null;
+  const decl = row ? (isObject(row.settings) ? row.settings : null) : (isObject(fallback) ? fallback : null);
   if (!decl) return NO_SETTINGS;
   const out = {};
   for (const level of SETTINGS_LEVELS) {
@@ -197,14 +201,17 @@ function memo(key, make) {
   return m.get(key);
 }
 
-export function settingsSnapshot(type, profile) {
+export function settingsSnapshot(type, profile, fallback = null) {
   if (typeof type !== 'string' || !type) return NO_SETTINGS;
   const p = typeof profile === 'string' ? profile : null;
-  return memo(`s|${type}|${p == null ? '' : p}`, () => snapshotOf(type, settingsOf(type, p == null ? undefined : p)));
+  const values = () => settingsOf(type, p == null ? undefined : p);
+  if (!hasToolRow(type)) return snapshotOf(type, values(), fallback);   // not memoised: the fallback may change
+  return memo(`s|${type}|${p == null ? '' : p}`, () => snapshotOf(type, values()));
 }
 
-export function defaultSettings(type) {
+export function defaultSettings(type, fallback = null) {
   if (typeof type !== 'string' || !type) return NO_SETTINGS;
+  if (!hasToolRow(type)) return snapshotOf(type, null, fallback);
   return memo(`d|${type}`, () => snapshotOf(type, null));
 }
 
