@@ -772,3 +772,35 @@ test('the strokes policy: route() and dispatchMode answer on a target exactly as
   assert.equal(n, 4 * 4 * 4 * 2 * 2 * 2);
   assert.deepEqual(Object.keys(IM.POINTER_TABLE).sort(), ['mouse', 'pen', 'touch']);
 });
+
+test('the strokes policy: two touches from a light-DOM svg under the well (no [data-fixed-aspect]), or from an svg in a marked pane root that took no sheet, are the browser\'s (no pan here)', () => {
+  targets();
+  const d = W.document;
+  // A light-DOM svg in the well: app.css leaves it `manipulation`.
+  const lightSvg = d.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  lightSvg.innerHTML = '<rect width="9" height="9"></rect>';
+  d.getElementById('main').appendChild(lightSvg);
+  // A pane root that takes no adopted sheet (an own accessor answering none).
+  const host = d.createElement('div');
+  host.className = 'mount-host';
+  const sr = host.attachShadow({ mode: 'open' });
+  Object.defineProperty(sr, 'adoptedStyleSheets', { configurable: true, get() { return undefined; }, set() {} });
+  sr.innerHTML = '<svg><rect class="n-rect" width="9" height="9"></rect></svg>';
+  d.getElementById('main').appendChild(host);
+  try {
+    withStrokes('off', ({ calls }) => {
+      assert.equal(host.hasAttribute(IM.STROKES_ATTR), true, 'the host is marked all the same');
+      for (const [name, el] of [['a light-DOM svg', lightSvg.firstChild], ['an svg in a root with no sheet', sr.querySelector('.n-rect')]]) {
+        touchAt(el, 'pointerdown', 161, { isPrimary: true, clientX: 100, clientY: 300 });
+        touchAt(el, 'pointerdown', 162, { clientX: 200, clientY: 300 });
+        assert.equal(IM.touchesForTests().pan, null, `${name}: no pan`);
+        touchAt(el, 'pointermove', 161, { clientX: 100, clientY: 280 });
+        touchAt(el, 'pointermove', 162, { clientX: 200, clientY: 280 });
+        touchAt(el, 'pointercancel', 161);
+        touchAt(el, 'pointercancel', 162);
+      }
+      assert.deepEqual(calls, [], 'no scrollBy');
+      assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    });
+  } finally { lightSvg.remove(); host.remove(); }
+});
