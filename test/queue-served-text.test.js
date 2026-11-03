@@ -26,7 +26,7 @@ const path = require('path');
 const WebSocket = require('ws');
 const { withServer, waitUntil, commentBody, wsConnect } = require('../test-support/helpers');
 const { findLeaks } = require('../test-support/fake-secrets');
-const { writeJsonAtomic } = require('../lib/core/fsjson');
+const { writeJsonAtomic, readJsonOr } = require('../lib/core/fsjson');
 const { projectPaths, userPaths } = require('../lib/core/paths');
 const { createRedactor, marksIn } = require('../lib/core/redact');
 const { createBus } = require('../lib/core/bus');
@@ -269,4 +269,209 @@ test('(d) with no redactor wired (a bare attach) a queue frame is served as stor
   // A frame of another type passes the masker untouched.
   const other = { type: 'store:patch', patch: { k: value } };
   assert.strictEqual(queue.servedFrame(other, redactor), other, 'another frame type: the same object');
+});
+
+// ── The Push note, served (U581; H.1, QUEUE@park-note-served; corrective to
+// U463) ──
+// The park's note and a ring wake entry's note are the Push note, the user's
+// own text. The envelope's copy of it ('Context from the user: …') is served
+// through the redactor (U463), so the note fields go through the same one
+// call (ctx.redactor.text) when they are served: at local, at read and for
+// the host. Below `read` the note stays hidden (stripWakeText, U401). The
+// stored park and the ring's stored entry are never rewritten (C1). (e) and
+// (g) red at 503b8f2f on the note.
+const { openSSE } = require('../test-support/helpers');
+const express = require('express');
+const { mountQueueRoutes } = require('../lib/server/routes/queue');
+const { mountEventRoutes } = require('../lib/server/routes/events');
+
+// A daemon whose remote viewers are opted in at `level` ('read', or 'basic':
+// no opt-in), with its three readers of the park. One sandbox HOME holds one
+// tunnel config: a second daemon's seed keeps the first one's opt-in.
+async function noteWorld(t, level) {
+  const seed = (s) => {
+    const prev = readJsonOr(userPaths().tunnelConfig, {});
+    const mirror = { ...((prev && prev.remote && prev.remote.mirror) || {}) };
+    if (level === 'read') mirror[path.resolve(s.root)] = 'read';
+    writeJsonAtomic(userPaths().tunnelConfig, { ...TUNNEL, remote: { mirror } });
+  };
+  const d = await withServer(t, { seed });
+  const value = `wcnote${crypto.randomBytes(12).toString('hex')}`;
+  const call = { port: d.port, noSpawn: true, timeout: 10000 };
+  const readers = {
+    host: async () => client.get('/api/queue/pending', call),
+    local: async () => ok(d.anonApi.get('/api/queue/pending'), 'local pending'),
+    remote: async () => ok(d.anonApi.get('/api/queue/pending', REMOTE), 'remote pending'),
+  };
+  const ring = {
+    local: async () => ok(d.anonApi.get('/api/events?since=0'), 'local ring'),
+    remote: async () => ok(d.anonApi.get('/api/events?since=0', REMOTE), 'remote ring'),
+  };
+  return { ...d, value, call, readers, ring };
+}
+
+// Teach the daemon's redactor `value` through the capture token's file, and
+// wait until `probe` (an already-masked copy) no longer quotes it.
+async function learnBy(w, probe, what) {
+  fs.writeFileSync(projectPaths(w.root).captureToken, w.value + '\n');
+  await waitUntil(async () => !JSON.stringify(await probe()).includes(w.value), { ...WAIT, what });
+}
+
+test('(e) GET /api/queue/pending: a value learned after the Push never rides pending.note for the host, a local browser or a remote viewer at read; envelope.content agrees; the stored park\'s note bytes unchanged', async (t) => {
+  const w = await noteWorld(t, 'read');
+  const note = `push note names ${w.value} for now`;
+  const pushed = await ok(w.api.post('/api/queue/push', { note }), 'push');
+  assert.equal(pushed.mode, 'parked', `the push parked (no consumer): ${JSON.stringify(pushed)}`);
+  const stored = w.srv.state.pendingWake;
+  assert.strictEqual(stored.note, note, 'precondition: the stored park keeps the note as written');
+  assert.ok(stored.envelope.content.includes(w.value), 'precondition: the envelope\'s copy quotes it too');
+  // Before the learning: the note as stored, to every reader at read and above.
+  for (const [who, read] of Object.entries(w.readers)) {
+    const body = await read();
+    assert.strictEqual(body.pending.note, note, `${who} before: the note as stored`);
+    assert.ok(!('note_hidden' in body.pending), `${who} before: no note_hidden`);
+  }
+  const storedPark = JSON.stringify(w.srv.state.pendingWake);
+  // The probe: the envelope's content, already served masked (U463).
+  await learnBy(w, async () => (await w.readers.local()).pending.envelope.content, 'the redactor learned the value');
+  for (const [who, read] of Object.entries(w.readers)) {
+    const body = await read();
+    assert.equal(body.pending.id, stored.id, `${who}: the same park`);
+    assert.equal(typeof body.pending.note, 'string', `${who}: the note is served`);
+    noLeaks(body.pending.note, w.value, `${who}: pending.note`);
+    masked(body.pending.note, `${who}: pending.note`);
+    assert.ok(!('note_hidden' in body.pending), `${who}: no note_hidden at read and above`);
+    noLeaks(body.pending.envelope.content, w.value, `${who}: envelope.content`);
+    assert.ok(body.pending.envelope.content.includes(body.pending.note), `${who}: the envelope's copy of the note agrees with the note served`);
+    noLeaks(body, w.value, `${who}: the whole park`);
+  }
+  // C1: the stored park, its note included, is never rewritten.
+  assert.strictEqual(JSON.stringify(w.srv.state.pendingWake), storedPark, 'the stored park unchanged');
+  assert.strictEqual(w.srv.state.pendingWake.note, note, 'the stored note\'s bytes unchanged');
+});
+
+test('(f) below read the park\'s note is null and note_hidden true, as it was; a park with no note serves no note and no note_hidden', async (t) => {
+  const w = await noteWorld(t, 'basic');
+  const note = `push note names ${w.value} for now`;
+  const pushed = await ok(w.api.post('/api/queue/push', { note }), 'push');
+  assert.equal(pushed.mode, 'parked', `the push parked: ${JSON.stringify(pushed)}`);
+  const stored = w.srv.state.pendingWake;
+  const hidden = await w.readers.remote();
+  assert.strictEqual(hidden.pending.note, null, 'basic: the note is null');
+  assert.strictEqual(hidden.pending.note_hidden, true, 'basic: and the park says note_hidden');
+  noLeaks(hidden, w.value, 'basic: the park');
+  await learnBy(w, async () => (await w.readers.local()).pending.envelope.content, 'the redactor learned the value');
+  const after = await w.readers.remote();
+  assert.strictEqual(after.pending.note, null, 'basic after the learning: the note is null');
+  assert.strictEqual(after.pending.note_hidden, true, 'basic after the learning: note_hidden');
+  const local = await w.readers.local();
+  noLeaks(local.pending.note, w.value, 'local on the basic daemon: pending.note');
+  masked(local.pending.note, 'local on the basic daemon: pending.note');
+  assert.strictEqual(w.srv.state.pendingWake.note, note, 'C1: the stored note unchanged');
+  // Consume it (the host, as turn-begin does), then park a batch with no note.
+  const consumed = await client.post('/api/queue/pending/consume', { id: stored.id }, w.call);
+  assert.deepStrictEqual(consumed, { ok: true, consumed: true }, 'consumed');
+  await ok(w.api.post('/api/render', { id: 'qn-a', html: '<p>Hello there</p>' }), 'render');
+  const anchor = rangeIn('qn-a', 'Hello there', 'Hello');
+  await ok(w.anonApi.post('/api/elements', commentBody({ text: 'a plain note', shared: true, anchor })), 'pin');
+  const again = await ok(w.api.post('/api/queue/push', {}), 'push without a note');
+  assert.equal(again.mode, 'parked', `the second push parked: ${JSON.stringify(again)}`);
+  for (const [who, read] of Object.entries(w.readers)) {
+    const body = await read();
+    assert.ok(body.pending && body.pending.id !== stored.id, `${who}: the new park`);
+    assert.ok(body.pending.note == null, `${who}: no note`);
+    assert.ok(!('note_hidden' in body.pending), `${who}: no note_hidden on a note-less park`);
+  }
+});
+
+test('(g) GET /api/events: a live Push\'s wake entry serves its note masked at local and at read once the value is learned; below read note_hidden as it was; the ring\'s stored entry unchanged', async (t) => {
+  const out = {};
+  for (const level of ['read', 'basic']) {
+    const w = await noteWorld(t, level);
+    const text = `The staging key is ${w.value} until Friday.`;
+    await ok(w.api.post('/api/render', { id: 'qn-r', html: `<p>${text}</p>` }), `${level}: render`);
+    await ok(w.anonApi.post('/api/elements', commentBody({ text: `pin names ${w.value}`, shared: true, anchor: rangeIn('qn-r', text, `key is ${w.value}`) })), `${level}: pin`);
+    const channel = await openSSE(w.port, { kinds: ['wake'], awaitChannel: w.api });
+    t.after(() => channel.close());
+    const note = `push note names ${w.value} for now`;
+    const pushed = await ok(w.api.post('/api/queue/push', { note }), `${level}: push`);
+    assert.equal(pushed.mode, 'wake', `${level}: the push woke the channel: ${JSON.stringify(pushed)}`);
+    await waitUntil(() => channel.events.some((e) => e.kind === 'wake'), { ...WAIT, what: `${level}: the wake` });
+    out[level] = { w, note };
+  }
+  const wakeOf = (body) => body.events.find((e) => e.kind === 'wake');
+  // Before the learning, at read and above: the note as stored.
+  const { w, note } = out.read;
+  for (const who of ['local', 'remote']) {
+    assert.strictEqual(wakeOf(await w.ring[who]()).note, note, `${who} before: the wake's note as stored`);
+  }
+  // The probe: the wake entry's batch, already served masked (U460).
+  await learnBy(w, async () => wakeOf(await w.ring.local()).batch, 'the redactor learned the value');
+  for (const who of ['local', 'remote']) {
+    const body = await w.ring[who]();
+    const wake = wakeOf(body);
+    assert.equal(typeof wake.note, 'string', `${who}: the note is served at read and above`);
+    noLeaks(wake.note, w.value, `${who}: the wake entry's note`);
+    masked(wake.note, `${who}: the wake entry's note`);
+    assert.ok(!('note_hidden' in wake), `${who}: no note_hidden`);
+    noLeaks(body.events.filter((e) => e.kind === 'wake' || e.kind === 'queue'), w.value, `${who}: the ring's wake and queue entries`);
+  }
+  // C1: the ring's stored wake entry still holds the note as written.
+  const storedWake = w.srv.bus.read({ since: 0 }).events.find((e) => e.kind === 'wake');
+  assert.strictEqual(storedWake.note, note, 'the stored wake entry unchanged');
+  // Below read (the basic daemon's remote viewer): hidden, before and after its learning.
+  const b = out.basic;
+  const below = wakeOf(await b.w.ring.remote());
+  assert.ok(!('note' in below) && below.note_hidden === true, `basic: the note is gone and note_hidden: ${JSON.stringify(below)}`);
+  await learnBy(b.w, async () => wakeOf(await b.w.ring.local()).batch, 'basic: the redactor learned the value');
+  const belowAfter = wakeOf(await b.w.ring.remote());
+  assert.ok(!('note' in belowAfter) && belowAfter.note_hidden === true, 'basic after the learning: still hidden');
+  noLeaks(belowAfter, b.w.value, 'basic: the wake entry');
+});
+
+// The routes mounted bare (no daemon): with no redactor wired the note is
+// served as stored, by the park and by the ring; with one that knows the
+// value, masked; with one that throws, as stored.
+async function bareRoutes(t, redactor) {
+  const state = createState();
+  const bus = createBus();
+  const ctx = { state, bus, graph: null };
+  if (redactor !== undefined) ctx.redactor = redactor;
+  const app = express();
+  app.use(express.json());
+  mountQueueRoutes(app, ctx);
+  mountEventRoutes(app, ctx);
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => { server.closeAllConnections(); server.close(r); }));
+  const port = server.address().port;
+  const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`)).json();
+  return { state, bus, get };
+}
+
+test('(h) the routes mounted with no redactor serve the park\'s and the wake entry\'s note as stored; with a redactor that knows the value, masked; with one that throws, as stored', async (t) => {
+  const value = `wcbare${crypto.randomBytes(12).toString('hex')}`;
+  const note = `note names ${value}`;
+  const knows = createRedactor();
+  knows.addKnown(value, 'capture-token');
+  const throws = { text: () => { throw new Error('boom'); } };
+  for (const [name, redactor, servedMasked] of [['none', undefined, false], ['knows', knows, true], ['throws', throws, false]]) {
+    const r = await bareRoutes(t, redactor);
+    queue.deliver(r.state, r.bus, [], { note, park: true });
+    queue.emitWake(r.bus, [], { note });
+    const park = (await r.get('/api/queue/pending')).pending;
+    const wake = (await r.get('/api/events?since=0')).events.find((e) => e.kind === 'wake');
+    assert.ok(park && wake, `${name}: a park and a wake entry`);
+    if (servedMasked) {
+      noLeaks(park.note, value, `${name}: the park's note`);
+      masked(park.note, `${name}: the park's note`);
+      noLeaks(wake.note, value, `${name}: the wake entry's note`);
+      masked(wake.note, `${name}: the wake entry's note`);
+    } else {
+      assert.strictEqual(park.note, note, `${name}: the park's note as stored`);
+      assert.strictEqual(wake.note, note, `${name}: the wake entry's note as stored`);
+    }
+    assert.strictEqual(r.state.pendingWake.note, note, `${name}: C1, the stored park`);
+    assert.strictEqual(r.bus.read({ since: 0 }).events.find((e) => e.kind === 'wake').note, note, `${name}: C1, the stored wake entry`);
+  }
 });
