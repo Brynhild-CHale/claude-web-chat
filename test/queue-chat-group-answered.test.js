@@ -202,6 +202,22 @@ test('a chat pin change while no chat-comment item is queued draws nothing', asy
   }
 });
 
+test('a member pin the chat layer drops turns the group back to not answered, with one redraw', async () => {
+  await waitUntil(() => row('q-chat') && isGreen('q-chat'), { ...WAIT, what: 'the chat group back, green' });
+  await settle();
+  const draws = countDraws();
+  try {
+    CP.dropChatPin('k3');
+    await settle();
+    assert.equal(isGreen('q-chat'), false, 'k3 has no record any more: not answered');
+    assert.equal(draws.n, 1, 'one redraw for the removal');
+    CP.applyChatPin(chatPin('k3', true, 2));
+    await settle();
+    assert.ok(isGreen('q-chat'), 'k3 back with its reply: green');
+    assert.equal(draws.n, 2, 'one more redraw for the write\'s answer');
+  } finally { draws.stop(); }
+});
+
 /* ── (2) the seams ───────────────────────────────────────────────────────── */
 
 test('queue.js reaches the chat layer only through comments.js and the bus: no import of chat-pins.js', () => {
