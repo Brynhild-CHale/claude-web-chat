@@ -514,6 +514,17 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     assert.equal('describe' in raise('p8', { ...LINE, element_ids: ['p8', 3] }), false);
   });
 
+  test('a raise whose group joins two listed groups folds them into one entry (a private stroke between them shared later)', () => {
+    // A [p1] and B [p3] were two groups while p2 sat private between them; once p2 is shared the daemon's
+    // group is [p1, p2, p3], so both entries go and one takes their place: every stroke counted once.
+    const group = start(raise('p1', { ...CIRCLE, element_ids: ['p1'] }));
+    mergeElement(group, raise('p3', { ...LINE, element_ids: ['p3'] }));
+    assert.equal(group.describe.groups.length, 2);
+    const joined = { shape: 'other', confidence: 0.5, count: 3, bbox: [0.1, 0.1, 0.7, 0.55] };
+    mergeElement(group, raise('p2', { ...joined, element_ids: ['p1', 'p2', 'p3'] }));
+    assert.equal(JSON.stringify(group.describe), JSON.stringify(joined), 'one group left: its describe alone');
+  });
+
   test('a malformed groups entry or groups_dropped drops the describe', () => {
     const good = { ...LINE, element_ids: ['p1'] };
     const bad = [
