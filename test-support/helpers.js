@@ -611,7 +611,7 @@ function fakeBin(t, { name, script, env = {} }) {
 //   const e2e = e2eGate(['chrome', 'ffmpeg']);
 //   test('…', { skip: e2e.skip }, () => { … e2e.chrome … e2e.ffmpeg … });
 //
-// → { skip, chrome?, ffmpeg?, tty?, claude?, claudeConfigDir? }: `skip` is false
+// → { skip, chrome?, ffmpeg?, tty?, claude?, claudeConfigDir?, soak? }: `skip` is false
 // or a reason that names the env var to set. Nothing is probed until the test
 // is opted in; opted in but the program is missing still skips, naming it (and,
 // for chrome and ffmpeg, the override WEB_CHAT_CHROME / WEB_CHAT_FFMPEG that
@@ -628,6 +628,11 @@ const E2E = {
   ffmpeg: { opt: 'WEB_CHAT_E2E_FFMPEG', what: 'a real ffmpeg', missing: 'no ffmpeg found — set WEB_CHAT_FFMPEG to one' },
   tty: { opt: 'WEB_CHAT_E2E_TTY', what: 'a real pseudo-terminal', missing: 'perl and python3 were not both found on PATH (python3\'s pty module hosts the terminal; perl runs the helper)' },
   claude: { opt: 'WEB_CHAT_E2E_CLAUDE', what: 'a real Claude Code', missing: 'no `claude` found — put Claude Code on PATH' },
+  // The system soak (scripts/soak/run.sh, U579): minutes of a real daemon in
+  // its own HOME and port band, through the workflow-shape skill's soak.sh
+  // template, which the maintainer names in SOAK_SH (an absolute path; the
+  // template is never copied into this repository) and which needs python3.
+  soak: { opt: 'WEB_CHAT_E2E_SOAK', what: 'a real system soak', missing: 'SOAK_SH does not name the workflow-shape skill\'s soak.sh by an absolute path, or python3 is not on PATH' },
 };
 const E2E_CLAUDE_CONFIG_DIR = 'WEB_CHAT_E2E_CLAUDE_CONFIG_DIR';
 function e2eFinders(env) {
@@ -641,6 +646,11 @@ function e2eFinders(env) {
       return perl && python3 ? { perl, python3 } : null;
     },
     claude: () => require('../lib/core/claude-cli').findClaude({ env }),
+    soak: () => {
+      const sh = env.SOAK_SH;
+      const ok = typeof sh === 'string' && path.isAbsolute(sh) && fs.existsSync(sh) && f.onPath('python3', { env });
+      return ok ? sh : null;
+    },
   };
 }
 function e2eGate(needs, { env = process.env, find } = {}) {

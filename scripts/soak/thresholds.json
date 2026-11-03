@@ -1,0 +1,14 @@
+{
+  "daemons_per_root": {"max": 1, "_why": "one daemon per project root (lib/util/registry daemonsFor, no scan): a second is the lifecycle fault the soak exists to catch; 0 during a restart is fine"},
+  "reconnect_failures": {"max": 0, "_why": "every dropped surface socket gets its hello back within 5 s (drive.js RECONNECT_MS)"},
+  "restart_failures": {"max": 0, "_why": "every restart (stop.js then start.js, each 5 minutes) answers within 10 s (drive.js RESTART_MS)"},
+  "write_failures": {"max": 0, "_why": "no render, markdown, element, spawn/close or turn write the drive makes is refused or lost"},
+  "script_errors": {"max": 0, "_why": "no pane script throws at mount (kind script-error in the event log since the soak began)"},
+  "viewers": {"_max_from": "drive:sockets", "_why": "the daemon counts exactly the drive's sockets: a socket that outlives its close is a leak (scripts/soak/lib.js DRIVE_SOCKETS, read at run time)"},
+  "mirror_parsed": {"_max_from": "retention:parsed-conversations-max", "_why": "the parsed-conversation budget holds: never more conversations parsed than the retention table's parsed-conversations-max (lib/server/mirror/retention.js valueOf, read at run time)"},
+  "mirror_watchers": {"_max_from": "drive:reads-per-daemon", "_why": "the chat mirror's file watches (mirror.stats().watchers) follow the conversations it has parsed — calibration: 0 → 3, one per conversation read — and drive.js reads one conversation a cycle and restarts the daemon every DRIVE_RESTART_EVERY cycles, so a daemon holds at most that many plus WATCH_SLACK (scripts/soak/lib.js, read at run time); a watch kept past its conversation, or re-made per reconnect, exceeds it"},
+  "heap_used_mb": {"max_slope_per_min": 2, "_why": "heap is load-sensitive, so judged by slope (MB per minute, least squares over the soak); calibration: 36.2 → 30.0, slope -1.97/min over 3 minutes. The restarts every 5 minutes reset it: a climb inside each daemon life that a restart wipes is not a slope across the soak (see the U579 hand-off)"},
+  "handles": {"max_growth": 15, "_why": "active resources of the daemon process (sockets, file watches, timers), last sample against first. Calibration (3 min, 3 cycles, no restart): 5 → 10, one watch per conversation read plus in-flight sockets; a daemon life holds at most 5 reads, so a fresh start against a full life is ≈ +8, and 15 leaves room for the requests in flight at a sample"},
+  "timers": {"max_growth": 6, "_why": "Timeout entries of the daemon process: a pane, a socket or a turn that leaves a timer behind grows it. Calibration: 3 → 5 over 3 reads in one daemon life"},
+  "mirror_timers": {"max_growth": 2, "_why": "the chat mirror's own timers (mirror.stats().timers); calibration: 2 → 1"}
+}
