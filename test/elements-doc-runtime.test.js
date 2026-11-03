@@ -123,6 +123,13 @@ const settled = async (win) => {
   await new Promise((r) => win.setTimeout(r, 20));
 };
 const px = (v) => Number(String(v).replace('px', ''));
+// A glyph marker's painted box: its anchor point (left, top) moved by its
+// glyph's translate, and its size.
+function painted(m) {
+  const t = /^translate\((-?[\d.]+)px, (-?[\d.]+)px\)$/.exec(m.style.transform);
+  assert.ok(t, `a glyph's translate: ${m.style.transform}`);
+  return [px(m.style.left) + Number(t[1]), px(m.style.top) + Number(t[2]), px(m.style.width), px(m.style.height)];
+}
 const classes = (m) => m.className.split(/\s+/).filter(Boolean);
 const stats = (win) => win.__wcMount.elements.stats();
 
@@ -263,13 +270,24 @@ test('a comment on a markdown item draws from the payload\'s sources table; with
     const it = require('../lib/server/preview').pageItems(fixture().node, { sourceMap: true }).find((x) => x.md === 'md-notes');
     return { src: it.src, map: it.map };
   })(), 'the entry as pageItems(node, {sourceMap: true}) gives it');
-  const { win } = open(documentOf(p));
-  await settled(win);
+  // The markdown item 40px in from the page's left edge: a gutter for the
+  // margin glyph (SOURCE_GLYPH's -27px).
+  const saved = BOXES['div.md-block'];
+  BOXES['div.md-block'] = [40, 620, 760, 60];
+  let win;
+  try {
+    win = open(documentOf(p)).win;
+    await settled(win);
+  } finally { BOXES['div.md-block'] = saved; }
   const s1 = markerOf(win, 's1');
   assert.ok(s1, 'drawn');
   assert.deepEqual(classes(s1).slice(0, 2), ['el-marker', 'el-hit']);
   assert.equal(s1.getAttribute('data-type'), 'comment');
-  assert.deepEqual([px(s1.style.left), px(s1.style.top)], [MD_RANGE_BOX[0], MD_RANGE_BOX[1]], 'at its range\'s top-left');
+  assert.deepEqual([px(s1.style.left), px(s1.style.top)], [40, MD_RANGE_BOX[1]],
+    'the margin glyph (overlay.js marginItemOf): at the markdown item\'s left edge, level with the range\'s first line');
+  assert.deepEqual(painted(s1), [40 + E.SOURCE_GLYPH.dx, MD_RANGE_BOX[1] + E.SOURCE_GLYPH.dy, E.MARKER_GLYPH.w, E.MARKER_GLYPH.h],
+    'painted at the item\'s left edge plus SOURCE_GLYPH, the comment\'s glyph size kept (overlay.js marginGlyph)');
+  assert.equal(s1.style.clipPath, '', 'in the gutter whole');
   assert.equal(s1.title, 'Only three? (0 replies)');
 
   const q = fixturePayload();
@@ -279,6 +297,140 @@ test('a comment on a markdown item draws from the payload\'s sources table; with
   await settled(w2);
   assert.equal(markerOf(w2, 's1'), undefined, 'no table, no marker');
   assert.equal(stats(w2).unplaced, 1, 'counted unplaced');
+});
+
+test('a margin glyph the document gives no gutter for is inset inside the .page box: never clipped, never dropped', async () => {
+  // The fixture's markdown item starts at the page's own left edge (0): the
+  // glyph's -27px would leave the .page box.
+  assert.equal(BOXES['div.md-block'][0], BOXES['main.page'][0], 'no gutter');
+  const { win } = open(documentOf(fixturePayload()));
+  await settled(win);
+  const s1 = markerOf(win, 's1');
+  assert.ok(s1, 'drawn');
+  assert.notEqual(s1.style.display, 'none', 'shown');
+  assert.equal(s1.style.clipPath, '', 'not clipped');
+  assert.deepEqual(painted(s1), [BOXES['main.page'][0], MD_RANGE_BOX[1] + E.SOURCE_GLYPH.dy, E.MARKER_GLYPH.w, E.MARKER_GLYPH.h],
+    'its box clamped to the page\'s left edge, level with the range as before');
+  assert.equal(stats(win).clipped, 0);
+
+  // A page narrower than the glyph's top: the box clamped down inside it too.
+  const saved = { md: BOXES['div.md-block'], page: BOXES['main.page'] };
+  BOXES['main.page'] = [0, 648, 800, 552];
+  BOXES['div.md-block'] = [0, 648, 800, 40];
+  try {
+    const w2 = open(documentOf(fixturePayload())).win;
+    await settled(w2);
+    const m = markerOf(w2, 's1');
+    assert.notEqual(m.style.display, 'none');
+    assert.deepEqual(painted(m).slice(0, 2), [0, 648], 'inside the .page box on both axes');
+  } finally { Object.assign(BOXES, { 'div.md-block': saved.md, 'main.page': saved.page }); }
+});
+
+// A glyph plug-in type (place 'glyph') whose module exports a glyph and a
+// sourceGlyph of its own, and an element item and a markdown item of it.
+const F_DOT_GLYPH = { dx: -6, dy: -9, w: 12, h: 14 };
+const F_DOT_SOURCE = { dx: -20, dy: 2 };
+const F_DOT_MODULE = [
+  '// f-dot: a dot, at its own glyph size.',
+  `export const glyph = ${JSON.stringify(F_DOT_GLYPH)};`,
+  `export const sourceGlyph = ${JSON.stringify(F_DOT_SOURCE)};`,
+  'export default function draw(group, ctx) {',
+  '  group.container.setAttribute(\'data-f-dot\', String(group.items.length));',
+  '}',
+  '',
+].join('\n');
+function dotPayload(module = F_DOT_MODULE) {
+  const p = fixturePayload();
+  const s1 = p.items.find((it) => it.id === 's1');
+  p.types.push({ type: 'f-dot', schema: 'f-dot@1', reads: ['f-dot@1'], place: 'glyph', module,
+    sha256: require('crypto').createHash('sha256').update(module).digest('hex'), assets: {}, skipped: [] });
+  p.items.push(
+    { id: 'd1', v: 1, type: 'f-dot', schema: 'f-dot@1', seq: 6, shared: true, answer: { state: 'exact' }, payload: {},
+      anchor: convertAnchor({ mount: 'fx-a', selector: 'li.two', text: 'second', ordinal: 0 }) },
+    { id: 'd2', v: 1, type: 'f-dot', schema: 'f-dot@1', seq: 7, shared: true, answer: null, payload: {},
+      anchor: JSON.parse(JSON.stringify(s1.anchor)) });
+  p.items.sort((a, b) => (a.id < b.id ? -1 : 1));
+  assert.equal(E.validatePayload(p), null);
+  return p;
+}
+// Runs a type element's own text (the module's bytes and the one define line)
+// in the document's realm, as the browser runs the module: jsdom runs no
+// module script, so its two export forms are read as declarations.
+function runTypeElement(win, el) {
+  const body = el.slice('<script type="module">'.length, el.length - '</script>\n'.length);
+  win.eval(body.replace('export default function draw(', 'function draw(').replace(/^export const /gm, 'var '));
+}
+
+test('a plug-in type\'s marker is sized by its glyph export, and its margin glyph drawn from its sourceGlyph, through the define line', async () => {
+  const p = dotPayload();
+  const row = p.types.find((r) => r.type === 'f-dot');
+  const saved = BOXES['div.md-block'];
+  BOXES['div.md-block'] = [40, 620, 760, 60];
+  let win;
+  try {
+    win = open(documentOf(p)).win;
+    win.__wcMount.elements.define('f-box', fBoxDraw(win).draw, p.types[0].assets);
+    runTypeElement(win, E.typeElement(row));
+    await settled(win);
+  } finally { BOXES['div.md-block'] = saved; }
+  const d1 = markerOf(win, 'd1');
+  assert.ok(d1 && d1.getAttribute('data-f-dot') === '1', 'drawn by its type');
+  assert.deepEqual(painted(d1), [BOXES['li.two'][0] + F_DOT_GLYPH.dx, BOXES['li.two'][1] + F_DOT_GLYPH.dy, F_DOT_GLYPH.w, F_DOT_GLYPH.h],
+    'sized and offset by its glyph export, never MARKER_GLYPH (overlay.js glyphOf)');
+  const d2 = markerOf(win, 'd2');
+  assert.ok(d2 && d2.getAttribute('data-f-dot') === '1');
+  assert.deepEqual(painted(d2), [40 + F_DOT_SOURCE.dx, MD_RANGE_BOX[1] + F_DOT_SOURCE.dy, F_DOT_GLYPH.w, F_DOT_GLYPH.h],
+    'its margin glyph: the item\'s left edge plus its sourceGlyph, its glyph\'s size (overlay.js marginGlyph)');
+  assert.deepEqual(painted(markerOf(win, 'c1')).slice(2), [E.MARKER_GLYPH.w, E.MARKER_GLYPH.h], 'the comment keeps the overlay\'s glyph');
+
+  // A module that declares neither binding: the define line passes null for
+  // each (typeof on an undeclared name), and the overlay's glyph is used.
+  const bare = F_DOT_MODULE.split('\n').filter((l) => !/^export const /.test(l)).join('\n');
+  const q = dotPayload(bare);
+  const w2 = open(documentOf(q)).win;
+  w2.__wcMount.elements.define('f-box', fBoxDraw(w2).draw, q.types[0].assets);
+  runTypeElement(w2, E.typeElement(q.types.find((r) => r.type === 'f-dot')));
+  await settled(w2);
+  assert.deepEqual(painted(markerOf(w2, 'd1')), [BOXES['li.two'][0] + E.MARKER_GLYPH.dx, BOXES['li.two'][1] + E.MARKER_GLYPH.dy,
+    E.MARKER_GLYPH.w, E.MARKER_GLYPH.h], 'no glyph export: MARKER_GLYPH');
+  assert.deepEqual(painted(markerOf(w2, 'd2')).slice(0, 2), [MD_RANGE_BOX[0] + E.MARKER_GLYPH.dx, MD_RANGE_BOX[1] + E.MARKER_GLYPH.dy],
+    'no sourceGlyph export: at its range\'s top-left, as live');
+
+  // A glyph export that is not one: the type stands in (live's failed
+  // registration), reported; a DOM node the name reaches is no export.
+  const w3 = open(documentOf(q)).win;
+  const errors = [];
+  w3.console.error = (...a) => errors.push(a.join(' '));
+  w3.__wcMount.elements.define('f-box', fBoxDraw(w3).draw, q.types[0].assets);
+  let ran = 0;
+  w3.__wcMount.elements.define('f-dot', () => { ran++; }, {}, { glyph: { dx: 0, dy: 0, w: 0, h: 4 }, sourceGlyph: null });
+  await settled(w3);
+  assert.equal(ran, 0, 'its draw never ran');
+  assert.ok(classes(markerOf(w3, 'd1')).includes('el-standin'), 'the generic mark');
+  assert.ok(errors.some((e) => /f-dot glyph or sourceGlyph export is not one/.test(e)));
+  const w4 = open(documentOf(q)).win;
+  w4.__wcMount.elements.define('f-box', fBoxDraw(w4).draw, q.types[0].assets);
+  w4.__wcMount.elements.define('f-dot', () => {}, {}, { glyph: w4.document.getElementById('fx-a'), sourceGlyph: null });
+  await settled(w4);
+  assert.deepEqual(painted(markerOf(w4, 'd1')).slice(2), [E.MARKER_GLYPH.w, E.MARKER_GLYPH.h], 'a mount host named glyph is no glyph export');
+  assert.ok(!classes(markerOf(w4, 'd1')).includes('el-standin'));
+});
+
+test('a type row with no module (a draw.js left out by the builder) splices without throwing; its items draw the generic mark', async () => {
+  const p = fixturePayload();
+  Object.assign(p.types[0], { module: '', assets: {}, skipped: [{ rel: 'draw.js', reason: 'draw-contract' }] });
+  assert.equal(E.validatePayload(p), null);
+  let html;
+  assert.doesNotThrow(() => { html = E.scripts(p); });
+  assert.strictEqual(html, E.runtimeElement(E.keyOf(p)) + E.dataElement(p), 'the runtime and the data, no type element');
+  assert.ok(!html.includes('<script type="module">'));
+  const { win } = open(documentOf(p));
+  await settled(win);
+  const b1 = markerOf(win, 'b1');
+  for (const c of ['el-marker', 'el-generic', 'el-standin']) assert.ok(classes(b1).includes(c), c);
+  assert.equal(b1.querySelector('.el-generic-name').textContent, 'f-box');
+  assert.ok(markerOf(win, 'c1') && markerOf(win, 'h1') && markerOf(win, 's1'), 'the other items drew');
+  assert.deepEqual(stats(win), { drawn: 3, generic: 2, parked: 0, unplaced: 0, clipped: 0 });
 });
 
 test('a plug-in type that defines nothing by load draws the generic mark; the other items still draw', async () => {
@@ -457,7 +609,9 @@ test('a box marker is clipped to its pane\'s host, and never drawn over a displa
 test('typeElement(row): the module\'s exact bytes, a newline, the one define line', () => {
   const row = fixturePayload().types[0];
   assert.strictEqual(E.typeElement(row), '<script type="module">' + F_BOX_MODULE + '\n'
-    + `window.__wcMount.elements.define("f-box", draw, ${jsonForScript(row.assets)});` + '</script>\n');
+    + `window.__wcMount.elements.define("f-box", draw, ${jsonForScript(row.assets)}, `
+    + '{glyph: typeof glyph === \'undefined\' ? null : glyph, sourceGlyph: typeof sourceGlyph === \'undefined\' ? null : sourceGlyph});'
+    + '</script>\n');
 });
 
 test('typeElement refuses a module holding a script end tag or a comment opener, in either case', () => {
@@ -503,9 +657,57 @@ test('validatePayload accepts the fixture; the field lists are frozen', () => {
   const q = fixturePayload();
   assert.ok(isObjectWith(q.sources, 'md-notes'), 'the fixture carries the sources table');
   q.sources['md-notes'].src = 'x'.repeat(MARKDOWN_MAX_CHARS);
-  q.sources['md-notes'].map.runs = Array.from({ length: 4 - q.sources['md-notes'].map.headings.length }, (_, i) => [i, i + 1, 1, 'exact']);
-  assert.equal(E.validatePayload(q), null, 'a row at its bound: src at MARKDOWN_MAX_CHARS, map at 4 entries per line');
-  assert.equal(E.SOURCE_MAP_PER_LINE, 4);
+  q.sources['md-notes'].map.runs = Array.from({ length: MARKDOWN_MAX_CHARS + 1 - q.sources['md-notes'].map.headings.length },
+    (_, i) => [i, i + 1, 1, 'exact']);
+  assert.equal(E.validatePayload(q), null, 'a row at its bound: src at MARKDOWN_MAX_CHARS, map at src.length + lines entries');
+  assert.equal(E.SOURCE_MAP_PER_LINE, undefined, 'no per-line figure (RULED U522a@sources-bound-per-character a)');
+});
+
+// This repository's own markdown, split into blocks (blank lines outside a
+// fence) and each cut to MARKDOWN_MAX_CHARS on line boundaries (the one cap
+// on a markdown item): every block's sourceMap, as pageItems gives it, fits.
+function markdownBlocks(text) {
+  const out = [];
+  let cur = [];
+  let fence = false;
+  const flush = () => {
+    let chunk = [];
+    for (const l of cur) {
+      if (chunk.length && [...chunk, l].join('\n').length > MARKDOWN_MAX_CHARS) { out.push(chunk.join('\n')); chunk = []; }
+      chunk.push(l);
+    }
+    if (chunk.length) out.push(chunk.join('\n'));
+    cur = [];
+  };
+  for (const l of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (!fence && !l.trim()) flush(); else cur.push(l);
+  }
+  flush();
+  return out;
+}
+test('the sources bound holds for real markdown: this repository\'s CLAUDE.md, README.md and rules file validate, block by block', (t) => {
+  const { pageItems } = require('../lib/server/preview');
+  const root = path.join(__dirname, '..');
+  const one = 'Use `a`, `b`, `c`, `d` and `e`.';
+  const counts = {};
+  for (const f of ['CLAUDE.md', 'README.md', path.join('.claude', 'rules', 'web-chat.md')]) {
+    const blocks = [one, ...markdownBlocks(fs.readFileSync(path.join(root, f), 'utf8'))];
+    let refused = 0;
+    for (const text of blocks) {
+      const node = { ...fixture().node, markdown: [{ id: 'md-notes', text }] };
+      const it = pageItems(node, { sourceMap: true }).find((x) => x.md === 'md-notes');
+      const p = fixturePayload();
+      p.sources['md-notes'] = { src: it.src, map: it.map };
+      const why = E.validatePayload(p);
+      if (why) { refused++; t.diagnostic(`${f}: ${why}`); }
+    }
+    counts[f] = `${blocks.length - 1} blocks, ${refused} refused`;
+    assert.equal(refused, 0, `${f}: every block's map fits its src`);
+  }
+  t.diagnostic(JSON.stringify(counts));
+  const m = require('../lib/core/markdown').sourceMap(one);
+  assert.ok(m.runs.length > 4, `the inline-code line: ${m.runs.length} runs on one line, over the withdrawn 4 per line`);
 });
 const isObjectWith = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 
@@ -540,10 +742,10 @@ test('validatePayload refuses each malformed variant', () => {
     ['a sources entry with an extra key', (p) => { p.sources['md-notes'].html = '<p>'; }, /unknown key html/],
     ['a sources entry no item names', (p) => { p.sources['md-other'] = { ...p.sources['md-notes'] }; }, /no source-anchored item names the markdown item md-other/],
     ['a src past MARKDOWN_MAX_CHARS', (p) => { p.sources['md-notes'].src = 'x'.repeat(MARKDOWN_MAX_CHARS + 1); }, /src is over MARKDOWN_MAX_CHARS \(32768 characters\): the markdown item md-notes/],
-    ['a map past 4 entries per line', (p) => {
-      const m = p.sources['md-notes'].map;
-      m.runs = Array.from({ length: 3 * 4 }, (_, i) => [i, i + 1, 1, 'exact']);
-    }, /map is over 4 entries per line of src \(3\): the markdown item md-notes/],
+    ['a map past src.length + lines entries', (p) => {
+      const { src, map } = p.sources['md-notes'];
+      map.runs = Array.from({ length: src.length + 3 + 1 - map.headings.length }, (_, i) => [i, i + 1, 1, 'exact']);
+    }, new RegExp(`map is over src\\.length \\+ lines entries \\(${fixturePayload().sources['md-notes'].src.length + 3}\\): the markdown item md-notes`)],
   ];
   for (const [what, mutate, want] of cases) {
     const p = fixturePayload();
@@ -627,8 +829,10 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // runtime's compacted size, measured at U522, plus 128 B. A crossing stops and
 // asks; it is never a silent raise (U403b's precedent). Re-measured at U522's
 // relaunch (record(id), the sources install, anchors-src's one compact), on
-// the main session's engineering contract of 2026-11-03: 18,785 → 19,486.
-const RUNTIME_WHOLE_BYTES = 19486;
+// the main session's engineering contract of 2026-11-03: 18,785 → 19,486;
+// and at U522a (the margin glyph and its inset, a plug-in's glyph and
+// sourceGlyph through the define line), on the same contract: → 21,107.
+const RUNTIME_WHOLE_BYTES = 21107;
 test('the byte tripwire: the whole runtime under its measured size + 128 B; each cut reported', (t) => {
   const sizes = {};
   for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
@@ -642,7 +846,7 @@ test('the byte tripwire: the whole runtime under its measured size + 128 B; each
 
 // ── parity with the live overlay ───────────────────────────────────────────
 
-test('the DRAW_RULES copy and the glyphs equal public/app/overlay.js\'s and highlight.js\'s', async () => {
+test('the DRAW_RULES copy and the glyphs equal public/app/overlay.js\'s, highlight.js\'s and comments.js\'s', async () => {
   const { bootShell } = require('../test-support/chrome-shell');
   const shell = await bootShell({});
   try {
@@ -652,6 +856,8 @@ test('the DRAW_RULES copy and the glyphs equal public/app/overlay.js\'s and high
     assert.deepStrictEqual({ ...E.MARKER_GLYPH }, { ...ov.MARKER_GLYPH });
     const hl = await shell.importApp('highlight.js');
     assert.deepStrictEqual({ ...E.HANDLE_GLYPH }, { ...hl.HANDLE_GLYPH });
+    const cm = await shell.importApp('comments.js');
+    assert.deepStrictEqual({ ...E.SOURCE_GLYPH }, { ...cm.SOURCE_GLYPH }, 'the comment\'s margin offsets');
   } finally {
     await shell.restore();
   }
