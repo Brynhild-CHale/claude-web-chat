@@ -296,6 +296,7 @@ test('a module that breaks the draw contract or cannot be spliced rides as no mo
     [`export {a}/**/from "https://e/x.js";\n${MARK_DRAW}`, 'draw-contract'],
     [`export/**/* from "https://e/x.js";\n${MARK_DRAW}`, 'draw-contract'],
     [`export {a /* } */} from "https://e/x.js";\n${MARK_DRAW}`, 'draw-contract'],
+    [`import // a line comment\nx from "https://e/x.js";\n${MARK_DRAW}`, 'draw-contract'],
     [`${MARK_DRAW}export default function draw(g) {}\n`, 'draw-contract'],
   ]) {
     const real = documentDeps(ctxOf(d));
