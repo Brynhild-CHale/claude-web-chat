@@ -497,15 +497,38 @@ function locatorOf(target, root, mount) {
 function create(input, ctx) {
   mods.types.trayAction(() => createLive(input, ctx), { note });
 }
+// A tap's point (4C.1; DECISIONS.md C5): on a fixed-aspect target — an img, a
+// canvas, the outermost svg, a data-fixed-aspect element — found by the one
+// target-frame walk (anchors targetFrame, U531), the point record and the
+// TARGET's 0.8.5 locator; null on any refusal (not a target, no box, outside
+// the box), and the tap takes the conversion at creation below.
+function pointOf(A, input, root, target, mount) {
+  if (!A || typeof A.targetFrame !== 'function' || typeof A.recordPoint !== 'function') return null;
+  const x = input.clientX;
+  const y = input.clientY;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  try {
+    const frame = A.targetFrame(root, target, { mount });
+    if (!frame || frame.refused) return null;
+    const record = A.recordPoint(root, target, x, y, { mount });
+    if (!record || record.refused) return null;
+    return { record, locator: locatorOf(frame.target, root, mount) };
+  } catch { return null; }
+}
 function createLive(input, ctx) {
   if (!input || input.phase !== 'click') return;
   if (input.md != null) { createOnMarkdown(input, ctx); return; }
   const { mount, root, target } = input;
   if (mount == null || !root || root === document || !target || target.nodeType !== 1) return;
   const A = (ctx && ctx.anchors) || (window.__wcMount && window.__wcMount.anchor) || null;
+  const chain = chainAt(input.clientX, input.clientY);
+  const point = pointOf(A, input, root, target, mount);
+  if (point) { openComposer({ record: point.record, locator: point.locator, chain }, input.clientX, input.clientY); return; }
+  // THE CONVERSION AT CREATION (C5): a tap that is no point — on text or a
+  // control — is never a raw point over a reflowing box. A control (and,
+  // until U588's text → range branch lands here, text) takes the element.
   let record = null;
   try { record = A && typeof A.record === 'function' ? A.record(root, target, { mount }) : null; } catch { record = null; }
-  const chain = chainAt(input.clientX, input.clientY);
   openComposer({ record, locator: locatorOf(target, root, mount), chain }, input.clientX, input.clientY);
 }
 

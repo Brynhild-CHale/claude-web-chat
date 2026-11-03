@@ -136,7 +136,8 @@ export const CREATE_CTX_KEYS = Object.freeze(['anchors', 'sourceMap', 'markdownT
 export const CREATE_CTX_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
 // The pointer policy's three answers.
 export const POINTER_ANSWERS = Object.freeze(['tool', 'page', 'ignore']);
-export const PICK_KINDS = Object.freeze(['element', 'range', 'source']);
+// A pick's kinds: a point (4C.1, U532) re-anchors onto a fixed-aspect target.
+export const PICK_KINDS = Object.freeze(['element', 'range', 'source', 'point']);
 // The generic marker's glyph: a 26px box whose bottom centre is the anchor
 // point (the comment pin's shape). A type may register its own.
 export const MARKER_GLYPH = Object.freeze({ dx: -13, dy: -26, w: 26, h: 26 });
@@ -151,8 +152,9 @@ export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
 // 'turns'.
 export const HOST_NAMES = Object.freeze(['page', 'chat', 'turns']);
 // The anchor kinds the page host holds (plus the kind-less and 'page' rows it
-// keeps and never draws): no other host may list one.
-export const PAGE_KINDS = Object.freeze(['element', 'range', 'source']);
+// keeps and never draws): no other host may list one. A point row (4C.1,
+// U532) is placed in its pane as an element row is, at its x/y (pointAt).
+export const PAGE_KINDS = Object.freeze(['element', 'range', 'source', 'point']);
 
 // THE DRAW RULES: how an answer is drawn, first matching row wins. `how` and
 // `guess` null match anything. A section answer (re-resolved, how 'section')
@@ -779,11 +781,22 @@ function marginGlyph(type) {
 // 'box' whose anchor is an element anchor is drawn as a box — its marker the
 // target's own rect (the carried guess's, for a guess), clipped to its well
 // and never over a displayed frame (measureBox). Any other row of such a type
-// (a range, a source, an item-box fallback; a point row is U532's) is drawn
-// as a glyph, as every other type's is.
+// (a range, a source, an item-box fallback, a point) is drawn as a glyph,
+// as every other type's is — a point's at its x/y (pointAt).
 function boxRow(type, row) {
   const t = types.get(type);
   return !!(t && t.place === 'box' && row && row.anchor && row.anchor.kind === 'element');
+}
+// A point answer's stored point (resolvePoint's pt): {x, y}, both finite
+// numbers, frozen; else null (the row is drawn as an element row).
+function pointOfAnswer(raw) {
+  const p = raw && raw.pt;
+  return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? Object.freeze({ x: p.x, y: p.y }) : null;
+}
+// A point group's anchor point in the viewport: THE one mapping
+// (anchors.pointAt, U531) of its stored point onto the target's rect now.
+function pointPlace(pt, r) {
+  return typeof anchors.pointAt === 'function' ? anchors.pointAt({ pt }, r) : null;
 }
 // A host's drawn set as marker groups: per type, the elements grouped by the
 // DOM element they resolve to (a range or a section, one group each). The
@@ -825,12 +838,16 @@ function buildGroups(h) {
     // A box group (boxRow) is keyed apart from any glyph group on the same
     // element, so a type re-registered with another place rebuilds it.
     const box = own && boxRow(type, e.row);
-    const key = el ? `${type}|${kind}|e${tokenOf(el)}${box ? '|box' : ''}` : `${type}|${kind}|${rangeKey(range)}`;
+    // A point answer (4C.1, U532) is keyed by its element AND its point, so
+    // two points on one svg are two markers; the group keeps pt for pointAt.
+    const pt = own && el && e.row.anchor && e.row.anchor.kind === 'point' ? pointOfAnswer(raw) : null;
+    const key = el ? `${type}|${kind}|e${tokenOf(el)}${box ? '|box' : ''}${pt ? `|p${pt.x},${pt.y}` : ''}` : `${type}|${kind}|${rangeKey(range)}`;
     let g = byKey.get(key);
     if (!g) {
       const mdItem = h.page && range ? marginItemOf(type, range) : null;
       g = { key, type, kind, cls: e.rule.cls, el, range, mount: e.mount, scope: e.scope, host: h.name, items: [],
         container: null, glyph: mdItem ? marginGlyph(type) : glyphOf(type, h.page ? null : h), mdItem, failed: false };
+      if (pt) g.pt = pt;
       if (box) {
         g.place = 'box';
         g.drawn = false;
@@ -1141,7 +1158,15 @@ function measureGroup(g, fr, read) {
   if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) return { res: 'unplaced' };
   if (g.place === 'box') return measureBox(g, r, startEl, fr, read, well);
   let x = r.left;
-  const y = r.top;
+  let y = r.top;
+  // A point group (4C.1, U532): the glyph's anchor point at the stored point
+  // mapped onto the target's rect now (pointAt), not the rect's top-left.
+  if (g.pt) {
+    const p = pointPlace(g.pt, r);
+    if (!p) return { res: 'unplaced' };
+    x = p.x;
+    y = p.y;
+  }
   // The margin glyph (marginItemOf): the anchor point is the item's left edge
   // at the range's first line.
   if (g.mdItem) {
@@ -2066,7 +2091,8 @@ function capture(el, pointerId, h) {
 }
 
 // pick({kind}) → {promise, cancel}: the next qualifying press records an anchor
-// of that kind through the resolver (record, recordRange, recordSource) and
+// of that kind through the resolver (record, recordRange, recordSource,
+// recordPoint) and
 // resolves with {kind, record, mount}; cancel (or a newer pick) resolves null.
 // The caller registers cancel with the popover registry. While previewing it
 // resolves null at once.
@@ -2096,13 +2122,20 @@ function selectionRange(root) {
 }
 function onPick(e) {
   const st = pickState;
-  const fires = st.kind === 'element' ? e.type === 'click' : (e.type === 'pointerup' || e.type === 'click');
+  const fires = st.kind === 'element' || st.kind === 'point' ? e.type === 'click' : (e.type === 'pointerup' || e.type === 'click');
   if (!fires) return;
   const target = innerTarget(e);
   const where = whereOf(target);
   let rec = null;
   if (st.kind === 'element') {
     if (where.mount != null) rec = anchors.record(where.root, target, { mount: where.mount });
+  } else if (st.kind === 'point') {
+    // A point only on a fixed-aspect target (C5): a refusal records nothing
+    // and the pick keeps waiting, as a range pick does without a selection.
+    if (where.mount != null && typeof anchors.recordPoint === 'function') {
+      const p = anchors.recordPoint(where.root, target, e.clientX, e.clientY, { mount: where.mount });
+      rec = p && !p.refused ? p : null;
+    }
   } else if (st.kind === 'range') {
     const range = where.mount != null ? selectionRange(where.root) : null;
     if (range) rec = anchors.recordRange(where.root, range, { mount: where.mount });
@@ -2121,7 +2154,8 @@ function onPick(e) {
 // elementsAt(x, y) → [{id, type, area}], smallest first (ties by id): the
 // drawn scope's elements whose PLACED answer holds the viewport point — a
 // range answer whose client rects hold it (area: the rects' total), an
-// element answer whose box holds it (rectOf; its area) — and every live box
+// element answer whose box holds it (rectOf; its area), a point answer whose
+// glyph's box at its point (pointAt) holds it (the glyph's area) — and every live box
 // grab's page record whose rect, placed in its item's current content box
 // (a pane's .mount-host, a markdown item's block: K.2-72's frame of
 // reference) and moved by its content box's scroll since the grab (K.2-80:
@@ -2169,7 +2203,15 @@ export function elementsAt(x, y, opts) {
       if (bs.some(holds) && !clipped(sc && (sc.nodeType === 1 ? sc : sc.parentNode), well)) hit(e.row, bs.reduce((n, b) => n + areaOf(b), 0));
     } else if (raw.el) {
       const r = cfg.rectOf(raw.el);
-      if (holds(r) && !clipped(raw.el, well)) hit(e.row, areaOf(r));
+      // A point answer (4C.1, U532) is held by its glyph's box around the
+      // point (pointAt), never by its whole target.
+      const pt = e.row.anchor && e.row.anchor.kind === 'point' ? pointOfAnswer(raw) : null;
+      if (pt) {
+        const p = r ? pointPlace(pt, r) : null;
+        const gl = glyphOf(e.row.type || 'element');
+        const gb = p ? { left: p.x + gl.dx, top: p.y + gl.dy, width: gl.w, height: gl.h } : null;
+        if (gb && holds(gb) && !clipped(raw.el, well)) hit(e.row, areaOf(gb));
+      } else if (holds(r) && !clipped(raw.el, well)) hit(e.row, areaOf(r));
     }
   };
   if (!h.page) {
