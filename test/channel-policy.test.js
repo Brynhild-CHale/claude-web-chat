@@ -525,5 +525,9 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     const before = JSON.stringify(group.describe);
     mergeElement(group, raise('p17'));
     assert.equal(JSON.stringify(group.describe), before, 'no entry added, the list unchanged');
+    // A kept item re-sent (resendElement → a fresh fold) keeps its dropped count.
+    const resent = start({ ...group, element_ids: [...group.element_ids], describe: d });
+    assert.equal(resent.describe.groups_dropped, 1, 'the re-sent fold still says one group went');
+    assert.equal(resent.describe.groups.length, DESCRIBE_GROUPS_MAX);
   });
 }
