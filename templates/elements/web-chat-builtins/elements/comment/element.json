@@ -6,13 +6,15 @@
   "schema": "comment@2",
   "reads": ["comment@1", "comment@2"],
   "anchors": ["element", "range", "source", "point"],
+  "glyph": { "detach": true, "leader": "dotted" },
   "label": "Comment",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "settings": {
     "small": {
       "type": "object",
       "properties": {
-        "shared": { "type": "boolean", "title": "Visible to Claude", "default": true }
+        "shared": { "type": "boolean", "title": "Visible to Claude", "default": true },
+        "leader": { "type": "string", "title": "Leader line", "enum": ["dotted", "faint", "hover"], "default": "dotted" }
       }
     }
   },

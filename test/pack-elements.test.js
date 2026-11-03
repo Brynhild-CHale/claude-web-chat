@@ -677,3 +677,44 @@ test('pack review / approve / list / info print an element pack\'s types', async
   const info = await runPack(['info', 'mark-pack'], root);
   assert.match(info, /\n {4}element {3}sticky {19}intact\n/);
 });
+
+// ── the detachable glyph (U587, H.7; DECISIONS L.1 M4 a, K.2-151) ─────────────
+// element.json's `glyph: {detach, leader?}` — the engine's detachable glyph,
+// adopted by a type through its manifest: accepted and kept as written (the
+// registry's toolbar bag carries it); an unknown key, a non-boolean detach and
+// another leader are refused, each hint naming the three leaders; absent is
+// attached, as before.
+const GLYPH_DESC = (glyph) => ({ type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1',
+  anchors: ['element'], ...(glyph === undefined ? {} : { glyph }) });
+test('glyph {detach: true, leader: \'dotted\'} is accepted and kept as written; absent is attached (no field, no warning)', () => {
+  const { GLYPH_LEADERS, TOOLBAR_KEYS } = require('../lib/packs/elements');
+  assert.deepStrictEqual(GLYPH_LEADERS, ['dotted', 'faint', 'hover']);
+  assert.ok(TOOLBAR_KEYS.includes('glyph'), 'a toolbar field, kept in the descriptor as written');
+  for (const glyph of [{ detach: true, leader: 'dotted' }, { detach: true, leader: 'faint' }, { detach: true, leader: 'hover' },
+    { detach: true }, { detach: false }]) {
+    const v = validateElement(GLYPH_DESC(glyph), { name: 'sticky' });
+    assert.deepStrictEqual([v.ok, v.errors], [true, []], JSON.stringify(glyph));
+    assert.ok(!v.warnings.some((w) => /glyph/.test(w)), `${JSON.stringify(glyph)}: no warning`);
+    assert.deepStrictEqual(v.descriptor.glyph, glyph, 'kept as written');
+  }
+  const absent = validateElement(GLYPH_DESC(undefined), { name: 'sticky' });
+  assert.equal(absent.ok, true);
+  assert.equal('glyph' in absent.descriptor, false, 'absent: attached, today\'s behaviour');
+});
+
+test('glyph: an unknown leader, a non-boolean detach and an extra key are refused, the hint naming the three leaders', () => {
+  const cases = [
+    [{ detach: true, leader: 'wavy' }, /"glyph\.leader" must be one of dotted, faint, hover \(got "wavy"\)/],
+    [{ detach: 'yes', leader: 'dotted' }, /"glyph\.detach" must be true or false \(got "yes"\).*dotted \| faint \| hover/],
+    [{ leader: 'dotted' }, /"glyph\.detach" must be true or false \(got null\)/],
+    [{ detach: true, leader: 'dotted', offset: 4 }, /"glyph\.offset" is not a glyph field \(detach, leader\).*dotted \| faint \| hover/],
+    ['dotted', /"glyph" must be \{detach: true, leader\?: dotted \| faint \| hover\}/],
+    [true, /"glyph" must be \{detach: true, leader\?: dotted \| faint \| hover\}/],
+  ];
+  for (const [glyph, re] of cases) {
+    const v = validateElement(GLYPH_DESC(glyph), { name: 'sticky' });
+    assert.equal(v.ok, false, JSON.stringify(glyph));
+    assert.equal(v.descriptor, null);
+    assert.ok(v.errors.some((e) => re.test(e)), `${JSON.stringify(glyph)}: ${v.errors.join(' | ')}`);
+  }
+});

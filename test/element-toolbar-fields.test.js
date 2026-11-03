@@ -282,7 +282,9 @@ test('the built-ins carry exactly the ruled table (K.2-1, F2 a, K.2-6, K.2-7, K.
     assert.deepStrictEqual(Object.keys(j.settings), ['small'], `${type}: settings.small only`);
   }
   const props = (type) => builtin(type).settings.small.properties;
-  assert.deepStrictEqual(props('comment'), { shared: { type: 'boolean', title: 'Visible to Claude', default: true } });
+  // U587 (H.7): the comment's detachable glyph offers its leader style per tool.
+  assert.deepStrictEqual(props('comment'), { shared: { type: 'boolean', title: 'Visible to Claude', default: true },
+    leader: { type: 'string', title: 'Leader line', enum: ['dotted', 'faint', 'hover'], default: 'dotted' } });
   assert.deepStrictEqual(props('highlight').color.enum, ['gold', 'accent', 'green', 'rust']);
   assert.equal(props('highlight').color.default, 'gold');
   assert.deepStrictEqual(props('highlight').snap.enum, ['words', 'blocks']);

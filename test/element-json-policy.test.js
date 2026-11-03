@@ -111,9 +111,15 @@ test('no draw.js in the built-in pack: the chrome draws the built-ins', () => {
 // with the display label K.2-46 adds.
 const TOOLBAR = {
   comment: {
+    // U587 (H.7; L.1 M4 a): the engine's detachable glyph, the comment first,
+    // with its leader style offered per tool in the small settings.
+    glyph: { detach: true, leader: 'dotted' },
     label: 'Comment',
     icons: { light: 'icon-light.svg', dark: 'icon-dark.svg' },
-    settings: { small: { type: 'object', properties: { shared: { type: 'boolean', title: 'Visible to Claude', default: true } } } },
+    settings: { small: { type: 'object', properties: {
+      shared: { type: 'boolean', title: 'Visible to Claude', default: true },
+      leader: { type: 'string', title: 'Leader line', enum: ['dotted', 'faint', 'hover'], default: 'dotted' },
+    } } },
     hotkeys: [{ action: 'arm', label: 'Pin comment', default: 'C' }],
     profiles: false,
     input: 'taps',
