@@ -53,6 +53,12 @@ const textOf = (body) => (typeof body === 'string' ? body : JSON.stringify(body)
 // An id@v of `id` anywhere in a body or a document ("h1@…", never "h10@…").
 const carriesRef = (body, id) => textOf(body).includes(`"${id}@`);
 const nodeFile = (root, id) => path.join(projectPaths(root).graphDir, `${id}.json`);
+// The ids a preview document's element payload draws (its one data element;
+// none: []).
+const drawnIds = (html) => {
+  const m = /<script type="application\/json" data-wc-elements>([^<]*)<\/script>/.exec(html);
+  return m ? JSON.parse(m[1]).items.map((it) => it.id) : [];
+};
 
 // Two daemons on one sandbox HOME, their remote viewers opted in at `read` and
 // `full`. On each: a pane, a shared and a private highlight, a shared and a
@@ -133,14 +139,20 @@ test('GET /preview/node/:id: the document holds no id@v of a private highlight (
     d.level = level;
     const bp = await d.anonApi.get(`/preview/node/${d.nodeId}`);
     assert.equal(bp.status, 200, `${level}: browser preview`);
+    // U523: the document embeds no id@v any more (preview.js previewNodeJson
+    // drops `elements`); what it draws rides its element payload, by id.
     for (const ref of [`${d.hShared}@1`, `${d.hPrivate}@1`, UNREAD, UNPARSED]) {
-      assert.ok(bp.text.includes(`"${ref}"`), `${level}: the local browser's document keeps ${ref}`);
+      assert.ok(!bp.text.includes(`"${ref}"`), `${level}: the local browser's document embeds no id@v (${ref})`);
     }
+    const bIds = drawnIds(bp.text);
+    assert.ok(bIds.includes(d.hShared) && bIds.includes(d.hPrivate), `${level}: the local browser's document draws both highlights (${bIds})`);
+    assert.ok(!bIds.includes('h999') && !bIds.includes('h998'), `${level}: and never a reference the log cannot read`);
     for (const [who, headers] of readers(d)) {
       const p = await d.call(`/preview/node/${d.nodeId}`, headers);
       assert.equal(p.status, 200, `${level} ${who} preview`);
       const html = textOf(p.body);
-      assert.ok(html.includes(`"${d.hShared}@1"`), `${level} ${who} preview: the shared highlight's id@v is kept`);
+      assert.ok(drawnIds(html).includes(d.hShared), `${level} ${who} preview: the shared highlight is drawn`);
+      assert.ok(!drawnIds(html).includes(d.hPrivate) && !html.includes(`"${d.hPrivate}"`), `${level} ${who} preview: the private highlight is not, nor its bare id`);
       assert.ok(!carriesRef(html, d.hPrivate), `${level} ${who} preview: the private highlight's id@v is nowhere in the document`);
       assert.ok(!html.includes(UNREAD), `${level} ${who} preview: a reference the log cannot read is dropped (fail closed)`);
       assert.ok(!html.includes(UNPARSED), `${level} ${who} preview: an entry parsePin cannot read is dropped (fail closed)`);

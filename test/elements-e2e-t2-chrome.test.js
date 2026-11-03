@@ -468,7 +468,7 @@ test('a document of a comment-only node (preview, export) carries only the resol
     return data.length === 1 && text.includes(anchorsSrc.scriptElement({ kinds }) + docRuntime.runtimeElement(docRuntime.keyOf(JSON.parse(data[0][1]))));
   };
   // The preview's statement (U523 flips it), then the export's (U524).
-  assert.ok(!/el-layer|pin-marker|el-marker/.test(await doc('preview', '/preview/node/n1')), 'preview: no element is drawn');
+  assert.ok(drawsElements(await doc('preview', '/preview/node/n1')), 'preview: the resolver cut, U522\'s runtime right after it and one data element');
   assert.ok(drawsElements(await doc('export', '/api/export/n1')), 'export: the resolver cut, U522\'s runtime right after it and one data element');
 });
 
