@@ -63,6 +63,7 @@ import { initHighlights } from './highlight.js';
 // The box grab, chrome side (annotation engine 2C.4, U328c): its gesture, the
 // look at its picture, and its card in the queue rail.
 import { initBoxGrab } from './box-grab.js';
+import { initTargetFrame } from './target-frame.js';   // 4F.1 (U561): the stroke frame and the engine's stroke commit, on the create ctx
 // The settings-pane host (annotation engine 2D.6): a tool's settings in a small
 // or large frame, both popovers under the shell's one dismiss layer.
 import { initToolSettings } from './tool-settings.js';
@@ -102,6 +103,7 @@ initOrphans();    // after initShell and initGraph, whose registries it plugs in
 // tool (armed by the toolbar, reading its settings above) and its rail card.
 initHighlights();
 initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
+initTargetFrame(); // the create ctx's frameAt and stroke (U561): a strokes type's frame and its one commit path
 initToolSettings();   // the tool settings frames, registered with the shell's popovers (U338 opens them)
 initTools();      // after the hotkeys: slots 1–9 and each tool's manifest key
 initToolbar();    // after the tools and their settings host: #toolbar, #bb-tools and #tb-tray
