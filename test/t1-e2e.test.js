@@ -260,6 +260,7 @@ const TEXT_ROUTE_URLS = Object.freeze({
 // pin below `read` (K.2-117).
 const NOT_TURN_TEXT = Object.freeze(new Map([
   ['GET /api/events', 'a comment entry\'s pin: test/remote-policy-text-routes.test.js'],
+  ['GET /api/elements/search', 'element text, never the turn\'s; refused below read: test/element-search.test.js'],
 ]));
 
 const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
