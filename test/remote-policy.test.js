@@ -1432,6 +1432,8 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
     frames: { hello: [...LOCK_PATHS, 'elements', 'marks'], reset: [...LOCK_PATHS, 'elements', 'marks'], lock: LOCK_PATHS, 'node-added': ['node.trigger_summary'] },
     routes: {
       'GET /api/graph': ['nodes[].trigger_summary', 'nodes[].absorbed[].trigger_summary', ...LOCK_PATHS],
+      // A document's element payload, whole (U521: documentElements applies it).
+      'GET /api/export/:ref': ['doc_elements'],
       // Spec §5.3's, plus `folded[].error`: §3.2 gives folded turns the error
       // text the spec already strips from the trigger.
       // And the node's element rows, whole (K.2-117): every anchor carries
@@ -1442,7 +1444,8 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
       // embeds the whole node, a pane's history names each version's prompt,
       // the replay path captions every step, and /api/health reports the raw
       // lock.
-      'GET /preview/node/:id': [...NODE_PATHS, 'comments'],
+      'GET /preview/node/:id': [...NODE_PATHS, 'comments', 'doc_elements'],
+      'GET /preview/pane/:node/:mount': ['doc_elements'],
       'GET /api/mounts/:id/history': ['versions[].trigger_summary'],
       'GET /api/replay/path': ['steps[].prompt', 'steps[].reply', 'steps[].summary',
         'steps[].folded[].prompt', 'steps[].folded[].reply', 'steps[].folded[].summary'],
@@ -1531,10 +1534,15 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
     },
     routes: {
       'GET /api/elements': ['elements[]'],
+      // The documents' element payloads (U521: documentElements applies them).
+      'GET /api/export/:ref': ['doc_elements.items[]'],
       'GET /api/elements/search': ['hits[]'],
       'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
-      'GET /preview/node/:id': ['comments[]'],
+      'GET /preview/node/:id': ['comments[]', 'doc_elements.items[]'],
+      'GET /preview/pane/:node/:mount': ['doc_elements.items[]'],
       'GET /api/graph/diff': ['elements.added[]', 'elements.removed[]', 'elements.changed[]', 'elements.orphaned[]'],
+      'GET /replay': ['doc_elements.items[]'],
+      'GET /api/replay/html': ['doc_elements.items[]'],
     },
   });
   const frozenDeep = (o) => !o || typeof o !== 'object' || (Object.isFrozen(o) && Object.values(o).every(frozenDeep));

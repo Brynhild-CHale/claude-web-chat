@@ -261,6 +261,9 @@ const TEXT_ROUTE_URLS = Object.freeze({
 const NOT_TURN_TEXT = Object.freeze(new Map([
   ['GET /api/events', 'a comment entry\'s pin: test/remote-policy-text-routes.test.js'],
   ['GET /api/elements/search', 'element text, never the turn\'s; refused below read: test/element-search.test.js'],
+  // A document's element payload (U521's doc_elements rows): element text, never the turn's.
+  ['GET /api/export/:ref', 'the export\'s element payload, never the turn\'s text: test/document-elements.test.js'],
+  ['GET /preview/pane/:node/:mount', 'the pane preview\'s element payload, never the turn\'s text: test/document-elements.test.js'],
 ]));
 
 const carriesText = (s) => s.includes(PROMPT_MARK) || s.includes(REPLY_MARK);
