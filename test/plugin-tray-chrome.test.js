@@ -277,6 +277,9 @@ test('while previewing every tray write answers TRAY_REFUSAL with READONLY_HINT 
     };
     assert.deepStrictEqual(Object.keys(calls), [...ET.TRAY_MEMBERS]);
     for (const [k, fn] of Object.entries(calls)) {
+      // Cleared first, so each member's own note is what the assertion reads.
+      const noteText = W.document.querySelector('#reaim-note .reaim-note-text');
+      if (noteText) noteText.textContent = '';
       const p = fn();
       assert.ok(p && typeof p.then === 'function', `${k}: a promise`);
       const r = await p;
