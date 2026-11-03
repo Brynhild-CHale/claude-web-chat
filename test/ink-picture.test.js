@@ -30,7 +30,7 @@ const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio
 const { withServer, waitUntil, e2eGate } = require('../test-support/helpers');
 const { stageElementPack, approveFromFrame } = require('../test-support/element-type-fixture');
 const { encodePng, solid } = require('../test-support/png-encode');
-const { PUBLIC_DIR } = require('../lib/core/paths');
+const { PUBLIC_DIR, projectPaths } = require('../lib/core/paths');
 const anchors = require('../lib/core/anchors');
 const strokes = require('../lib/core/strokes');
 const { CHROME_HINT } = require('../lib/replay/find');
@@ -596,6 +596,71 @@ test('a member made private withdraws every picture showing it: the queued item\
   assert.deepEqual(rec.distilled.elements, [`${a.id}@1`, `${last.id}@1`]);
   assert.equal(rec.distilled.describe, undefined, 'the describe (its count of 3 and extent) is gone');
   assert.equal(rec.image.state, 'withdrawn');
+});
+
+// Withdrawal never edits a committed node's object (a commit and a restore
+// copy captures one level deep), and survives a restore.
+test('a withdrawal leaves a committed node\'s picture as committed — in memory as on disk — and a Set active of that node withdraws it again: no private id, no describe, the picture routes answer withdrawn', async (t) => {
+  const b = await boot(t);
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  const mid = await b.post({ dx: 0.05 });
+  const last = await b.post({ dx: 0.1 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  assert.equal((await settled(srv, cap.id)).state, 'ready');
+  const all = [`${a.id}@1`, `${mid.id}@1`, `${last.id}@1`];
+  assert.deepEqual(cap.distilled.elements, all);
+
+  const end = await ok(d.api.post('/api/turn-end', { author: 'claude' }), 'commit');
+  assert.ok(end.node_id, JSON.stringify(end));
+  const nodeFile = path.join(projectPaths(d.root).graphDir, `${end.node_id}.json`);
+  const node = srv.graph.nodes.get(end.node_id);
+  const inNode = () => node.captures.find((c) => c.id === cap.id);
+  assert.ok(inNode(), 'the node holds the picture');
+  const committed = JSON.parse(JSON.stringify(inNode()));
+  assert.deepEqual(committed.distilled.elements, all);
+  assert.ok(committed.distilled.describe, 'committed with its describe');
+
+  await ok(d.anonApi.patch(`/api/elements/${mid.id}`, { shared: false }), 'un-share the middle stroke');
+  await settle(10);
+  const live = captureOf(srv, cap.id);
+  assert.deepEqual(live.distilled.elements, [`${a.id}@1`, `${last.id}@1`], 'the live picture is withdrawn');
+  assert.equal(live.image.state, 'withdrawn');
+
+  // (a) the committed node's object is untouched, and equals its file.
+  assert.deepEqual(inNode().distilled.elements, all, 'the node still names every member');
+  assert.deepEqual(JSON.parse(JSON.stringify(inNode())), committed, 'the node\'s capture is as committed');
+  const onDisk = JSON.parse(fs.readFileSync(nodeFile, 'utf8')).captures.find((c) => c.id === cap.id);
+  assert.deepEqual(JSON.parse(JSON.stringify(inNode())), onDisk, 'memory equals the node file');
+
+  // (b) Set active that node (from a later one): its copy of the picture is
+  // restored, and withdrawn again.
+  await ok(d.api.post('/api/render', { id: 'ip-later', html: '<p>a later turn</p>' }), 'a later pane');
+  const later = await ok(d.api.post('/api/turn-end', { author: 'claude' }), 'commit a later node');
+  assert.ok(later.node_id && later.node_id !== end.node_id, JSON.stringify(later));
+  const moved = await ok(d.api.post('/api/graph/active', { id: end.node_id }), 'set active');
+  assert.equal(moved.active, end.node_id);
+  assert.notEqual(moved.unchanged, true, JSON.stringify(moved));
+  await settle(10);
+  assert.ok(captureOf(srv, cap.id) !== live, 'the live picture is the node\'s restored copy');
+  const privateRef = (text) => text.includes(`"${mid.id}"`) || new RegExp(`\\b${mid.id}@\\d`).test(text) || text.includes(`element:${mid.id}"`);
+  const listed = await client.request(d.port, 'GET', '/api/captures');
+  assert.equal(listed.status, 200);
+  const rec = listed.body.captures.find((c) => c.id === cap.id);
+  assert.ok(rec, 'the restored picture is listed');
+  assert.ok(!privateRef(JSON.stringify(listed.body)), JSON.stringify(rec));
+  assert.equal(rec.distilled.describe, undefined, 'no describe');
+  assert.equal(rec.image.state, 'withdrawn');
+  for (const via of [a.id, last.id]) {
+    const r = await client.request(d.port, 'GET', `/api/elements/${via}/picture?as=json&capture=${cap.id}`);
+    assert.equal(r.status, 404, JSON.stringify(r.body));
+    assert.equal(r.body.image.state, 'withdrawn');
+    assert.equal(r.body.data, undefined);
+  }
+  // The node itself is still as committed.
+  assert.deepEqual(JSON.parse(JSON.stringify(inNode())), committed);
 });
 
 test('inspect_capture: the url\'s element is read by the element log\'s own id test — a plug-in type\'s id as U513 mints it and a box grab\'s — and the description and inputSchema are 503b8f2f\'s', async (t) => {
