@@ -335,6 +335,90 @@ test('below read: a remote basic viewer\'s /replay and /api/replay/html carry no
 
 // ── a rendered file ─────────────────────────────────────────────────────────
 
+// A rendered file is built at the lowest level that may fetch it (U525a;
+// RULED U525@replay-file-below-read a: GET /api/replay/file/:name serves it
+// from `read` up): an item whose type's remote.see is above read never rides
+// a rendered .html or a frame a GIF, MP4 or WebM is drawn from, though the
+// local browser's /replay, viewed in place, still draws it (AI9 a).
+const FULL_TYPE = 'rp-full';
+const FULL_SENTINEL = 'RP-FULL-DRAW-SENTINEL';
+const FULL_DRAW = `// ${FULL_TYPE}: ${FULL_SENTINEL}\nexport default function draw(group) { if (group.container) group.container.setAttribute('data-rp-full', '1'); }\n`;
+const FULL_LABEL = 'RP-FULL-LABEL';
+
+test('a type gated above read: in the local browser\'s /replay in place, never in a rendered .html (built and fetched at read) or the headless view a GIF is drawn from', async (t) => {
+  const seedRead = ({ root: r }) => {
+    writeJsonAtomic(userPaths().tunnelConfig, {
+      hostname: 'wc.example.test', style: 'flat',
+      access: { team: 'testteam', aud: 'test-aud-0123456789' },
+      allow: { emails: ['me@example.com'], domains: [] },
+      remote: { mirror: { [path.resolve(r)]: 'read' } },
+    });
+  };
+  const { d, nodes, q } = await scenario(t, { root: tmpRoot('wc-replay-el-full-'), seed: seedRead });
+  approveElementPack(d, { name: 'rp-full-pack', type: FULL_TYPE, json: { payload: { keys: ['anchor', 'shared', 'label'] }, remote: { see: 'full', send: 'full' } }, draw: FULL_DRAW });
+  assert.ok(d.srv.elementTypes.listed(FULL_TYPE), 'the full-gated type lists');
+  // Its item on the last node (a turn of its own, after the scenario's three).
+  await ok(d.api.post('/api/render', { id: 'pa', html: HTML_A(4) }), 'render pa 4');
+  const full = (await post(d.api, { type: FULL_TYPE, anchor: ELEMENT('pb'), payload: { label: FULL_LABEL } }, 'full mark')).element.id;
+  const last = await commit(d.api, 4);
+  const q4 = `?from=${encodeURIComponent(nodes[0])}&to=${encodeURIComponent(last)}`;
+  const has = (html, what, want) => {
+    assert.equal(drawnIds(html).has(full), want, `${what}: the full-gated item ${want ? 'drawn' : 'not drawn'}`);
+    assert.equal(html.includes(FULL_LABEL), want, `${what}: its text ${want ? 'present' : 'absent'}`);
+    assert.equal(html.includes(FULL_SENTINEL), want, `${what}: its type's module ${want ? 'present' : 'absent'}`);
+    assert.ok(html.includes(SHARED(3)), `${what}: the read-level comment still present`);
+  };
+
+  // Viewed in place by the local browser: drawn (a document viewed in place).
+  has((await d.api.get(`/replay${q4}`)).text, 'the local browser\'s /replay', true);
+  // A remote read viewer's /replay: withheld, as from every live frame.
+  has((await d.anonApi.get(`/replay${q4}`, REMOTE)).text, 'a read viewer\'s /replay', false);
+
+  // A rendered .html: built at read, so the file a read viewer may fetch
+  // carries nothing it may not see.
+  const rendered = await ok(d.api.post('/api/replay/render', { format: 'replay', from: nodes[0], to: last }), 'render replay');
+  has(fs.readFileSync(rendered.path, 'utf8'), 'a rendered .html', false);
+  const fetched = await d.anonApi.get(`/api/replay/file/${encodeURIComponent(path.basename(rendered.path))}`, REMOTE);
+  assert.equal(fetched.status, 200, `a read viewer may fetch the file: ${fetched.status}`);
+  has(fetched.text, 'the rendered .html a read viewer fetches', false);
+  assert.ok(fetched.text.includes(REPLY(3)), 'with its captions (read sees them)');
+
+  // The headless view a GIF's frames are drawn from: the URL narrows the
+  // local browser that loads it to read, beside shared_only=1.
+  const seen = [];
+  const opts = {
+    port: d.port, findChromeImpl: () => '/x/chrome', findFfmpegImpl: () => null, scripts: createScriptStore(),
+    captureImpl: async (o) => { seen.push(o); throw Object.assign(new Error('stub'), { code: 'stub' }); },
+  };
+  const ctx = { graph: d.srv.graph, paths: resolvePaths(d.root), root: d.root, sideTable: d.srv.sideTable, elementTypes: d.srv.elementTypes };
+  const gif = await renderReplay(ctx, { format: 'gif', from: nodes[0], to: last }, opts);
+  assert.equal(gif.code, 'stub', JSON.stringify(gif));
+  const u = new URL(seen[0].url);
+  assert.equal(u.searchParams.get('shared_only'), '1');
+  assert.equal(u.searchParams.get('level'), 'read', 'the headless view is narrowed to read');
+  const viewQ = new URLSearchParams(u.search);
+  viewQ.delete('script');
+  viewQ.set('from', nodes[0]);
+  viewQ.set('to', last);
+  const view = (await d.api.get(`/replay?${viewQ}`)).text;
+  has(view, 'the headless view', false);
+  assert.ok(view.includes(REPLY(3)), 'the headless view keeps its captions (read sees them)');
+  for (let i = 0; i < payloadOf(view).steps.length; i++) {
+    assert.ok(!frameOf(payloadOf(view), i).includes(FULL_LABEL), `frame ${i}: no full-gated item`);
+  }
+
+  // The narrowing grants nothing: a read viewer asking for local is read; a
+  // value that is no level is basic (fail closed); local asking for local is
+  // unchanged.
+  has((await d.anonApi.get(`/replay${q4}&level=local`, REMOTE)).text, 'a read viewer asking level=local', false);
+  const bogus = await d.api.get(`/replay${q4}&level=nope`);
+  assert.ok(!bogus.text.includes('data-wc-elements') && !bogus.text.includes(REPLY(3)), 'level=nope: basic, no element and no caption');
+  has((await d.api.get(`/replay${q4}&level=local`)).text, 'the local browser asking level=local', true);
+  has((await d.api.get(`/replay${q4}&level=full`)).text, 'the local browser asking level=full', true);
+  const atFull = await d.api.get(`/replay${q4}&level=full`);
+  assert.ok(!atFull.text.includes(PRIVATE_TEXT), 'below local, no private element');
+});
+
 test('GET /api/replay/file/:name: 403 with the hint for a remote basic request and a network peer; 200 for read and local', async (t) => {
   const root = tmpRoot('wc-replay-file-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
