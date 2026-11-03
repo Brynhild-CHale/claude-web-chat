@@ -95,6 +95,7 @@ for (const rel of RULES) {
     assert.match(b, /inspect_capture\(\{capture_id: 'element:<id>'\}\)/);
     assert.ok(inspectCapture.elementOfUrl('element:h1') === 'h1', 'inspect_capture takes element:<id>, as the rules say');
     assert.match(b, /Never ask for one on every wake/);
+    assert.ok(b.includes("A folded item lists each group's guess under `describe.groups`, newest last."), 'where the per-group guesses live (U562a)');
   });
 
   test(`${rel}: the undo on Mod+Z, its scope, the version history past a commit, and an erase final`, () => {
@@ -135,6 +136,7 @@ for (const rel of SKILLS) {
     for (const key of ['shape', 'confidence', 'count', 'bbox', 'text_under']) {
       assert.ok(body.includes(`\`${key}\``), `the skill names the describe field ${key}`);
     }
+    assert.match(body, /A folded item lists\s+each group's guess under `describe\.groups`, newest last\./, 'where the per-group guesses live (U562a)');
     assert.match(body, /Ask for one only when the words and the\s+shape do not answer: `inspect_capture\(\{capture_id: 'element:<id>'\}\)`/);
   });
 }
