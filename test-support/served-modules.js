@@ -26,6 +26,10 @@ const SERVED = new Map([
   // /app/strokes.js, the stroke record target-frame.js commits (lib/core/strokes).
   [pathToFileURL(path.join(REPO, 'public/app/strokes.js')).href,
     () => require(path.join(REPO, 'lib/core/strokes.js')).browserModuleSource()],
+  // /app/element-assets.js, the element type file grammar asset(rel) asks
+  // (lib/server/routes/page.js serves lib/core/element-assets' browserModuleSource()).
+  [pathToFileURL(path.join(REPO, 'public/app/element-assets.js')).href,
+    () => require(path.join(REPO, 'lib/core/element-assets.js')).browserModuleSource()],
 ]);
 
 exports.resolve = function resolve(specifier, context, next) {
