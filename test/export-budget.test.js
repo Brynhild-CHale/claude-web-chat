@@ -166,6 +166,19 @@ test('assets inline at most 1.4x raw and decode byte-equal; under the cap the ex
   const [p] = dataElements(html);
   assert.ok(p && !('stripped' in p), 'the data element carries no stripped field');
   assert.ok(!STRIPPED_LINE.test(html), 'and #export-head no stripped line');
+  // exportU524 runs the same assembleExport this unit touched, so it cannot
+  // see a byte the cap's work adds to every export: hold U524's shape from
+  // its own parts too — the head is the label and the stamp and nothing else,
+  // and the element splice (scripts()) follows the resolver directly, the
+  // shell right after it.
+  const label = labelOf(d, node);
+  const stampText = NOW.toISOString().replace('T', ' ').slice(0, 19);
+  assert.ok(html.includes(`<div id="export-head"><span class="label">${exp.htmlEscape(label)}</span><span>exported ${stampText}</span></div>\n`),
+    '#export-head is U524\'s: the label and the stamp alone');
+  const kinds = exp.nodeForExport(ctxOf(d), node).elements;
+  const resolverEl = require('../lib/server/runtime/anchors-src').scriptElement({ kinds });
+  assert.ok(html.includes(`</script>\n${resolverEl}${docRuntime.scripts(payloadOf(d, node))}<script>`),
+    'the resolver, then the element splice, then the shell, back to back');
 
   // The assets: each one's ratio, the total's, and its bytes in the file.
   assert.equal(budget.assets.length, 2);
