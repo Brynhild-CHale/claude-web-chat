@@ -370,3 +370,22 @@ test('the density rule and a glyph near its anchor collapse the leader to hover,
   await drawnUntil(() => pins.slice(0, ov.LEADER_PANE_MAX).every((p) => leaderFor(p.id) && leaderFor(p.id).mode === 'dotted'), 'within the budget: dotted');
   await setLive([]);
 });
+
+test('on touch, a tap on a glyph whose leader is hover shows the leader, and a second tap hides it (nothing written)', async () => {
+  POS['lead-p1'] = box(100, 120);
+  // Near its anchor (within LEADER_NEAR_PX): the leader collapses to hover.
+  await setLive([{ ...pinOn('c1', 'p1', lead('p1')), v: 6, display: { glyph: { dx: 16, dy: 30, corner: 'br' } } }]);
+  await drawnUntil(() => leaderFor('c1') && leaderFor('c1').drawn && leaderFor('c1').mode === 'hover', 'a hover leader');
+  assert.equal(leaderFor('c1').on, false, 'hidden before the tap');
+  moves.length = 0;
+  await drag(markersFor('c1')[0], 'touch', 0, 0, { pointerId: 60 });
+  flush();
+  assert.equal(leaderFor('c1').on, true, 'a tap on the glyph shows its hover leader');
+  closePops();
+  await drag(markersFor('c1')[0], 'touch', 0, 0, { pointerId: 61 });
+  flush();
+  assert.equal(leaderFor('c1').on, false, 'a second tap hides it');
+  closePops();
+  assert.equal(moves.length, 0, 'a tap writes nothing');
+  await setLive([]);
+});
