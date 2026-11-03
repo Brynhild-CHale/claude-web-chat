@@ -547,3 +547,47 @@ test('ctx.settings() in create and draw answers the armed profile\'s small and l
     await TB.refreshToolbar();
   }
 });
+
+// U590 (engineering contract (r); U512c's reviewer's open item): a plug-in
+// draw that runs before GET /api/toolbar lands, or after it failed, has no
+// tools[] row in the toolbar view to read its declaration from: it reads the
+// element-types listing row's toolbar.settings (element.json's own) instead of
+// {small: {}, large: {}}; armed or not.
+test('ctx.settings() before the toolbar lands (or after it failed) answers element.json\'s defaults from the listing row', async () => {
+  const TB = await shell.importApp('toolbar-state.js');
+  const SHA = 'f'.repeat(64);
+  const SETTINGS = {
+    small: { type: 'object', properties: { tool: { type: 'string', enum: ['pen', 'marker'], default: 'marker' } } },
+    large: { type: 'object', properties: { width: { type: 'number', minimum: 1, maximum: 9, default: 4 }, note: { type: 'string', maxLength: 9 } } },
+  };
+  shell.setRoutes({ '/api/toolbar': () => ({ ok: false, hint: 'the toolbar is not there yet' }) });
+  const seen = [];
+  const mod = { default: function draw(group, ctx) { seen.push(ctx.settings()); } };
+  const fakeImport = (url) => (url === ET.drawPath('ink-late', SHA) ? Promise.resolve(mod) : Promise.reject(new Error(`no module at ${url}`)));
+  const lateRow = { ...row('ink-late', 'ink-late@1', ['ink-late@1']), pack: 'late-pack', draw: { sha256: SHA },
+    toolbar: { input: 'strokes', settings: SETTINGS } };
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  try {
+    await TB.refreshToolbar();
+    assert.equal(TB.toolbarState().tools.some((t) => t.type === 'ink-late'), false, 'precondition: the toolbar view has no row for the type');
+    ET.initElementTypes({ importModule: fakeImport, overlay: stub });
+    await relist({ ok: true, types: [lateRow], reserved: [] });
+    await ET.loadPluginTypes();
+    const draw = () => {
+      seen.length = 0;
+      regs.get('ink-late').draw({ key: 'k-late', type: 'ink-late', items: [{ id: 'p8', v: 1, type: 'ink-late', row: { id: 'p8', v: 1, type: 'ink-late', schema: 'ink-late@1' } }],
+        container: W.document.createElement('div') }, {});
+      assert.equal(seen.length, 1, 'the plug-in\'s draw ran');
+      return seen[0];
+    };
+    const DEFAULTS = { small: { tool: 'marker' }, large: { width: 4 } };
+    const d0 = draw();
+    assert.deepStrictEqual(plain(d0), DEFAULTS, 'not armed: element.json\'s defaults, not {small: {}, large: {}}');
+    assert.ok(Object.isFrozen(d0) && Object.isFrozen(d0.large), 'frozen');
+    realOv.setArmed('ink-late');
+    assert.deepStrictEqual(plain(draw()), DEFAULTS, 'armed with no toolbar: the defaults too');
+  } finally {
+    realOv.setArmed(null);
+    shell.setRoutes({});
+  }
+});

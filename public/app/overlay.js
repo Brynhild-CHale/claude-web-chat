@@ -405,6 +405,16 @@ export function servedAnswerOf(rec) {
   };
 }
 const servedMasked = (row) => !!(row && row.answer && row.answer.state === MASKED);
+// Whether a held row already draws what record `rec` would give it: rec through
+// normRow, compared with the row field for field as JSON (the one list of the
+// fields a row draws by is normRow's; U512b's relay in element-types.js asks
+// here, U590 / engineering contract (p)). A pending row, or a record carrying
+// a host answer, never matches (a false "changed" only costs an upsert).
+export function sameRow(held, rec) {
+  const row = normRow(rec);
+  if (!held || !row || held.pending || row.pending || (rec.answer && typeof rec.answer === 'object')) return false;
+  try { return JSON.stringify(held) === JSON.stringify(row); } catch { return false; }
+}
 function copyAnswer(a) {
   const out = { ...a };
   for (const k of Object.keys(out)) {
