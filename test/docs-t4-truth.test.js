@@ -102,7 +102,8 @@ for (const rel of RULES) {
     assert.match(b, /The user's Mod\+Z \(⌘Z, Ctrl\+Z\) undoes the last annotation they made on the pane under the pointer/);
     assert.match(b, /repeated, it steps back through their older annotations, newest first/, 'form 5 AR1 b');
     assert.match(b, /It undoes live versions only: it stops at the last node commit, never touches a chat pin/, 'AF9 a');
-    assert.match(b, /Past a commit, the way back is the version history \(◷ on the block's header, then \*\*Make current\*\*\)/, 'AF9\'s (c) pointer, F5');
+    assert.match(b, /Past a commit, the way back is the graph inspector's version history: an older node set active there/, 'AF9\'s (c) pointer, F5');
+    assert.match(b, /a block's ◷ history restores the pane's content, never its annotations/, 'pane history (domain/mounts restoreMount) copies no element reference');
     assert.match(b, /An erase is final for Mod\+Z/);
     assert.doesNotMatch(b, /PENDING/, 'form 5 has ruled UNDO@repeat (AR1 b): no pending marker');
   });
