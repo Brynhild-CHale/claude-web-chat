@@ -553,6 +553,10 @@ test('scriptElement({kinds}): memoised per kind-set, \'\' for none; an unknown k
 // Every lib/ file that reaches the resolver's document copy asks carriesElements
 // and splices scriptElement({kinds: kindsOf(node)}): none reads source() to
 // spell its own <script>, and none decides on a `comments.length` of its own.
+// A requirer is found under either spelling of the module ('anchors-src' or
+// 'anchors-src.js'). One whose destructure takes neither source nor
+// scriptElement reaches no copy (compact alone, fieldEntries alone) and is
+// exempt from the splice checks; the exempt users are pinned too (U522a).
 test('carriesElements is the only splice test: no lib/ file spells its own', () => {
   const LIB = path.join(__dirname, '..', 'lib');
   const files = [];
@@ -563,20 +567,30 @@ test('carriesElements is the only splice test: no lib/ file spells its own', () 
   walk(LIB);
   const home = require.resolve('../lib/server/runtime/anchors-src');
   const users = [];
+  const exempt = [];
   for (const f of files) {
     if (f === home) continue;
     const src = fs.readFileSync(f, 'utf8');
-    const req = src.match(/const \{([^}]*)\} = require\('[./]*(?:runtime\/)?anchors-src'\)/);
-    if (!/anchors-src'\)/.test(src)) continue;
+    const req = src.match(/const \{([^}]*)\} = require\('[./]*(?:runtime\/)?anchors-src(?:\.js)?'\)/);
+    if (!/anchors-src(?:\.js)?'\)/.test(src)) continue;
     const rel = path.relative(LIB, f);
-    users.push(rel);
     assert.ok(req, `${rel}: destructures what it takes from anchors-src`);
+    // The names it takes (a `key: local` entry by its key).
+    const taken = req[1].split(',').map((x) => x.split(':')[0].trim()).filter(Boolean);
+    if (!taken.includes('source') && !taken.includes('scriptElement')) {
+      exempt.push(rel);
+      assert.doesNotMatch(src, /comments\.length/, `${rel}: no comments.length test of its own`);
+      continue;
+    }
+    users.push(rel);
     assert.doesNotMatch(req[1], /\bsource\b/, `${rel}: splices scriptElement(), never source() in a <script> of its own`);
     assert.match(req[1], /\bcarriesElements\b/, `${rel}: decides with carriesElements`);
     assert.match(req[1], /\bkindsOf\b/, `${rel}: cuts the copy with kindsOf`);
     assert.doesNotMatch(src, /comments\.length/, `${rel}: no comments.length test of its own`);
   }
   assert.deepStrictEqual(users.sort(), ['server/export.js', 'server/preview.js', 'server/replay/document.js']);
+  assert.deepStrictEqual(exempt.sort(), ['server/document-elements.js', 'server/runtime/elements-doc-src.js'],
+    'the users that reach no copy: fieldEntries alone, compact alone');
 });
 
 // ── the documents ────────────────────────────────────────────────────────
