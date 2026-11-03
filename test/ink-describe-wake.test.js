@@ -19,6 +19,10 @@
 //     item, its describe nor its excerpt carries the private stroke's text or
 //     extent;
 //   - a stroke on another target starts its own group.
+//   - a member leaving a queued group (its un-share), the newest or not,
+//     takes the group's stale describe with it and the summary reads
+//     `<label> ×N` (lib/server/domain/queue removeByElement); an edit of the
+//     newest member refreshes the describe (refreshElement).
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -177,4 +181,69 @@ test('a stroke on another target is its own group', async (t) => {
   assert.equal(it.element_id, o.id, 'the newest member');
   assert.equal(it.describe.count, 1, 'the other svg\'s group of one');
   assert.match(it.summary, / · 1 stroke · /);
+});
+
+// A member leaving a queued group (its un-share; K.2-10's removeByElement)
+// takes the group's composed describe with it: the count and the extent were
+// composed over the shared members at the last raise, so a stale one would
+// carry an unshared stroke's count and extent to Claude (J2, AD5). The
+// summary falls back to the `<label> ×N` form until the next raise.
+const { wakeEnvelope } = require('../lib/channel/envelope');
+
+test('un-sharing a queued group\'s middle member drops the stale describe and recomputes the summary', async (t) => {
+  const d = await setup(t);
+  const a = await stroke(d, { y: 0.3, text: 'Revenue fell' });
+  const m = await stroke(d, { y: 0.9, x0: 0, x1: 0.95, text: 'middle line' });
+  const c = await stroke(d, { y: 0.5, text: 'by 4 %' });
+  const [before] = itemsOf(d);
+  assert.equal(before.describe.count, 3, 'three strong before');
+  assert.deepStrictEqual(before.describe.bbox, [0, 0.3, 0.95, 0.6]);
+  await ok(d.api.patch(`/api/elements/${m.id}`, { payload: { shared: false } }), 'un-share the middle one');
+  const [it] = itemsOf(d);
+  assert.ok(it, 'the group stays');
+  assert.ok(!holds(it, m.id), 'the middle one left');
+  assert.ok(holds(it, a.id) && holds(it, c.id));
+  assert.equal(it.element_id, c.id, 'the newest stays the newest');
+  assert.ok(!(it.describe && it.describe.count === 3), 'no describe counting 3');
+  assert.ok(!(it.describe && JSON.stringify(it.describe.bbox) === JSON.stringify([0, 0.3, 0.95, 0.6])), 'no describe with the old extent');
+  assert.equal('describe' in it, false, 'the stale describe is dropped');
+  assert.equal(it.summary, 'Ink ×2', 'the summary recomputed');
+  const { content } = wakeEnvelope([it], {});
+  assert.ok(!content.includes('3 strokes'), 'the envelope carries no old count');
+  assert.ok(!content.includes('0.95'), 'nor the unshared stroke\'s extent');
+  assert.ok(!content.includes('middle line'), 'nor its passage');
+});
+
+test('un-sharing a queued group\'s newest member drops the stale describe and recomputes the summary', async (t) => {
+  const d = await setup(t);
+  const a = await stroke(d, { y: 0.3, text: 'Revenue fell' });
+  const b = await stroke(d, { y: 0.5, text: 'by 4 %' });
+  const n = await stroke(d, { y: 0.9, x0: 0, x1: 0.95, text: 'newest line' });
+  const [before] = itemsOf(d);
+  assert.equal(before.element_id, n.id);
+  assert.equal(before.describe.count, 3);
+  await ok(d.api.patch(`/api/elements/${n.id}`, { payload: { shared: false } }), 'un-share the newest one');
+  const [it] = itemsOf(d);
+  assert.ok(it, 'the group stays');
+  assert.ok(!holds(it, n.id));
+  assert.ok(holds(it, a.id) && holds(it, b.id));
+  assert.equal('describe' in it, false, 'the stale describe is dropped');
+  assert.equal(it.summary, 'Ink ×2');
+  const { content } = wakeEnvelope([it], {});
+  assert.ok(!content.includes('3 strokes'), 'the envelope carries no old count');
+  assert.ok(!content.includes('0.95'), 'nor the unshared stroke\'s extent');
+  assert.ok(!content.includes('newest line'), 'nor its passage');
+});
+
+test('an edit of a queued group\'s newest member refreshes the group\'s describe', async (t) => {
+  const d = await setup(t);
+  await stroke(d, { y: 0.3, text: 'Revenue fell' });
+  const n = await stroke(d, { y: 0.5, text: 'by 4 %' });
+  const [before] = itemsOf(d);
+  assert.deepStrictEqual(before.describe.bbox, [0.05, 0.3, 0.4, 0.2]);
+  await ok(d.api.patch(`/api/elements/${n.id}`, { payload: { points: line(0.05, 0.45, 0.7), bbox: [0.05, 0.7, 0.4, 0] } }), 'move the newest');
+  const [it] = itemsOf(d);
+  assert.equal(it.element_id, n.id);
+  assert.equal(it.describe.count, 2);
+  assert.deepStrictEqual(it.describe.bbox, [0.05, 0.3, 0.4, 0.4], 'the refreshed extent');
 });
