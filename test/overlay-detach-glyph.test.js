@@ -255,6 +255,49 @@ test('a finger press that moves before the hold pans: nothing written, the glyph
   assert.ok(TAP_SLOP > 0);
 });
 
+// The policy's palm row (input-mode.js: touch → 'ignore' while a pen pointer
+// is down) holds for the glyph's press too: a palm resting on a glyph while
+// the pen is down starts no drag, held or not, and a finger whose hold ends
+// with a pen down (the pen landed after it) drops its drag.
+test('a palm on a glyph while a pen is down starts no drag, held past the hold and moved: nothing written, the glyph unmoved', async () => {
+  POS['lead-p1'] = box(100, 120);
+  await setLive([pinOn('c1', 'p1', lead('p1'))]);
+  await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'attached');
+  moves.length = 0;
+  const main = W.document.getElementById('main');
+  ov.setArmed('comment');
+  try {
+    // The pen down first, then the palm on the glyph.
+    pe(main, 'pointerdown', 'pen', 70);
+    await drag(markersFor('c1')[0], 'touch', 0, 160, { pointerId: 71, hold: 80 });
+    pe(main, 'pointerup', 'pen', 70);
+    closePops();
+    assert.equal(moves.length, 0, 'a palm under the pen writes nothing');
+    flush();
+    assert.ok(at(markersFor('c1')[0], 100, 120), 'the glyph did not move');
+    assert.ok(!markersFor('c1')[0].classList.contains('el-dragging'));
+    // The finger first, the pen landing within its hold: the hold re-asks the
+    // policy, and the drag is dropped. (The Escape of closePops disarmed the
+    // tool: armed again.)
+    ov.setArmed('comment');
+    const m = markersFor('c1')[0];
+    pe(m, 'pointerdown', 'touch', 72);
+    pe(main, 'pointerdown', 'pen', 73);
+    await sleep(80);
+    pe(m, 'pointermove', 'touch', 72, { clientX: 100, clientY: 180 });
+    pe(m, 'pointermove', 'touch', 72, { clientX: 100, clientY: 260 });
+    pe(m, 'pointerup', 'touch', 72, { clientX: 100, clientY: 260 });
+    pe(main, 'pointerup', 'pen', 73);
+    await settle();
+    closePops();
+    assert.equal(moves.length, 0, 'a pen landing within the hold leaves the finger no drag');
+    flush();
+    assert.ok(at(markersFor('c1')[0], 100, 120), 'the glyph did not move');
+  } finally {
+    ov.setArmed(null);
+  }
+});
+
 test('a drag in a previewed node is refused with READONLY_HINT and writes nothing', async () => {
   POS['lead-p1'] = box(100, 120);
   await setLive([pinOn('c1', 'p1', lead('p1'))]);

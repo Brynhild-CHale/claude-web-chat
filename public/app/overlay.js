@@ -2386,12 +2386,19 @@ function onGlyphDown(e) {
   if (!g || !g.detach || g.failed || g.kind !== 'hit' || !Number.isFinite(g.lastX)) return;
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   const kind = pointerTypeOf(e);
+  // The policy's palm row (input-mode.js: touch → 'ignore' while a pen pointer
+  // is down): a finger the policy ignores starts no drag. The glyph's layer is
+  // outside #main, so the one dispatch never sees this press: it asks here.
+  if (kind === 'touch' && askPolicy(e) === 'ignore') return;
   drag = { pointerId: e.pointerId, kind, key: g.key, group: g, marker: m, x0: e.clientX, y0: e.clientY,
     p0: { x: g.lastX, y: g.lastY }, held: kind !== 'touch', started: false, moved: false, offset: null, timer: null };
   if (kind === 'touch') {
     const mine = drag;
     drag.timer = setTimeout(() => {
       if (drag !== mine || mine.moved) return;
+      // A pen may land after the finger: asked again at the hold, with a
+      // stand-in naming the finger, an 'ignore' drops the drag.
+      if (askPolicy({ pointerType: 'touch', pointerId: mine.pointerId, target: mine.marker }) === 'ignore') { endDrag(); return; }
       mine.held = true;
       holdTouch(true);
     }, cfg.hold_ms);

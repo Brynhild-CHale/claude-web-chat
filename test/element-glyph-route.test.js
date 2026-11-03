@@ -96,6 +96,51 @@ test('a comment\'s move appends one version: the same payload_hash and src_hash,
   assert.equal(versionsOf(d, c.id)[2].display ?? null, null, 'the edit itself carries none');
 });
 
+// ── a plug-in type that adopts the flag (its non-comment branch) ────────────
+// A pack's type installed in process through lib/packs/install's approve path,
+// as test/element-routes.test.js's approvePlugin does; its element.json
+// declares glyph {detach: true} and a payload. The move goes through
+// moveGlyph's record() path and the route's putRef: the live reference
+// advances to the move's version, so the next commit pins id@v.
+const pluginPacks = require('../lib/packs/install');
+const { packFixture } = require('../test-support/packs');
+const PLUGIN_DRAW = "export default function draw(group) { group.container.textContent = 'x'; }\n";
+function approvePlugin(d, { name, type, json = {} }) {
+  const element = { type, family: 'page', remote: { see: 'read', send: 'full' }, schema: `${type}@1`, reads: [`${type}@1`], anchors: ['element', 'range'], ...json };
+  const stageDir = packFixture({
+    name, version: '1.0.0', components: [], skill: false,
+    manifest: { name, version: '1.0.0', description: 'A fixture plug-in element type.', elements: [type] },
+    extraFiles: {
+      [`elements/${type}/element.json`]: JSON.stringify(element, null, 2) + '\n',
+      [`elements/${type}/draw.js`]: PLUGIN_DRAW,
+    },
+  });
+  pluginPacks.installFromStage({ stageDir, source: { via: 'test' }, tier: 'local', root: d.root, via: 'approve' });
+  d.srv.elementTypes.invalidate();
+}
+
+test('a plug-in type whose element.json declares glyph {detach: true}: the move keeps payload_hash, adds a display sibling, the live reference at the new v, the next commit pinning id@v', async (t) => {
+  const d = await boot(t);
+  approvePlugin(d, { name: 'tq-glyph-pack', type: 'tq-mark', json: { payload: { keys: ['anchor', 'shared', 'color'] }, glyph: { detach: true } } });
+  const e = (await ok(d.anonApi.post('/api/elements', { type: 'tq-mark', anchor: RANGE('m1'), payload: { color: '#c03' } }), 'POST tq-mark')).element;
+  assert.equal(e.v, 1);
+  assert.deepEqual(d.srv.state.elements, [`${e.id}@1`]);
+  const r = await ok(d.anonApi.post(glyphPath(e.id), { dx: 18, dy: -12, corner: 'tr' }), 'move');
+  assert.deepEqual(r, { ok: true, id: e.id, type: 'tq-mark', v: 2, display: { glyph: { dx: 18, dy: -12, corner: 'tr' } } });
+  const [v1, v2] = versionsOf(d, e.id);
+  assert.equal(v2.parent_v, 1);
+  assert.equal(v2.payload_hash, v1.payload_hash, 'payload_hash unchanged');
+  assert.equal(v2.src_hash, v1.src_hash, 'src_hash unchanged');
+  assert.deepEqual(v2.display, { glyph: { dx: 18, dy: -12, corner: 'tr' } }, 'the display sibling');
+  assert.deepEqual(v2.writer, { class: 'user', owner: 'user', verified: false }, 'the caller\'s writer stamp');
+  assert.deepEqual(d.srv.state.elements, [`${e.id}@2`], 'the live reference at the move\'s version');
+  await turn(d.api, 'the plug-in glyph moved');
+  const node = d.srv.graph.active;
+  assert.ok(node, 'a node committed');
+  const pins = d.srv.elements.pinsOf(node);
+  assert.ok(pins.includes(`${e.id}@2`), `the commit pins the move's version: ${pins}`);
+});
+
 test('a move is refused with a hint: a bad offset, a type that does not detach, an id nobody holds; a pane moves only what it added', async (t) => {
   const d = await boot(t);
   const c = await comment(d.anonApi);
