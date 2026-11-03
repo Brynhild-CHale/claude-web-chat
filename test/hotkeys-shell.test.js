@@ -736,6 +736,9 @@ const PALETTE = [
   { label: 'Chat with Claude', key: 'M' },
   { label: 'Reset the chat window', key: '' },
   { label: 'Set up remote access…', key: '' },
+  // The engine's undo (U518): a palette source's command row, after the
+  // palette's own; its ⌘Z rides as the row's hint, not in the key column.
+  { label: 'Undo the last annotation on this pane', key: '' },
 ];
 
 // Every keyed title, aria-label, aria-keyshortcuts and <kbd> at the branch base,

@@ -639,6 +639,18 @@ test('classify: Send to Claude (POST /api/elements/:id/send, F.5, U405) is decid
   assert.deepStrictEqual(RULES.filter((r) => /\/send\b/.test(r.path)).map(keyOf), [], 'no RULES row of its own');
 });
 
+test('classify: the engine\'s undo (POST /api/elements/undo, U518) is decided by the element floor\'s write row — full only, refused at read — and no RULES row names it (PROTO@none)', () => {
+  for (const optIn of OPT_INS) {
+    const v = classify('POST', '/api/elements/undo', { mirror: optIn });
+    assert.equal(v.key, 'POST|PATCH|DELETE /api/elements/*', `the floor row at ${optIn}`);
+    assert.equal(v.allow, optIn === 'full', `allowed at full only (at ${optIn})`);
+    if (optIn !== 'full') assert.equal(v.reason, 'mirror');
+  }
+  assert.equal(classify('POST', '/api/elements/undo', { mirror: 'read' }).allow, false, 'refused at read');
+  assert.deepEqual(RULES.filter((r) => /\/undo\b/.test(r.path)).map(keyOf), [], 'no RULES row of its own');
+  assert.equal(PORTAL_PROTOCOL_VERSION, 12, 'no protocol bump');
+});
+
 test('classify: a type\'s draw.js and assets/ (GET /api/elements/types/:type/draw.js, /assets/*, U511) are the element floor\'s — read to GET, full to write — and no RULES row names them (PROTO@none)', () => {
   const paths = ['/api/elements/types/ink/draw.js', '/api/elements/types/ink/assets/a/b.png'];
   for (const u of paths) {

@@ -56,6 +56,7 @@ import { installInputMode, setFingerDrawsDefault } from './input-mode.js';
 import { initOverlayReport } from './overlay-report.js';
 import { initToolbarState, onToolbarChange } from './toolbar-state.js';
 import { initHotkeys } from './hotkeys.js';
+import { initElementUndo } from './element-undo.js';   // 4A.3: the engine's undo, elements.undo (Mod+Z) and its ⌘K row
 import { initOrphans } from './orphans.js';   // 2A.6: the orphans' stand-in list and the re-anchor card
 // The highlight type (annotation engine 2C.4, U328a): range and source anchors
 // from a selection, painted by Custom Highlight or overlay rectangles.
@@ -96,6 +97,7 @@ initShell();
 // finger-draws default goes beneath each device's own setting (input-mode.js).
 initToolbarState({ onFrame, onHello });
 initHotkeys();
+initElementUndo();   // after the hotkeys and the shell: its action and its palette row
 onToolbarChange((v) => setFingerDrawsDefault(v.user ? v.user.fingerDraws : undefined));
 initOrphans();    // after initShell and initGraph, whose registries it plugs into
 // The highlight type (U328a): its draw behind the reads gate, its selection
