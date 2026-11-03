@@ -57,7 +57,7 @@
 // 'compact'. A mirror change that changes which actions the rows offer redraws
 // the rail.
 import { $ } from './state.js';
-import { isCommentAnswered } from './comments.js';
+import { isCommentAnswered, CHAT_TYPE } from './comments.js';
 import { deviceKind } from './viewport.js';
 import { request as httpRequest, NETWORK_HINT } from './http.js';
 import { bus } from './bus.js';
@@ -934,12 +934,17 @@ function membersBlock(it, look) {
   return box;
 }
 // Answered when Claude has replied in EVERY member's thread (B4's dot, per
-// member); a type that does not respond has no answered state.
+// member); a type that does not respond has no answered state. Each member is
+// read by the item's type (U585, H.5): comments.js isCommentAnswered is the
+// one answered lookup for both families (K.2-164), and with the type a chat
+// pin ('chat-comment') is read from the chat layer's records, never from a
+// page pin's, and a page comment from the live pins only.
 function isAnswered(it) {
   if (!respondsOf(it)) return false;
   if (it.answered === true) return true;
   const ids = memberIds(it);
-  return ids.length > 0 && ids.every((id) => isCommentAnswered(id));
+  const type = typeOfItem(it);
+  return ids.length > 0 && ids.every((id) => isCommentAnswered(id, type));
 }
 
 // The Push note box (A-1): it grows with its text — upward, since the rail is a
@@ -1184,6 +1189,18 @@ bus.on('mirror', (d) => {
   const what = d && Array.isArray(d.what) ? d.what : [];
   if (!rowActions || (what.length && what.every((w) => w === 'stream'))) return;
   if (railEl() && actionsSig(actionsCtx()) !== actionsDrawn) drawRail();
+});
+
+// A chat pin's replies land in the chat layer's records (public/app/chat-pins.js:
+// the element:chat-comment frame, a write's answer, a read — its first
+// included, so an item drawn before the chat layer had records turns answered
+// when they come), which announce each change on the bus as 'chat:pins'. The
+// rail redraws then only while a responding chat-comment item is queued: its
+// dot is the one that reads those records (U585, H.5). queue.js never imports
+// the chat layer: it hears this event and reads through comments.js's lookup.
+const hasChatThread = () => items.some((it) => respondsOf(it) && typeOfItem(it) === CHAT_TYPE);
+bus.on('chat:pins', () => {
+  if (railEl() && hasChatThread()) drawRail();
 });
 
 // The rail is redrawn whole: focus inside a kept message row (its editor, or

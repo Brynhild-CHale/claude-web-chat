@@ -181,6 +181,7 @@ function relay() {
   if (gone.length) removeElements('live', gone);
   if (fresh.length) upsertElements('live', fresh);
   for (const id of [...decisions.keys()]) if (!records.has(id)) decisions.delete(id);
+  if (gone.length || fresh.length) bus.emit('chat:pins', { ids: [...fresh.map((r) => r.id), ...gone] });   // the rail's answered dot (queue.js, U585)
 }
 function setAll(list) {
   records = new Map((Array.isArray(list) ? list : []).filter(validPin).map((r) => [r.id, r]));
