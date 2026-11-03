@@ -341,6 +341,11 @@ const FILL = {
   '/api/elements/:id/grab': () => ['/api/elements/g-sweep-none/grab'],
   // A listed tool's icon (U337): the built-in comment's SVG files, no text of their own.
   '/api/toolbar/icon/:type': () => ['/api/toolbar/icon/comment', '/api/toolbar/icon/comment?mode=dark'],
+  // A listed plug-in type's draw module and assets (U511): a reviewed pack's
+  // code, image and font bytes, no text of the session's; the scenario installs
+  // no plug-in type, so the built-in comment answers its 404 refusal.
+  '/api/elements/types/:type/draw.js': () => ['/api/elements/types/comment/draw.js'],
+  '/api/elements/types/:type/assets/*': () => ['/api/elements/types/comment/assets/icon-light.svg'],
   '/api/components/:name/seed': () => ['/api/components/file-editor/seed', '/api/components/git-dashboard/seed'],
   '/api/components/:name': () => ['/api/components/file-editor', '/api/components/git-dashboard'],
   '/api/services/pack/:name': () => ['/api/services/pack/sweep-pack'],
