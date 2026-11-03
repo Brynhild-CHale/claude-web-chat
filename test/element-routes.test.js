@@ -870,7 +870,9 @@ test('a page range pin beside a value learned later: a highlight\'s quote prefix
   const { findLeaks } = require('../test-support/fake-secrets');
   const { marksIn } = require('../lib/core/redact');
   const { api, anonApi, root } = await withServer(t);
-  const value = `wcctx${crypto.randomBytes(12).toString('hex')}`;
+  // U589: a seeded value (test/exact-mask-seeded.test.js's seed 0), so the
+  // test is deterministic; that file runs the read view over 200 of them.
+  const value = `wcctx${crypto.createHash('sha256').update('seed:0').digest('hex').slice(0, 24)}`;
   const LEARNED = [{ id: 'learned', rule: 'known', secrets: [value] }];
   const text = `Use ${value} for access to the staging host now.`;
   await render(api, 'm-ctx', `<p>${text}</p>`);
@@ -897,11 +899,16 @@ test('a page range pin beside a value learned later: a highlight\'s quote prefix
   assert.ok(before.includes(beside.quote.prefix), 'stored as written');
   fs.writeFileSync(projectPaths(root).captureToken, value + '\n');
   // The note holds the value whole: once it is masked, the redactor knows it.
-  const body = await waitUntil(async () => {
+  await waitUntil(async () => {
     const b = (await anonApi.get('/api/elements')).json;
     const note = (b.elements.find((e) => e.id === h.id) || {}).note;
-    return typeof note === 'string' && !note.includes(value) ? b : null;
+    return typeof note === 'string' && !note.includes(value);
   }, { timeout: 6000, what: 'the redactor learned the value' });
+  // U589: the assertions read a FRESH body. The redactor consults the token's
+  // file at most every 2 s, lazily, so the poll's own GET can straddle that
+  // consult: the comment (served first) through the old known set, the
+  // highlight's note through the new one — the 1-in-22 flake on Node 22.
+  const body = (await anonApi.get('/api/elements')).json;
   const leaks = findLeaks(JSON.stringify(body), LEARNED);
   assert.deepEqual(leaks, [], `no GET body holds a fragment of the value: ${leaks.map((l) => JSON.stringify(body).slice(Math.max(0, l.at - 80), l.at + 40)).join(' | ')}`);
   const hq = body.elements.find((e) => e.id === h.id).anchor.quote;
