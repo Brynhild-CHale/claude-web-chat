@@ -24,6 +24,10 @@
 //   installInputMode()                                    the policy at setPointerPolicy, the pen watch,
 //                                                         the two-finger pan
 //   fingerStrokes() · touchesForTests()                   is the finger drawing; the touches tracked
+//   strokesArmed()                                        is a strokes tool armed (finger-draws aside)
+//   STROKES_TARGETS · STROKES_ATTR · STROKES_SHEET        the strokes input policy on a target (4A.2):
+//                                                         the fixed-aspect set, the host mark, the
+//                                                         rule each pane root takes
 //
 // The table (s = {armed, input, fingerDraws, penDown, gesture?}):
 //   nothing armed (the pointer tool too) → 'page' for every pointer: the
@@ -68,6 +72,27 @@
 // the toolbar's, the hotkeys' and the pointer tool's. The two older pointerType
 // reads (shell.js, the rail's hover ignores touch; sheet-drag.js, the grip
 // tab's mouse-button filter) are theirs and stay as they are.
+//
+// The strokes input policy on a target (annotation engine 4A.2; AD1, AD4, K.4
+// I1 = b, AJ5): while ANY strokes tool is armed (the box grab included),
+// whatever finger-draws says, every fixed-aspect target (STROKES_TARGETS: an
+// svg, an img, a canvas, an element marked data-fixed-aspect — the set C5 and
+// lib/core/anchors.js targetFrame name) takes `touch-action: none` with
+// selection and the callout off, so a pen stroke on it is never claimed as a
+// pan or a long-press: a cancelled pointerdown alone does not stop a pan, and
+// once a pen is seen auto finger-draws is off and the well stays
+// `manipulation`. A pane's content sits in its open shadow root, where app.css
+// cannot reach, so the rule is ONE constructable sheet (STROKES_SHEET) each pane
+// root takes once, keyed by an attribute on its .mount-host (STROKES_ATTR) —
+// mounts.js adoptReadonlySheet's pattern: the pane's own DOM is untouched.
+// html.strokes-armed carries the light-DOM rule (app.css, `[data-fixed-aspect]`
+// under #main). A new host while armed (a re-render makes one) is marked by a
+// MutationObserver on #main, disconnected on disarm, when every mark and the
+// class go. A browser without constructable sheets marks the hosts and styles
+// nothing. Two fingers whose first landed on a marked target pan the well here
+// (the two-finger pan, below), as with finger-draws on; ONE finger on a target
+// with finger-draws off is still the page's, and the browser cannot pan from it
+// there (the named limit). The device behaviour is E3's to prove.
 //
 // No DOM is touched at import.
 import { armed, cancelGesture, inputKindOf, isHostRoot, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
@@ -324,8 +349,11 @@ let uninstall = null;
 // cancelable), so neither the overlay nor a pane under them hears them, and
 // their clicks are stopped too. A lone finger still draws; a pen is never a
 // pan's (a resting palm under a pen stays the policy's 'ignore', and no pan
-// starts while a pen is down); with finger-draws off, or no strokes tool
-// armed, nothing here acts (the well is `manipulation`: the browser pans).
+// starts while a pen is down); with no strokes tool armed nothing here acts,
+// and with finger-draws off only a gesture whose FIRST finger landed on a
+// marked fixed-aspect target pans here (onStrokesTarget: that target is
+// `touch-action: none`, so the browser could not scroll from it); elsewhere
+// the well is `manipulation` and the browser pans.
 // Two rules bound a pan under way (K.2-98, K.2-99):
 //   - it moves nothing while a pen is down: two resting contacts that came
 //     down before the pen (a palm) keep their pan — their events still
@@ -350,9 +378,14 @@ const touches = new Map();     // pointerId → {x, y, route, heard}: the finger
 let pan = null;                // {ids: Set, mx, my}: the pan under way, its last midpoint
 const panClicks = new Set();   // pointerIds of the pan's lifted fingers, whose click is stopped
 
-export function fingerStrokes() {
+// strokesArmed(): a strokes tool is armed, whatever finger-draws says (the
+// strokes input policy on a target).
+export function strokesArmed() {
   const a = armed();
-  return !!a && inputKindOf(a.type) === 'strokes' && fingerDraws();
+  return !!a && inputKindOf(a.type) === 'strokes';
+}
+export function fingerStrokes() {
+  return strokesArmed() && fingerDraws();
 }
 // A snapshot of what the pan tracks, for the tests: no stale entry may stay
 // after a gesture ends. With {routes: true} it adds each finger's policy
@@ -440,9 +473,9 @@ function onPan(e) {
       const r = routeAtDown(e);
       // heard: the press goes on to the page; a finger landing during a pan
       // is stopped below, so no pane hears its press (and none hears its lift).
-      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0, route: r, heard: !pan && r === 'page' });
+      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0, route: r, heard: !pan && r === 'page', target: strokesArmed() && onStrokesTarget(e) });
       if (pan) { pan.ids.add(id); rebase(); stop(e); return true; }
-      if (touches.size < 2 || penIds.size > 0 || !fingerStrokes()) return false;
+      if (touches.size < 2 || penIds.size > 0 || !(fingerStrokes() || firstOnTarget())) return false;
       touches.get(id).heard = false;   // the finger that starts the pan: its press is stopped
       // The second finger: the stroke under way is the tool's no more.
       for (const other of touches.keys()) if (other !== id) cancelGesture(other);
@@ -487,6 +520,27 @@ function onPan(e) {
       return false;
   }
 }
+// The first finger of the gesture landed on a marked target while a strokes
+// tool was (and still is) armed.
+function firstOnTarget() {
+  const first = touches.values().next().value;
+  return !!(first && first.target) && strokesArmed();
+}
+// The event landed on a fixed-aspect target the policy made `touch-action:
+// none`: inside a pane root that took the strokes sheet, or a light-DOM
+// [data-fixed-aspect] under the well (app.css). The walk stops at the well.
+function onStrokesTarget(e) {
+  const well = wellOf();
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  for (const n of path) {
+    if (!n || n.nodeType !== 1) continue;
+    if (n === well) return false;
+    if (typeof n.matches !== 'function' || !n.matches(STROKES_TARGETS)) continue;
+    const root = n.getRootNode();
+    if (root === n.ownerDocument ? n.matches('[data-fixed-aspect]') : sheetRoots.has(root) && root.host.hasAttribute(STROKES_ATTR)) return true;
+  }
+  return false;
+}
 function dropPan() {
   touches.clear();
   pan = null;
@@ -506,8 +560,69 @@ function stateFor(a) {
 function policy(e, ctx) {
   return route(e, stateFor(ctx && ctx.armed !== undefined ? ctx.armed : armed()));
 }
+// ── the strokes input policy on a target (4A.2) ──────────────────────────────
+export const STROKES_TARGETS = 'svg, img, canvas, [data-fixed-aspect]';
+export const STROKES_ATTR = 'data-wc-strokes';
+export const STROKES_SHEET = `:host([${STROKES_ATTR}]) :is(${STROKES_TARGETS})`
+  + ' { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
+let strokesSheet;              // the one sheet; null where constructable sheets are absent
+const sheetRoots = new WeakSet();   // the pane roots that took it
+let marked = null;             // the well whose hosts are marked (null: none)
+let hostWatch = null;          // the MutationObserver on that well while armed
+function sheet() {
+  if (strokesSheet === undefined) {
+    try {
+      strokesSheet = new window.CSSStyleSheet();
+      strokesSheet.replaceSync(STROKES_SHEET);
+    } catch { strokesSheet = null; }
+  }
+  return strokesSheet;
+}
+// Once per root, idempotent; a root that takes no adopted sheet is left as it is.
+function adoptStrokes(root) {
+  const s = root && !sheetRoots.has(root) ? sheet() : null;
+  if (!s) return;
+  try {
+    const cur = root.adoptedStyleSheets;
+    if (!cur || typeof cur.includes !== 'function') return;
+    if (!cur.includes(s)) root.adoptedStyleSheets = [...cur, s];
+    sheetRoots.add(root);
+  } catch { /* the root keeps its sheets: the mark alone styles nothing */ }
+}
+function hostsIn(node) {
+  if (!node || node.nodeType !== 1) return [];
+  const out = node.classList.contains('mount-host') ? [node] : [];
+  return out.concat([...node.querySelectorAll('.mount-host')]);
+}
+function markHost(host) {
+  host.toggleAttribute(STROKES_ATTR, true);
+  adoptStrokes(host.shadowRoot);
+}
+function markTargets() {
+  const well = wellOf();
+  if (marked && marked === well) return;
+  unmarkTargets();
+  if (!well) return;
+  marked = well;
+  for (const h of hostsIn(well)) markHost(h);
+  if (typeof MutationObserver !== 'function') return;
+  hostWatch = new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) for (const h of hostsIn(n)) markHost(h);
+  });
+  hostWatch.observe(well, { childList: true, subtree: true });
+}
+function unmarkTargets() {
+  if (hostWatch) { hostWatch.disconnect(); hostWatch = null; }
+  marked = null;
+  for (const h of document.querySelectorAll(`.mount-host[${STROKES_ATTR}]`)) h.removeAttribute(STROKES_ATTR);
+}
 function syncStrokes() {
-  document.documentElement.classList.toggle('finger-strokes', fingerStrokes());
+  const html = document.documentElement;
+  html.classList.toggle('finger-strokes', fingerStrokes());
+  const on = strokesArmed();
+  html.classList.toggle('strokes-armed', on);
+  if (on) markTargets();
+  else if (marked) unmarkTargets();
 }
 function onAnyPointer(e) {
   if (e.type !== 'click' && e.pointerType === 'pen') notePenDown(e);
@@ -568,7 +683,8 @@ export function installInputMode() {
     penIds.clear();
     touch = null;
     dropPan();
-    document.documentElement.classList.remove('finger-strokes');
+    document.documentElement.classList.remove('finger-strokes', 'strokes-armed');
+    unmarkTargets();
   };
   uninstall = mine;
   return mine;

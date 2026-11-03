@@ -372,6 +372,7 @@ test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and 
     '.chat-tab => none',
     '#main => manipulation',
     'html.finger-strokes #main => none',
+    'html.strokes-armed #main [data-fixed-aspect] => none',
   ]);
 });
 
