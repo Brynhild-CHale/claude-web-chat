@@ -365,3 +365,24 @@ test('a node preview creates nothing: no POST, no wet ink', async () => {
   assert.equal(wet.stats().samples, s0.samples, 'nothing reached the wet layer');
   assert.equal(wetCanvases().filter((cv) => cv.isConnected).length, 0);
 });
+
+test('draw() on its own: a stroke\'s colour is its --wc- token through currentColor, and a guess group is drawn faded', async () => {
+  const file = path.join(tmp, 'draw-direct.mjs');
+  fs.writeFileSync(file, DRAW_SRC);
+  const mod = await import(pathToFileURL(file).href);
+  const rec = { id: 'p9', type: TYPE, v: 1, payload: { points: [0.1, 0.2, 0.5, 0, 0.6, 0.7, 0.5, 8], stride: 4, width: 0.01, colour: 'accent' } };
+  const ctx = { box: { w: 200, h: 100 }, record: (id) => (id === rec.id ? rec : null) };
+  const drawIn = (kind) => {
+    const container = W.document.createElement('div');
+    mod.default({ kind, container, items: [{ id: rec.id }] }, ctx);
+    return container;
+  };
+  const live = drawIn('live');
+  const path0 = live.querySelector(`path[data-el-id="${rec.id}"]`);
+  assert.ok(path0, 'drawn from the nested record (the document runtime\'s shape)');
+  assert.equal(path0.style.color, 'var(--wc-accent)', 'the colour token');
+  assert.equal(live.querySelector('svg').getAttribute('opacity'), null, 'a live group is not faded');
+  const guess = drawIn('guess');
+  assert.equal(guess.querySelector('svg').getAttribute('opacity'), '0.4', 'a guess group is drawn faded');
+  assert.ok(guess.querySelector(`path[data-el-id="${rec.id}"]`), 'still drawn at its guess');
+});

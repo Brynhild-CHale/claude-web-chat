@@ -284,3 +284,19 @@ test('the fixture strokes pack: review → approve from the confirm frame → li
     assert.deepEqual(d.srv.state.queue.filter((it) => it.kind === 'element'), [], 'the queue drained');
   });
 });
+
+test('the user tier, the way U566\'s global install takes it: staged global, approved from the confirm frame with tier \'user\' → installed in the user tier, listed', async (t) => {
+  const d = await withServer(t, { root: tmpRoot('wc-u565-user-') });
+  const staged = await stageElementPack(t, d, { dir: PACK_DIR, owner: 'acme', repo: 'strokes-user', global: true });
+  assert.equal(staged.res.json.ok, true, staged.res.text);
+  const out = await approveFromFrame(d.srv, { name: PACK, tier: 'user' });
+  assert.equal(out.doc.status, 200);
+  assert.deepEqual(out.body, { name: PACK, tier: 'system' }, 'the helper\'s \'user\' is the row\'s \'system\'');
+  assert.equal(out.res.status, 200, JSON.stringify(out.res.body));
+  assert.equal(out.res.body.ok, true, JSON.stringify(out.res.body));
+  assert.equal(fs.readFileSync(path.join(userPaths().elementTypesDir, TYPE, 'draw.js'), 'utf8'),
+    fs.readFileSync(path.join(TYPE_DIR, 'draw.js'), 'utf8'), 'the user tier holds the fixture\'s draw.js');
+  const row = (await ok(d.api.get('/api/elements/types'), 'types')).types.find((r) => r.type === TYPE);
+  assert.ok(row, 'listed once approved');
+  assert.equal(row.tier, 'system', 'the listing names the user tier \'system\'');
+});
