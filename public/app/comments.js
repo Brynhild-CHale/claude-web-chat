@@ -49,9 +49,12 @@
 // pointer dispatch under the input-mode policy (input-mode.js): a pen or a
 // mouse drops a pin wherever it taps, a pane's controls included (K.2-9); a
 // finger tap on static content drops one, and on a control runs the control
-// with the tool still armed (D1 b). create() records the tapped element with
-// the engine's recorder (anchors.record) and the legacy locator {mount,
-// selector, text, ordinal} beside it, then opens the composer; Pin posts
+// with the tool still armed (D1 b). create() records the tap's anchor — a
+// point on a fixed-aspect target (U532), a range over the word under a tap in
+// text (anchors.recordRange over highlight.js snapRange's word, H.8, U588),
+// else the tapped element (anchors.record) — and the legacy locator {mount,
+// selector, text, ordinal} of the tapped element beside it, then opens the
+// composer; Pin posts
 // {type: 'comment', anchor, locator, payload: {text, shared}, device}. The
 // type's targets are the default 'items' (F.3, RULED M3 (a)): a tap on a pane's
 // content or on a markdown item's block (a heading, a paragraph, a list item, a
@@ -525,11 +528,121 @@ function createLive(input, ctx) {
   const point = pointOf(A, input, root, target, mount);
   if (point) { openComposer({ record: point.record, locator: point.locator, chain }, input.clientX, input.clientY); return; }
   // THE CONVERSION AT CREATION (C5): a tap that is no point — on text or a
-  // control — is never a raw point over a reflowing box. A control (and,
-  // until U588's text → range branch lands here, text) takes the element.
-  let record = null;
-  try { record = A && typeof A.record === 'function' ? A.record(root, target, { mount }) : null; } catch { record = null; }
-  openComposer({ record, locator: locatorOf(target, root, mount), chain }, input.clientX, input.clientY);
+  // control — is never a raw point over a reflowing box. A tap in text takes a
+  // range over the word under it (H.8, U588); a control, an image, a tap where
+  // no caret is found and a word recordRange refuses take the element. The
+  // legacy locator stays the tapped element's either way.
+  const x = input.clientX;
+  const y = input.clientY;
+  const element = () => {
+    try { return A && typeof A.record === 'function' ? A.record(root, target, { mount }) : null; } catch { return null; }
+  };
+  const open = (record) => openComposer({ record: record || element(), locator: locatorOf(target, root, mount), chain }, x, y);
+  const seed = A && typeof A.recordRange === 'function' ? textSeedAt(root, target, x, y) : null;
+  if (!seed) { open(null); return; }
+  if (snapMod) { open(wordRecord(A, snapMod, root, seed, mount, x, y)); return; }
+  return loadSnap().then((hl) => open(wordRecord(A, hl, root, seed, mount, x, y)), () => open(null));
+}
+
+// ── a pin on a word (H.8, U588; DECISIONS.md K.2-169) ──────────────────────
+// What never takes a word: a control (the tap is about the control) and an
+// image (U532's point, or the element when the point refused).
+export const CONTROL_TARGETS = 'button,input,select,textarea,a,label,[role="button"],[contenteditable]:not([contenteditable="false"])';
+export const IMAGE_TARGETS = 'img,svg,canvas,video,picture';
+// The geometry walk's bound: the most words it measures for one tap.
+export const WORD_WALK_MAX = 4000;
+// highlight.js's snapRange — THE word snap — loaded at first use through a
+// relative dynamic import: a static one would put highlight.js (and the
+// overlay it imports) on queue.js's no-DOM import chain.
+let snapMod = null;
+let snapLoading = null;
+function loadSnap() {
+  if (!snapLoading) {
+    snapLoading = import('./highlight.js').then((m) => { snapMod = m; return m; }, (e) => { snapLoading = null; throw e; });
+  }
+  return snapLoading;
+}
+const NON_SPACE = /\S/;
+const isHigh = (c) => c >= 0xd800 && c <= 0xdbff;
+const isLow = (c) => c >= 0xdc00 && c <= 0xdfff;
+// The character a caret at `offset` of a text node stands beside, as a Range:
+// the one after it, else the one before (a caret past a word's last letter),
+// a surrogate pair whole; null in whitespace. (A collapsed range is no seed:
+// snapRange keeps one at a word's edge collapsed.)
+function charRange(doc, node, offset) {
+  const s = node.data;
+  const o = Math.max(0, Math.min(offset, s.length));
+  let a;
+  if (o < s.length && NON_SPACE.test(s[o])) a = o;
+  else if (o > 0 && NON_SPACE.test(s[o - 1])) a = o - 1;
+  else return null;
+  if (isLow(s.charCodeAt(a)) && a > 0 && isHigh(s.charCodeAt(a - 1))) a--;
+  const b = a + (isHigh(s.charCodeAt(a)) && isLow(s.charCodeAt(a + 1)) ? 2 : 1);
+  const r = doc.createRange();
+  r.setStart(node, a);
+  r.setEnd(node, b);
+  return r;
+}
+const holdsPoint = (b, x, y) => {
+  const right = b.right != null ? b.right : b.left + b.width;
+  const bottom = b.bottom != null ? b.bottom : b.top + b.height;
+  return x >= b.left && x <= right && y >= b.top && y <= bottom;
+};
+// A range's client rects, or null where the browser gives none to read.
+function rectsOf(range) {
+  if (typeof range.getClientRects !== 'function') return null;
+  try { return [...range.getClientRects()]; } catch { return null; }
+}
+// The geometry walk, where no caret API pierces the pane's shadow root: a
+// Range per word of the target's text, its client rects against the tap.
+function wordUnder(doc, target, x, y) {
+  const walk = doc.createTreeWalker(target, 4 /* NodeFilter.SHOW_TEXT */);
+  let n = 0;
+  for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+    for (const m of t.data.matchAll(/\S+/g)) {
+      if (++n > WORD_WALK_MAX) return null;
+      const r = doc.createRange();
+      r.setStart(t, m.index);
+      r.setEnd(t, m.index + m[0].length);
+      const rs = rectsOf(r);
+      if (!rs) return null;
+      if (rs.some((b) => holdsPoint(b, x, y))) return r;
+    }
+  }
+  return null;
+}
+// The text under a tap, as a seed Range for the word snap: the caret at the
+// tap — document.caretPositionFromPoint handed the pane's shadow root (it
+// pierces only the roots it is handed; caretRangeFromPoint stops at the host)
+// — inside the tapped element, else the geometry walk; null on a control or
+// an image, or where no text is under the tap.
+function textSeedAt(root, target, x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || typeof target.closest !== 'function') return null;
+  if (target.closest(CONTROL_TARGETS) || target.closest(IMAGE_TARGETS)) return null;
+  const doc = target.ownerDocument || document;
+  if (typeof doc.caretPositionFromPoint === 'function') {
+    let pos = null;
+    try { pos = doc.caretPositionFromPoint(x, y, { shadowRoots: [root] }); } catch { pos = null; }
+    const node = pos && pos.offsetNode;
+    if (node && node.nodeType === 3 && Number.isInteger(pos.offset) && target.contains(node)) {
+      return charRange(doc, node, pos.offset);
+    }
+  }
+  return typeof doc.createTreeWalker === 'function' ? wordUnder(doc, target, x, y) : null;
+}
+// The word's range record: the seed snapped to its word (highlight.js
+// snapRange, the one word snap), held only while the word is under the tap
+// where the browser gives its rects (a caret beside a margin or a gap is no
+// word), then anchors.recordRange — null over CONFIG.quote_max or empty.
+function wordRecord(A, hl, root, seed, mount, x, y) {
+  if (!hl || typeof hl.snapRange !== 'function') return null;
+  try {
+    const word = hl.snapRange(seed, 'words', root);
+    if (!word || word.collapsed) return null;
+    const rs = rectsOf(word);
+    if (rs && rs.length && !rs.some((b) => holdsPoint(b, x, y))) return null;
+    return A.recordRange(root, word, { mount }) || null;
+  } catch { return null; }
 }
 
 // ── a pin on a markdown item (F.3) ──────────────────────────────────────────

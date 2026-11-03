@@ -74,12 +74,17 @@ function flush(max = 10000) { let n = 0; while (rafQueue.length && n < max) { ra
 const VIEW = { left: 0, top: 0, width: 1024, height: 768, right: 1024, bottom: 768, x: 0, y: 0 };
 const POS = {};
 const box = (left, top) => ({ left, top, width: 60, height: 14, right: left + 60, bottom: top + 14, x: left, y: top });
+// A Range's laid-out first line where a test lays text out (the word pins'
+// layout below, U588); null elsewhere.
+let rangeRectHook = null;
 function rectOf(x) {
   const key = x && x.dataset && x.dataset.pin;
   if (key && POS[key]) return POS[key];
   // A Range (a markdown pin's source answer): the box of the nearest element
   // around its start that names a position.
   const sc = x && x.startContainer;
+  const laid = sc && rangeRectHook ? rangeRectHook(x) : null;
+  if (laid) return laid;
   const at = sc ? (sc.nodeType === 1 ? sc : sc.parentNode) : null;
   const named = at && at.closest ? at.closest('[data-pin]') : null;
   if (named && POS[named.dataset.pin]) return POS[named.dataset.pin];
@@ -1219,6 +1224,257 @@ test('a press on a point pin\'s glyph names it in a new comment\'s chain; a pres
   const off = await pinWith(circle, 'mouse', 250, 280, 74);
   assert.equal('chain' in off.payload, false, 'a press elsewhere on the svg names nothing');
   await setLive([]);
+});
+
+// ── a pin on a word (H.8, U588; DECISIONS.md K.2-169) ───────────────────────
+// A comment tap that lands in text records a range anchor over the word
+// (anchors.recordRange over highlight.js snapRange's word), the element anchor
+// the fallback. jsdom has no layout and no caret API: the paragraph's text is
+// laid out here (CH px a character, LH px a line, greedily wrapped at `cols`),
+// and a test hands document.caretPositionFromPoint and Range#getClientRects
+// that layout; the overlay's rectOf reads the same layout for a Range.
+const WORDS = 'alpha beta gamma delta epsilon zeta eta theta';
+const LONG = 'x'.repeat(2100);
+const TW_HTML = `<p class="words" data-pin="words-tw">${WORDS}</p><p class="long" data-pin="long-tw">${LONG}</p>`
+  + '<button class="btn">Push</button><a class="lnk" href="#nowhere">a link</a>';
+const CH = 8;
+const LH = 20;
+const ORIGIN = { left: 40, top: 300 };
+let cols = 50;
+const wordsText = () => rootOf('tw').querySelector('p.words').firstChild;
+// Each character's {line, col}: words greedily wrapped at `cols`.
+function laidOut() {
+  const pos = [];
+  let line = 0;
+  let col = 0;
+  const words = [...WORDS.matchAll(/\S+/g)];
+  words.forEach((m, k) => {
+    const len = m[0].length;
+    if (col > 0 && col + len > cols) { line++; col = 0; }
+    for (let i = 0; i < len; i++) pos[m.index + i] = { line, col: col + i };
+    col += len;
+    if (k < words.length - 1) { pos[m.index + len] = { line, col }; col++; }
+  });
+  return pos;
+}
+// A Range's client rects over the paragraph's text node, one per line; none
+// for any other Range.
+function wordRects(range) {
+  const t = M.itemEl(W.document, 'tw') ? wordsText() : null;
+  if (!t || range.startContainer !== t || range.endContainer !== t) return [];
+  const pos = laidOut();
+  const lines = [];
+  for (let i = range.startOffset; i < range.endOffset; i++) {
+    const p = pos[i];
+    const last = lines[lines.length - 1];
+    if (last && last.line === p.line) { last.n++; continue; }
+    lines.push({ line: p.line, col: p.col, n: 1 });
+  }
+  return lines.map((l) => rect(ORIGIN.left + l.col * CH, ORIGIN.top + l.line * LH, l.n * CH, LH));
+}
+// The caret a browser gives at (x, y): the boundary nearest the point on its
+// line (a character's left half before it, its right half after it), the
+// line's end past its last character.
+function caretAt(x, y) {
+  const pos = laidOut();
+  const line = Math.floor((y - ORIGIN.top) / LH);
+  const on = [];
+  pos.forEach((p, i) => { if (p.line === line) on.push([p, i]); });
+  if (!on.length) return null;
+  let offset = null;
+  for (const [p, i] of on) {
+    const left = ORIGIN.left + p.col * CH;
+    if (x >= left && x < left + CH) offset = x - left >= CH / 2 ? i + 1 : i;
+  }
+  if (offset == null) offset = x < ORIGIN.left + on[0][0].col * CH ? on[0][1] : on[on.length - 1][1] + 1;
+  return { offsetNode: wordsText(), offset };
+}
+const wordAt = (word) => {
+  const i = WORDS.indexOf(word);
+  const r = W.document.createRange();
+  r.setStart(wordsText(), i);
+  r.setEnd(wordsText(), i + word.length);
+  return r;
+};
+// A point inside a word, `at` of its way across, mid-line.
+function spotOf(word, at = 0.5) {
+  const p = laidOut()[WORDS.indexOf(word)];
+  return { x: ORIGIN.left + (p.col + word.length * at) * CH, y: ORIGIN.top + p.line * LH + LH / 2 };
+}
+// Lay the text out for this test: a caret API (or none), Range rects (or
+// none), caretRangeFromPoint (to count it); the returned function undoes it.
+function layText({ caret = null, rects = true, caretRange = null } = {}) {
+  const doc = W.document;
+  const hadRects = Object.prototype.hasOwnProperty.call(W.Range.prototype, 'getClientRects');
+  if (caret) doc.caretPositionFromPoint = caret;
+  if (caretRange) doc.caretRangeFromPoint = caretRange;
+  if (rects && !hadRects) W.Range.prototype.getClientRects = function () { return wordRects(this); };
+  rangeRectHook = (r) => wordRects(r)[0] || null;
+  return () => {
+    delete doc.caretPositionFromPoint;
+    delete doc.caretRangeFromPoint;
+    if (!hadRects) delete W.Range.prototype.getClientRects;
+    rangeRectHook = null;
+  };
+}
+async function wordPane() {
+  if (!M.itemEl(W.document, 'tw')) await shell.frame({ type: 'render', id: 'tw', target: 'main', params: {}, html: TW_HTML });
+  await shell.tick();
+  POS['words-tw'] = rect(ORIGIN.left, ORIGIN.top, cols * CH, LH);
+}
+// Tap with the comment tool armed and Pin, the composer awaited (a word's
+// first snap loads highlight.js): the body posted.
+async function pinText(el, x, y, pointerId, pointerType = 'mouse') {
+  ov.setArmed('comment');
+  const n = posts.length;
+  try {
+    tapWith(el, pointerType, x, y, pointerId);
+    await waitUntil(() => { const p = pinPop(); return !!(p && p.querySelector('.pin-text')); }, { what: 'the composer' });
+    const pop = pinPop();
+    pop.querySelector('.pin-text').value = 'on a word';
+    shell.click(pop.querySelector('.pin-save'));
+    await waitUntil(() => posts.length === n + 1, { what: 'the POST' });
+    return posts.at(-1);
+  } finally { ov.setArmed(null); comments.closePinPop(); }
+}
+
+test('a comment tap on a word in a pane\'s paragraph records a range anchor whose quote.exact is that word, the caret found inside the pane\'s shadow root; after a reflow the pin draws at the word, not at the paragraph\'s top', async () => {
+  assert.equal(typeof W.document.caretPositionFromPoint, 'undefined', 'precondition: jsdom has no caret API of its own');
+  await setLive([]);
+  cols = 50;
+  await wordPane();
+  const root = rootOf('tw');
+  const para = root.querySelector('p.words');
+  const handed = [];
+  const undo = layText({
+    caret: (x, y, opts) => {
+      handed.push(opts);
+      // Like a browser: without the shadow root handed in, the caret stops at the host.
+      return opts && Array.isArray(opts.shadowRoots) && opts.shadowRoots.includes(root) ? caretAt(x, y) : { offsetNode: root.host, offset: 0 };
+    },
+  });
+  try {
+    const at = spotOf('zeta');
+    const body = await pinText(para, at.x, at.y, 71);
+    assert.ok(handed.length >= 1, 'the caret API was asked');
+    assert.deepEqual(handed[0].shadowRoots, [root], 'and handed the pane\'s shadow root');
+    assert.equal(body.anchor.kind, 'range', 'a tap in text records a range (H.8)');
+    assert.equal(body.anchor.quote.exact, 'zeta', 'over the word under the tap');
+    assert.equal(body.anchor.mount, 'tw');
+    assert.deepEqual(body.anchor, anchors.recordRange(root, wordAt('zeta'), { mount: 'tw' }), 'anchors.recordRange\'s record');
+    assert.deepEqual(body.locator, { mount: 'tw', selector: 'p.words', text: WORDS, ordinal: 0 }, 'the legacy locator stays the tapped element\'s');
+    const pin = { id: 'c311', v: 1, seq: 1, type: 'comment', text: 'on a word', shared: true, replies: [], anchor: body.anchor, locator: body.locator };
+    await setLive([pin]);
+    const before = wordRects(wordAt('zeta'))[0];
+    assert.equal(before.top, ORIGIN.top, 'precondition: zeta is on the first line');
+    await drawnUntil(() => placedAt(markersFor('c311')[0], before), 'the pin drawn at the word');
+    // The pane narrows: the paragraph reflows and zeta moves down two lines.
+    cols = 15;
+    POS['words-tw'] = rect(ORIGIN.left, ORIGIN.top, cols * CH, 4 * LH);
+    await shell.frame({ type: 'pane:state', id: 'tw', pane_state: { colSpan: 3, rows: 6 } });
+    const after = wordRects(wordAt('zeta'))[0];
+    assert.equal(after.top, ORIGIN.top + 2 * LH, 'precondition: the reflow moved zeta to the third line');
+    await drawnUntil(() => placedAt(markersFor('c311')[0], after), 'the pin follows the word');
+    assert.equal(placedAt(markersFor('c311')[0], POS['words-tw']), false, 'not at the paragraph\'s top');
+  } finally {
+    undo();
+    cols = 50;
+    POS['words-tw'] = rect(ORIGIN.left, ORIGIN.top, cols * CH, LH);
+    await setLive([]);
+  }
+});
+
+test('with no caretPositionFromPoint, the geometry walk over the target\'s words finds the one under the tap; caretRangeFromPoint is never asked', async () => {
+  cols = 50;
+  await wordPane();
+  const root = rootOf('tw');
+  let ranged = 0;
+  const undo = layText({ caretRange: () => { ranged++; return null; } });
+  try {
+    assert.equal(typeof W.document.caretPositionFromPoint, 'undefined', 'precondition: no caretPositionFromPoint');
+    const at = spotOf('gamma', 0.2);
+    const body = await pinText(root.querySelector('p.words'), at.x, at.y, 72);
+    assert.equal(body.anchor.kind, 'range');
+    assert.equal(body.anchor.quote.exact, 'gamma');
+    assert.deepEqual(body.anchor, anchors.recordRange(root, wordAt('gamma'), { mount: 'tw' }));
+    assert.equal(ranged, 0, 'caretRangeFromPoint stops at the shadow host: never asked');
+  } finally { undo(); }
+});
+
+test('a tap on a button or a link records the element, on an img or an svg U532\'s point, whatever the caret API answers', async () => {
+  cols = 50;
+  await wordPane();
+  await pointPanes();
+  const r = rootOf('tw');
+  // The caret a browser gives on a control: inside the control's own label
+  // text, so only the control guard keeps the tap off a word.
+  let caretNode = null;
+  const undo = layText({ caret: () => ({ offsetNode: caretNode, offset: 1 }), rects: false });
+  try {
+    const btn = r.querySelector('button.btn');
+    caretNode = btn.firstChild;
+    const b = await pinText(btn, 60, 60, 73, 'pen');
+    assert.equal(b.anchor.kind, 'element', 'a control takes the element');
+    assert.deepEqual(b.anchor, anchors.record(r, btn, { mount: 'tw' }));
+    const lnk = r.querySelector('a.lnk');
+    caretNode = lnk.firstChild;
+    const l = await pinText(lnk, 60, 60, 74);
+    assert.equal(l.anchor.kind, 'element', 'a link is a control');
+    assert.deepEqual(l.anchor, anchors.record(r, lnk, { mount: 'tw' }));
+    const pr = rootOf('pt1');
+    const img = await pinText(pr.querySelector('img'), 140, 350, 75, 'pen');
+    assert.equal(img.anchor.kind, 'point', 'an img: U532\'s point');
+    const svg = await pinText(pr.querySelector('circle'), 150, 250, 76, 'pen');
+    assert.equal(svg.anchor.kind, 'point', 'an svg: U532\'s point');
+  } finally { undo(); }
+});
+
+test('a tap in text where no caret is found records the element: no caret, a caret outside the tapped element, a caret past the line\'s end with no word under the tap', async () => {
+  cols = 50;
+  await wordPane();
+  const root = rootOf('tw');
+  const para = root.querySelector('p.words');
+  const elRec = anchors.record(root, para, { mount: 'tw' });
+  const at = spotOf('beta');
+  let undo = layText({ caret: () => null, rects: false });
+  try {
+    const a = await pinText(para, at.x, at.y, 77);
+    assert.deepEqual(a.anchor, elRec, 'the caret API found none (and no rects to walk): the element');
+  } finally { undo(); }
+  // A caret in a short word of another element (the link's), which would
+  // record a range there were it taken.
+  undo = layText({ caret: () => ({ offsetNode: root.querySelector('a.lnk').firstChild, offset: 3 }), rects: false });
+  try {
+    const b = await pinText(para, at.x, at.y, 78);
+    assert.deepEqual(b.anchor, elRec, 'a caret in another element: the element');
+  } finally { undo(); }
+  undo = layText({ caret: (x, y) => caretAt(x, y) });
+  try {
+    const c = await pinText(para, ORIGIN.left + 48 * CH, ORIGIN.top + LH / 2, 79);
+    assert.deepEqual(c.anchor, elRec, 'a caret at the line\'s end, the tap in the margin past theta: the element');
+  } finally { undo(); }
+});
+
+test('a word over quote_max falls back to the element (anchors.recordRange answers null)', async () => {
+  cols = 50;
+  await wordPane();
+  const root = rootOf('tw');
+  const long = root.querySelector('p.long');
+  assert.ok(LONG.length > anchors.CONFIG.quote_max, 'precondition: the run is over quote_max');
+  const undo = layText({ caret: () => ({ offsetNode: long.firstChild, offset: 7 }) });
+  try {
+    const body = await pinText(long, 100, 100, 80);
+    assert.equal(body.anchor.kind, 'element');
+    assert.deepEqual(body.anchor, anchors.record(root, long, { mount: 'tw' }));
+  } finally { undo(); }
+});
+
+test('highlight.js is loaded lazily, through a relative import(\'./highlight.js\'), and its snapRange is the one word snap', () => {
+  const src = fs.readFileSync(path.join(REPO, 'public/app/comments.js'), 'utf8');
+  assert.doesNotMatch(src, /^\s*(?:import|export)\b[^;]*?from\s*['"]\.\/highlight\.js['"]/m, 'no static import of highlight.js (queue.js imports comments.js)');
+  assert.match(src, /\bimport\('\.\/highlight\.js'\)/, 'a relative dynamic import at first use');
+  assert.match(src, /\.snapRange\(seed, 'words', root\)/, 'the word snap is highlight.js snapRange');
+  assert.doesNotMatch(src, /\bcaretRangeFromPoint\(/, 'never caretRangeFromPoint');
 });
 
 // ── get_comments, replayed against a real daemon ───────────────────────────
