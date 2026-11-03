@@ -70,3 +70,78 @@ module.exports = {
 };
 
 // ── U565's append (stageElementPack, approveFromFrame) goes below ───────────
+//
+// stageElementPack(t, d, {dir, owner?, repo?, sha?, global?})
+//                         → {url, forge, res}: ANY pack directory `dir` (a
+//                           checked-in fixture, a packFixture, the real ink
+//                           pack's checkout) served by test-support/packs
+//                           fakeForge as <owner>/<repo> (repoWithArchive: one
+//                           commit, its codeload archive), then staged the way
+//                           the drawer's Download for review stages it — POST
+//                           /api/packs/quarantine {url} (`global`: the user
+//                           tier's quarantine). `res` is that POST's answer.
+//                           No source kind of its own: the pipeline's GitHub
+//                           path, pointed at the stand-in (PACK@source).
+// approveFromFrame(srv, {name, tier?, query?})
+//                         → {doc, body, res, desc}: the person's Approve, as
+//                           the answer surface's confirm frame sends it — GET
+//                           /answer/control/pack-approve?name&tier (the
+//                           document, its nonce and its review), then the POST
+//                           control-confirm.js's bodyOf builds, with the
+//                           frame's nonce. tier 'local' (default), or 'user'
+//                           (the user tier, the row's 'system'); `query`, a
+//                           raw query string, replaces name and tier (a test
+//                           of the document's refusals). `desc` is the review
+//                           the person read; a document that is not 200 comes
+//                           back as {doc} alone. `srv` is withServer's.
+// frameNonce(html) / frameReview(html)
+//                         the confirm document's nonce, and its review
+//                         (the wc-control meta, decoded): the one reader of
+//                         the frame's protocol in the harness.
+
+const path = require('path');
+const { pathToFileURL } = require('url');
+const { fakeForge, repoWithArchive } = require('./packs');
+const { request } = require('../lib/client');
+
+const CONFIRM_JS = path.join(__dirname, '..', 'lib', 'server', 'answer-surface', 'public', 'control-confirm.js');
+// The row's tier words (lib/server/control/pack-approve TIERS) for the
+// helper's: 'user' is the user tier, which the row calls 'system'.
+const FRAME_TIERS = Object.freeze({ local: 'local', user: 'system' });
+
+async function stageElementPack(t, d, { dir, owner = 'acme', repo = 'marks', sha, global = false } = {}) {
+  if (typeof dir !== 'string' || !dir) throw new TypeError('stageElementPack: a pack directory is required');
+  const forge = await fakeForge(t, { repos: { [`${owner}/${repo}`]: repoWithArchive(dir, sha ? { sha } : {}) } });
+  const url = forge.url(owner, repo);
+  const res = await d.api.post('/api/packs/quarantine', global ? { url, global: true } : { url });
+  return { url, forge, res };
+}
+
+const frameNonce = (html) => /name="wc-answer-nonce" content="([^"]*)"/.exec(html)[1];
+function frameReview(html) {
+  const m = /<meta name="wc-control" content="([^"]*)">/.exec(html);
+  const raw = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return JSON.parse(raw);
+}
+
+let confirmModule = null;
+async function approveFromFrame(srv, { name, tier = 'local', query } = {}) {
+  if (!confirmModule) confirmModule = await import(pathToFileURL(CONFIRM_JS).href);
+  const target = query != null ? String(query)
+    : new URLSearchParams({ name: String(name), tier: Object.hasOwn(FRAME_TIERS, tier) ? FRAME_TIERS[tier] : String(tier) }).toString();
+  await srv.controlStarted;
+  const { origin, port } = await srv.answerSurface.ensure();
+  const qs = `${target}&layout=confirm&mode=light`;
+  const doc = await request(port, 'GET', `/answer/control/pack-approve?${qs}`);
+  if (doc.status !== 200) return { doc };
+  const body = confirmModule.bodyOf(Object.fromEntries(new URLSearchParams(qs)));
+  const res = await request(port, 'POST', '/answer/api/control/pack-approve?device=desktop', body, {
+    headers: { origin, 'sec-fetch-site': 'same-origin', 'x-wc-answer': frameNonce(doc.body) },
+  });
+  return { doc, body, res, desc: frameReview(doc.body) };
+}
+
+module.exports.stageElementPack = stageElementPack;
+module.exports.approveFromFrame = approveFromFrame;
+module.exports.frameNonce = frameNonce;
+module.exports.frameReview = frameReview;
