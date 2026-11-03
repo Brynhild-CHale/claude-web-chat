@@ -212,8 +212,9 @@ test('refusals: a pack shipping chat-comment is reserved; a page type with a cha
 
   const chat = validateElement({ ...STICKY, family: 'chat', anchors: ['turn'] }, { name: 'sticky' });
   assert.equal(chat.ok, false);
-  assert.ok(chat.errors.some((e) => e.includes('family "chat" is refused') && /tranche 4/.test(e)), chat.errors.join(' | '));
-  assert.match(CHAT_FAMILY_HINT, /tranche 4/);
+  assert.ok(chat.errors.some((e) => e.includes('family "chat" is refused') && e.includes(CHAT_FAMILY_HINT)), chat.errors.join(' | '));
+  assert.equal(CHAT_FAMILY_HINT, 'plug-in chat types are not supported in this build; only the built-in chat-comment is a chat type');
+  assert.doesNotMatch(CHAT_FAMILY_HINT, /tranche/i, 'the hint promises no tranche (CHATFAM@refused a)');
   // …the built-in pack alone may declare it; and a chat type's anchors are chat kinds only, even there.
   assert.equal(validateElement({ ...STICKY, family: 'chat', anchors: ['turn'] }, { name: 'sticky', builtin: true }).ok, true);
   const chatPage = validateElement({ ...STICKY, family: 'chat', anchors: ['turn', 'range'] }, { name: 'sticky', builtin: true });

@@ -447,18 +447,23 @@ test('a listed type with remote.see full is absent from a remote read viewer\'s 
 
 // ── the schema row (annotation engine tranche 4, 4A.2; U513) ───────────────
 // A listed plug-in type's element.json `payload` declaration registers its
-// schema row in the element log (lib/core/element-log registerSchema); none,
-// or a malformed one, leaves the type listed and drawing but not writable.
-test('a listed plug-in type with a payload declaration is registered and writable; one with none or a malformed one lists, is unwritable and logs one line', (t) => {
+// schema row in the element log (lib/core/element-log registerSchema); none
+// leaves the type listed and drawing but not writable. A malformed one fails
+// review since U514 (lib/packs/elements validateElement), so approve refuses
+// it and it never lists.
+test('a listed plug-in type with a payload declaration is registered and writable; one with none lists, is unwritable and logs one line; a malformed one is refused at approve', (t) => {
   const { schemaRow, isPluginType, createElementLog } = require('../lib/core/element-log');
   const { createRedactor } = require('../lib/core/redact');
   const root = project(t);
   approveInProcess(root, { name: 'decl-pack', type: 'tq-decl', json: { payload: { keys: ['anchor', 'shared', 'note'], max_bytes: 2048 } } });
   approveInProcess(root, { name: 'bare-pack', type: 'tq-bare' });
-  approveInProcess(root, { name: 'bad-pack', type: 'tq-bad', json: { payload: { keys: ['shared', 'note'] } } });
+  assert.throws(() => approveInProcess(root, { name: 'bad-pack', type: 'tq-bad', json: { payload: { keys: ['shared', 'note'] } } }),
+    (e) => Array.isArray(e.errors) && e.errors.some((x) => /"payload" keys names anchor and shared \(missing anchor\)/.test(x)),
+    'a malformed declaration fails review (U514)');
   const lines = [];
   const et = createElementTypes({ root, log: (l) => lines.push(l) });
-  for (const type of ['tq-decl', 'tq-bare', 'tq-bad']) {
+  assert.equal(et.listed('tq-bad'), false, 'refused at approve: never listed');
+  for (const type of ['tq-decl', 'tq-bare']) {
     assert.equal(et.listed(type), true, `${type} lists`);
     assert.equal(et.readable(type, `${type}@1`), true, `${type} draws its schema`);
   }
@@ -471,18 +476,16 @@ test('a listed plug-in type with a payload declaration is registered and writabl
   assert.equal(schemaRow('tq-bad@1'), null);
   assert.equal(isPluginType('tq-bare'), false);
   const un = et.stats().unwritable;
-  assert.deepStrictEqual(un.map((x) => x.type), ['tq-bad', 'tq-bare']);
-  assert.match(un[0].why, /payload keys names anchor and shared \(missing anchor\)/);
-  assert.match(un[1].why, /declares no payload/);
-  assert.equal(lines.length, 2, lines.join('\n'));
-  assert.match(lines[0], /element type "tq-bad" is listed but not writable: element\.json's payload/);
-  assert.match(lines[1], /element type "tq-bare" is listed but not writable: element\.json declares no payload/);
+  assert.deepStrictEqual(un.map((x) => x.type), ['tq-bare']);
+  assert.match(un[0].why, /declares no payload/);
+  assert.equal(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /element type "tq-bare" is listed but not writable: element\.json declares no payload/);
   // A recompute registers again (idempotent) and logs nothing new.
   et.invalidate();
   assert.equal(et.listed('tq-decl'), true);
   assert.strictEqual(schemaRow('tq-decl@1'), row);
-  assert.equal(lines.length, 2);
-  assert.deepStrictEqual(et.stats().unwritable.map((x) => x.type), ['tq-bad', 'tq-bare']);
+  assert.equal(lines.length, 1);
+  assert.deepStrictEqual(et.stats().unwritable.map((x) => x.type), ['tq-bare']);
   // Built-ins register nothing and are never unwritable.
   for (const type of BUILTIN_ELEMENT_TYPE_NAMES) assert.ok(!un.some((x) => x.type === type), type);
   // The registered type writes through the element log: a p id.
