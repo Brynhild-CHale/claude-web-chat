@@ -54,6 +54,7 @@ const { v3Graph } = require('../test-support/v3-graph');
 const { withServer, waitUntil, wsConnect, commentBody } = require('../test-support/helpers');
 const { projectPaths } = require('../lib/core/paths');
 const anchorsSrc = require('../lib/server/runtime/anchors-src');
+const docRuntime = require('../lib/server/runtime/elements-doc-src');
 const { ELEMENTS_TEMPLATE_DIR } = require('../lib/server/builtins');
 
 const REPO = path.join(__dirname, '..');
@@ -449,18 +450,26 @@ test('a previewed older node draws its pins read-only', async () => {
   }
 });
 
-test('a document of a comment-only node (preview, export) carries only the resolver kinds U307 splices and draws no element', async () => {
+test('a document of a comment-only node (preview, export) carries only the resolver kinds U307 splices; the export draws its elements', async () => {
   const node = JSON.parse(fs.readFileSync(path.join(paths.graphDir, 'n1.json'), 'utf8'));
   assert.ok(node.comments.length > 0 && !node.elements, 'n1 is comment-only');
   const kinds = anchorsSrc.kindsOf(node);
   assert.ok(kinds.length > 0 && kinds.length < anchorsSrc.RESOLVER_KINDS.length, `a cut, not the whole resolver: ${kinds}`);
-  for (const [what, p] of [['preview', '/preview/node/n1'], ['export', '/api/export/n1']]) {
+  const doc = async (what, p) => {
     const r = await daemon('GET', p);
     assert.equal(r.status, 200, `${what}: ${r.status}`);
     assert.ok(r.text.includes(anchorsSrc.source({ kinds })), `${what}: the resolver cut to ${anchorsSrc.kindKey(kinds)}`);
     assert.ok(!r.text.includes(anchorsSrc.source()), `${what}: never the whole resolver`);
-    assert.ok(!/el-layer|pin-marker|el-marker/.test(r.text), `${what}: no element is drawn`);
-  }
+    return r.text;
+  };
+  // A drawn document (U522's splice): the resolver cut, the element runtime of its payload's key right after it, and one data element.
+  const drawsElements = (text) => {
+    const data = [...text.matchAll(/<script type="application\/json" data-wc-elements>([^<]*)<\/script>/g)];
+    return data.length === 1 && text.includes(anchorsSrc.scriptElement({ kinds }) + docRuntime.runtimeElement(docRuntime.keyOf(JSON.parse(data[0][1]))));
+  };
+  // The preview's statement (U523 flips it), then the export's (U524).
+  assert.ok(!/el-layer|pin-marker|el-marker/.test(await doc('preview', '/preview/node/n1')), 'preview: no element is drawn');
+  assert.ok(drawsElements(await doc('export', '/api/export/n1')), 'export: the resolver cut, U522\'s runtime right after it and one data element');
 });
 
 // F.3: comments on markdown, made in the chrome and held by the daemon.
