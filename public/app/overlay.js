@@ -130,6 +130,7 @@ import { hiddenProbe, installRetriggers } from './overlay-hidden.js';
 import { dispatchMode, pointerTypeOf } from './input-mode.js';
 import { isTap } from './sheet-model.js';
 import { request } from './http.js';
+import { settingsSnapshot } from './toolbar-state.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -164,7 +165,11 @@ export const INPUT_KINDS = Object.freeze(['taps', 'strokes', 'selection']);
 // guess's, for a guess), clipped to its well, never over a displayed frame.
 export const PLACE_MODES = Object.freeze(['glyph', 'box']);
 // The create ctx's own keys (toolCtx): no registerCreateCtx name may take one.
-export const CREATE_CTX_KEYS = Object.freeze(['anchors', 'sourceMap', 'markdownText', 'scope', 'armed']);
+// `settings` (U512c): settings() → the armed type and profile's frozen
+// {small, large} as they stood at the gesture's start (toolbar-state.js
+// settingsSnapshot — the saved values over element.json's defaults); a lone
+// click's are the click's own moment. A reader, never a writer.
+export const CREATE_CTX_KEYS = Object.freeze(['anchors', 'sourceMap', 'markdownText', 'scope', 'armed', 'settings']);
 // A registered create-ctx member's name.
 export const CREATE_CTX_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
 // The pointer policy's three answers.
@@ -2136,8 +2141,14 @@ export function registerCreateCtx(name, value) {
     rebuildCreateCtx();
   };
 }
-function toolCtx() {
-  return { ...createCtxExtra, anchors, sourceMap, markdownText, scope: 'live', armed: armed() };
+function toolCtx(settings) {
+  return { ...createCtxExtra, anchors, sourceMap, markdownText, scope: 'live', armed: armed(), settings: settings || settingsNow() };
+}
+// The armed tool's settings now, as the create ctx's settings(): one snapshot,
+// taken once per gesture (at its press) and kept on the gesture.
+function settingsNow() {
+  const snap = armedState ? settingsSnapshot(armedState.type, armedState.profile) : settingsSnapshot(null);
+  return () => snap;
 }
 // THE SAMPLES (U516): a strokes tool's pointer event carries the browser's
 // coalesced samples (input.samples: getCoalescedEvents() when it answers a
@@ -2255,7 +2266,8 @@ function pointerIn(h, e) {
   if (e.type === 'pointerdown') {
     for (const [id, old] of gestures) if (old.up || id === e.pointerId) gestures.delete(id);
     decision = decide(e);
-    g = { decision, pointerType: e.pointerType || '', mode: decision === 'tool' ? dispatchMode(e, kind) : null, up: false };
+    g = { decision, pointerType: e.pointerType || '', mode: decision === 'tool' ? dispatchMode(e, kind) : null, up: false,
+      settings: decision === 'tool' && t && t.create ? settingsNow() : null };
     gestures.set(e.pointerId, g);
     h.lastDown = e.pointerId;
   } else if (e.type === 'click') {
@@ -2304,7 +2316,7 @@ function pointerIn(h, e) {
     input.samples = cancel ? NO_SAMPLES : samplesOf(e);
     input.predicted = cancel ? NO_SAMPLES : predictedOf(e);
   }
-  try { t.create(input, toolCtx()); } catch (err) {
+  try { t.create(input, toolCtx(g && g.settings)); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
 }
@@ -2334,7 +2346,7 @@ export function cancelGesture(pointerId) {
     input.samples = NO_SAMPLES;
     input.predicted = NO_SAMPLES;
   }
-  try { t.create(input, toolCtx()); } catch (err) {
+  try { t.create(input, toolCtx(g.settings)); } catch (err) {
     console.error(`[web-chat] overlay: the '${armedState.type}' create failed`, err);
   }
   return true;
