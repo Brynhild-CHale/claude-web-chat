@@ -617,6 +617,25 @@ quarantine with the commands to approve or discard it. The surface's install
 route refuses one (code `element-review`, its hint naming the review path), and
 the ＋ → Manage drawer then downloads it for review instead.
 
+Three of an element type's `element.json` fields shape how its tool draws, and
+review checks each (`lib/packs/elements.js`'s header is the field reference):
+
+- `"input": "strokes"` makes it a drawing tool: a press draws, with the
+  pointer's coalesced samples, instead of tapping or selecting (`"taps"`, the
+  default, and `"selection"` are the others). Its strokes are committed through
+  the engine's stroke path, on the target they were drawn over.
+- `"place": "box"` sizes the type's marker to the element it is anchored to
+  (the default, `"glyph"`, draws a small glyph at the anchor); it is refused
+  unless `"anchors"` includes `"element"`. There is no third placement mode.
+- `"glyph": {"detach": true, "leader": "dotted"}` lets the user drag the type's
+  glyph off its anchor, with a leader line back to it (`"leader"` is
+  `"dotted"`, `"faint"` or `"hover"`). The engine owns the drag, the stored
+  offset and the line; the type's `draw.js` ships none of them.
+
+A pack's type that declares `"family": "chat"` is refused: plug-in chat
+types are not supported in this build, and only the built-in chat-comment is a
+chat type.
+
 The surface's `＋` drawer has the same thing under **Manage**: a URL field, an
 all-projects checkbox, and the same two options — *Download for review* is the
 primary button there, and *Install now* takes a second, deliberate click for a

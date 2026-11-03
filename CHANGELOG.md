@@ -138,6 +138,80 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `public/mount-runtime.js` reach previews, replays and exports, from a
   per-process memo, so an edit to any of them shows only after
   `claude-web-chat restart` and a browser refresh.
+- **An approved element pack's tools now draw, and every update is reviewed
+  again.** A pack's annotation type draws on the page and in documents once
+  you have reviewed and approved it: `claude-web-chat pack get <url>`, then
+  `pack review <name>` and `pack approve <name>` (or ＋ → Manage → Download
+  for review, then Approve). Each new version of a pack goes through that
+  quarantine again before it draws. A pack ships no undo, layer or placement
+  mode of its own: those are the engine's. A type's drawing code reads the
+  live record even while you preview an older node.
+- **Previews, exports and replays draw annotations, and an export has a
+  cap.** The node preview, a block's preview, an export and a replay draw the
+  annotations their node carries; a private one shows only in a document your
+  own browser views in place, never in a file. An export's annotations are
+  capped at 4 MiB: `claude-web-chat export` and Claude's `export` refuse an
+  export over it (413, with a hint) unless you pass `--strip`, and the page's
+  download strips by default; either way the file lists what it left out.
+- **⌘Z undoes your last annotation on a pane.** Pressed again, it steps back
+  through your own annotations, newest first; it stops at the last node
+  commit, never takes back what Claude or anyone else wrote, and never touches
+  a chat pin. A text field keeps its own undo, and ⌘⇧Z stays the browser's
+  redo.
+- **Comments pin points and words, and their glyphs move.** A comment on an
+  image, an svg or a canvas pins a point inside it; on text, the word under
+  the tap, as a range. A comment's glyph can be dragged off its anchor, with a
+  leader line back to it.
+- **Every node is read once, to build the graph's index.** The graph's
+  index of stored view keys and node headers, `.web-chat/graph-index.json`, is
+  derived: the first boot reads every node and writes it, and later boots read
+  the headers and load a node's body only when it is used — the boot
+  reconcile reads a body only for a node that is unclean, adopted or missing a
+  pinned version. Delete the file and the next boot rebuilds it.
+- **The surface answers before the chat list has loaded.** The chat mirror's
+  registry now loads after the server listens, so for a moment after a
+  restart a chat pin may read *indexing*. The server also keeps up to 389
+  parsed conversations in memory (it kept 160), within the same 64 MiB.
+- **The Push note is served masked.** A value web-chat has learned to hide,
+  typed into a Push note, is masked in the parked delivery and in the live
+  wake, at read and above; below read the note stays hidden.
+- **The built-in pack reinstalls once; no protocol bump.** The built-in
+  comment's `element.json` changed (point anchors, the detachable glyph) and
+  its pack keeps version 1.1.0, so the first boot reinstalls it over. The
+  tunnel portal's protocol stays 12: this release's one new portal row, the
+  form counter's host-only route, refuses what a protocol-12 portal already
+  refuses, so a running portal needs no restart.
+- **Restart Claude Code for `inspect_capture` and `export`.** A Claude Code
+  session started before the upgrade runs the old MCP server: `/exit` and
+  reopen it so `inspect_capture` takes a stroke group's `element:<id>` and
+  `export` passes the cap's hint on. `render`, `use_component` and `clear`
+  need nothing: the annotation counts they now answer come from the server,
+  and no tool's description or schema changed.
+- **Rolled back to 0.9.0-alpha.3, this release's records go unread.** That
+  alpha parks every element of a pack's type (the `p` ids) and draws nothing
+  for them. It reads a point comment's anchor as an element locator with no
+  selector, so the pin orphans, its point is lost, and a node's copy no
+  longer matches its version's hash when that alpha restores it. It draws a moved
+  glyph at its anchor (it ignores the version's `display`), reads neither
+  `.web-chat/graph-index.json` nor `.web-chat/form-shifts.json`, keeps 160
+  parsed conversations again; and since the built-in pack's version did not
+  change, each build reinstalls its own comment `element.json` over the
+  other's at its first boot. Reload any page left open across the rollback: a tab of
+  this release reporting a form tally to that alpha can clear a pane's saved
+  form values.
+- **Working on web-chat itself: tranche 4's restarts and switches.**
+  `lib/core/element-assets.js` and `lib/core/strokes.js` reach the chrome from
+  a per-process memo, and so do the document sources
+  (`lib/server/runtime/elements-doc-src.js`, `lib/server/document-elements.js`,
+  `lib/server/preview.js`, `lib/server/export.js`, the replay player): an edit
+  to any of them needs `claude-web-chat restart` and a refresh of the page or
+  the document (a downloaded export is a file: download it again).
+  `WEB_CHAT_UPDATE_CHECK=0` switches the update check off, and the test
+  sandbox sets it; `WEB_CHAT_E2E_SOAK=1`, with `SOAK_SH` naming the
+  workflow-shape skill's `soak.sh`, opts into the system soak
+  (`scripts/soak/run.sh`). This work's commits carry the trailer
+  `Co-Authored-By: Claude Fable 5.1`; a few carry the implementing model's
+  own line instead, left as written.
 
 ### Added
 

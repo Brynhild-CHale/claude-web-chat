@@ -1000,7 +1000,9 @@ function initKeyboard() {
     // Every other key is ONE lookup in the hotkey registry (public/app/hotkeys.js),
     // over the defaults registered below (registerKeyDefaults) ⊕ the user's
     // bindings ⊕ this project's. A single key never fires from an editable field
-    // (only ⌘K, whenField, does); a ⌘/Ctrl chord other than ⌘K is the browser's.
+    // (only ⌘K, whenField, does). Two ⌘/Ctrl chords are the page's, the two fixed
+    // Mod+ rows: ⌘K (the palette) and ⌘Z (elements.undo, never from a field, so a
+    // field keeps its own undo); every other ⌘/Ctrl chord, ⌘⇧Z included, is the browser's.
     // The overlay owns every other single key while it is open (arrows, Space, ↵,
     // A, E, B — graph-view.js), so it is its own context: only the actions that
     // answer there (`?`, whose sheet opens over it; ⌘K, which it swallows) do.

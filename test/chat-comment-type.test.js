@@ -202,7 +202,7 @@ test('the pack reinstalls on the version change: a project on 1.0.0 (no chat-com
 
 const STICKY = { type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'] };
 
-test('refusals: a pack shipping chat-comment is reserved; a page type with a chat kind; a chat-family pack type (tranche 4); a tool naming its own type', () => {
+test('refusals: a pack shipping chat-comment is reserved; a page type with a chat kind; a chat-family pack type (refused, CHATFAM@refused a); a tool naming its own type', () => {
   const reserved = validateManifest({ name: 'acme-notes', version: '1.0.0', elements: ['chat-comment'] });
   assert.ok(reserved.errors.some((e) => /element "chat-comment" is a built-in element type name/.test(e)), reserved.errors.join(' | '));
 
