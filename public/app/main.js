@@ -68,6 +68,7 @@ import { initHighlights } from './highlight.js';
 // look at its picture, and its card in the queue rail.
 import { initBoxGrab } from './box-grab.js';
 import { initTargetFrame } from './target-frame.js';   // 4F.1 (U561): the stroke frame and the engine's stroke commit, on the create ctx
+import { initInkDescribe } from './ink-describe.js';   // 4F.2 (U562): what lies under a stroke, the engine's describe deriver
 // The settings-pane host (annotation engine 2D.6): a tool's settings in a small
 // or large frame, both popovers under the shell's one dismiss layer.
 import { initToolSettings } from './tool-settings.js';
@@ -110,6 +111,7 @@ initOrphans();    // after initShell and initGraph, whose registries it plugs in
 initHighlights();
 initBoxGrab();     // the box grab (U328c): its element type, its look and its rail card
 initTargetFrame(); // the create ctx's frameAt and stroke (U561): a strokes type's frame and its one commit path
+initInkDescribe(); // the stroke commit's describe deriver (U562): its own bbox, the text under it and that text's box
 initToolSettings();   // the tool settings frames, registered with the shell's popovers (U338 opens them)
 initTools();      // after the hotkeys: slots 1–9 and each tool's manifest key
 initToolbar();    // after the tools and their settings host: #toolbar, #bb-tools and #tb-tray

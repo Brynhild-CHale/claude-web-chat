@@ -295,7 +295,8 @@ test('commit with shared:false: exactly ONE POST /api/elements, payload keys wit
   assert.equal(body.anchor.kind, 'element');
   const allowed = new Set([...ST.STROKE_KEYS, ...ST.DESCRIBE_KEYS]);
   for (const k of Object.keys(body.payload)) assert.ok(allowed.has(k), `payload key ${k}`);
-  assert.deepStrictEqual(Object.keys(body.payload).sort(), ['aspect', 'colour', 'points', 'shared', 'stride', 'tool', 'width']);
+  // U562's describe deriver (main.js initInkDescribe) adds the stroke's own bbox.
+  assert.deepStrictEqual(Object.keys(body.payload).sort(), ['aspect', 'bbox', 'colour', 'points', 'shared', 'stride', 'tool', 'width']);
   assert.strictEqual(body.payload.shared, false, 'as the type passed it');
   assert.equal(body.payload.width, 6 / 200);
   assert.equal(body.payload.stride, 4);
@@ -337,13 +338,15 @@ test('a preview refuses begin() with READONLY_HINT and sends nothing; one begun 
 
 test('registerStrokeDerive merges only DESCRIBE_KEYS; a throwing deriver is logged and the stroke still commits; names are unique', async () => {
   const args = [];
-  const off1 = TF.registerStrokeDerive('describe', (a) => { args.push(a); return { text_under: 'under', bbox: [0, 0, 1, 1], extra: 'dropped', tool: 'not yours' }; });
+  // 'describe' is U562's, registered at boot (main.js initInkDescribe): a
+  // probe of its own name, run after it, so its keys win the merge.
+  const off1 = TF.registerStrokeDerive('probe', (a) => { args.push(a); return { text_under: 'under', bbox: [0, 0, 1, 1], extra: 'dropped', tool: 'not yours' }; });
   const errors = [];
   const realError = console.error;
   console.error = (...a) => errors.push(a.map(String).join(' '));
   const off2 = TF.registerStrokeDerive('boom', () => { throw new Error('the deriver broke'); });
   try {
-    assert.throws(() => TF.registerStrokeDerive('describe', () => ({})), /already registered/);
+    assert.throws(() => TF.registerStrokeDerive('probe', () => ({})), /already registered/);
     assert.throws(() => TF.registerStrokeDerive('', () => ({})), TypeError);
     assert.throws(() => TF.registerStrokeDerive('x', 'nope'), TypeError);
     const h = TF.stroke.begin(inputOf(press(q('path.line'), 150, 225)));
@@ -362,7 +365,7 @@ test('registerStrokeDerive merges only DESCRIBE_KEYS; a throwing deriver is logg
     assert.deepStrictEqual(args[0].points, payload.points);
   } finally { console.error = realError; off1(); off2(); }
   // Unregistered, the name is free again.
-  TF.registerStrokeDerive('describe', () => ({}))();
+  TF.registerStrokeDerive('probe', () => ({}))();
 });
 
 // ── no allocation per sample ──────────────────────────────────────────────
