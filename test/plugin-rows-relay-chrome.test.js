@@ -13,6 +13,8 @@
 //     live row, and the type's draw paints it dry (a box marker holding the
 //     record's path, data-el-id = its id) with no requestDraw from the test;
 //   - a second frame adds the second stroke beside the first;
+//   - a new version of a held stroke (a moved glyph's display sibling)
+//     re-places its row: the relay's unchanged-row skip never holds a stale one;
 //   - a frame without a record removes its row and its path;
 //   - a row of another type in the live set (a comment from the hello) is
 //     never touched by the type's frame;
@@ -170,6 +172,24 @@ test('a second stroke\'s frame adds its row beside the first; another type\'s ro
   assert.deepStrictEqual(liveOf().map((r) => r.id).sort(), [a.id, b.id]);
   await waitUntil(() => pathOf(a.id) && pathOf(b.id), { timeout: 4000, what: 'both dry paths' });
   assert.deepStrictEqual(liveOf('comment').map((r) => r.id), [COMMENT_ROW.id], 'the hello\'s comment row is kept');
+});
+
+// The relay's unchanged-row skip (sameRow) must never hold a row whose record
+// moved on: a new version of a held stroke (a glyph moved, AI5's `display`
+// sibling) re-places its row, while the unchanged stroke beside it stays.
+test('a new version of a held stroke re-places its row; the unchanged one stays as it was', async () => {
+  const [a, b] = records;
+  const glyph = { dx: 12, dy: -8, corner: 'tr' };
+  const b2 = { ...b, v: 2, display: { glyph } };
+  records = [a, b2];
+  await shell.frame({ type: `element:${TYPE}`, elements: records });
+  const rows = new Map(liveOf().map((r) => [r.id, r]));
+  assert.deepStrictEqual([...rows.keys()].sort(), [a.id, b.id]);
+  assert.equal(rows.get(b.id).v, 2, 'the new version reached the overlay\'s row');
+  assert.deepStrictEqual(rows.get(b.id).display, { glyph }, 'its display sibling with it');
+  assert.equal(rows.get(a.id).v, 1);
+  assert.equal(rows.get(a.id).display, undefined);
+  await waitUntil(() => pathOf(a.id) && pathOf(b.id), { timeout: 4000, what: 'both dry paths' });
 });
 
 test('a frame without a record removes its row and its path', async () => {
