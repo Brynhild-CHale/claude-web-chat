@@ -88,11 +88,34 @@ test('sniff: each allowed format\'s bytes pass; bytes that do not match their ex
 
 test('browserModuleSource: the served mediaOf answers exactly as this module\'s, over the allowlist and the refusals (U512\'s asset(rel))', async () => {
   const { browserModuleSource, mediaOf: hostMediaOf } = require('../lib/core/element-assets');
-  const src = browserModuleSource();
+  // Memoised: the source is assembled once (mediaOf's own text read once),
+  // however often it is asked for. An own toString counts the reads.
+  let reads = 0;
+  const ownText = Function.prototype.toString.call(hostMediaOf);
+  hostMediaOf.toString = () => { reads += 1; return ownText; };
+  let src;
+  try {
+    src = browserModuleSource();
+    assert.strictEqual(browserModuleSource(), src);
+  } finally {
+    delete hostMediaOf.toString;
+  }
+  assert.ok(reads <= 1, `memoised: assembled at most once here, read ${reads} times`);
   const mod = await import('data:text/javascript,' + encodeURIComponent(src));
   const rels = ['draw.js', 'assets/mark.png', 'assets/fonts/hand.woff2', 'assets/a.SVG', 'assets/x.webp', 'assets/x.js', 'assets/../draw.js',
     'assets//x.png', '/assets/x.png', 'assets/x\u202e.png', 'assets/x\u0007.png', 'assets/a\\b.png', 'lib/x.png', 'assets/' + 'a'.repeat(300) + '.png', '', 'assets/x',
     'assets/x\u200b.png', 'assets/./x.png', null, 7];
   for (const rel of rels) assert.deepEqual(mod.mediaOf(rel), hostMediaOf(rel), rel);
-  assert.equal(browserModuleSource(), src, 'memoised');
+});
+
+test('GET /app/element-assets.js serves browserModuleSource() as JavaScript, under the existing /app/* row (the import element-types.js makes)', async (t) => {
+  const { withServer } = require('../test-support/helpers');
+  const { classify } = require('../lib/core/remote-policy');
+  const { browserModuleSource } = require('../lib/core/element-assets');
+  const { port } = await withServer(t);
+  const res = await fetch(`http://localhost:${port}/app/element-assets.js`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /^text\/javascript\b/);
+  assert.strictEqual(await res.text(), browserModuleSource());
+  assert.equal(classify('GET', '/app/element-assets.js').allow, true);
 });
