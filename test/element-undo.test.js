@@ -164,6 +164,30 @@ test('a comment\'s text edited then undone: a version with the old text and pare
   assert.deepEqual([last.op, last.pin.id, last.pin.v, last.became_shared, last.became_private], ['edit', c.id, 3, false, false]);
 });
 
+test('a comment\'s sharing toggle undone: became_shared / became_private as the PATCH computes them', async (t) => {
+  const d = await boot(t);
+  const lastComment = async () => {
+    const ev = (await ok(d.api.get('/api/events?since=0'))).events.filter((e) => e.kind === 'comment');
+    return ev[ev.length - 1];
+  };
+  // Shared, made private, undone: shared again (became_shared).
+  const a = await comment(d.anonApi, 'shared words', 'm1');
+  await ok(d.anonApi.patch(`/api/elements/${a.id}`, { shared: false }), 'PATCH private');
+  const r1 = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo the toggle');
+  assert.deepEqual([r1.undone.id, r1.undone.how], [a.id, 'reverted']);
+  assert.equal(d.srv.state.comments.find((p) => p.id === a.id).shared, true);
+  const e1 = await lastComment();
+  assert.deepEqual([e1.op, e1.pin.id, e1.became_shared, e1.became_private], ['edit', a.id, true, false]);
+  // Private, made shared, undone: private again (became_private).
+  const b = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR('m2'), payload: { text: 'private words', shared: false } }), 'POST private comment')).element;
+  await ok(d.anonApi.patch(`/api/elements/${b.id}`, { shared: true }), 'PATCH shared');
+  const r2 = await ok(d.anonApi.post(UNDO, { item: 'm2' }), 'undo the share');
+  assert.deepEqual([r2.undone.id, r2.undone.how], [b.id, 'reverted']);
+  assert.equal(d.srv.state.comments.find((p) => p.id === b.id).shared, false);
+  const e2 = await lastComment();
+  assert.deepEqual([e2.op, e2.pin.id, e2.became_shared, e2.became_private], ['edit', b.id, false, true]);
+});
+
 test('a comment\'s reply undone: the reply gone from the new version', async (t) => {
   const d = await boot(t);
   const c = await comment(d.anonApi, 'a thread');
