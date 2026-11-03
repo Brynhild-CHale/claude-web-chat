@@ -41,8 +41,58 @@
 // rows today: the lean projection carries no schema yet — see U324's
 // hand-off).
 //
-// Tranche 2 draws in the live chrome only (F-DOCS a); no pack's draw module
-// is loaded here (third-party draw code waits for 4A/4B, B1).
+// THE LOADER (tranche 4, U512; plan 4A.2; B1 review-approve; DRAW@loader).
+// loadPluginTypes() runs after every listing (setListing): for each listed row
+// that is not built-in, not of the chat family, and carries the daemon's
+// `draw: {sha256}` (U511), it imports that type's draw.js by a dynamic
+// import() of the same-origin fenced route
+// /api/elements/types/<type>/draw.js?d=<sha256> — never eval, never a
+// <script> element, never a blob: or data: URL — once per (type, digest),
+// single-flight. Only a listed type's URL is ever built (the listing's own
+// type name, URL-encoded). The module contract (U512-U522@draw-module-
+// contract a): the default export is the function draw — `export default
+// function draw(group, ctx)` — and create, move, glyph, sourceGlyph and
+// targets are optional NAMED exports; anything else it exports is ignored.
+// The manifest wins over the module: `input` and `place` come from the
+// listing row's toolbar fields (what review saw), never from the module. The
+// spec goes through registerElementType only, so the reads gate, the liar
+// control and draw-failed hold for a plug-in type unchanged. A rejected
+// import, a module whose evaluation throws, or one with no default draw
+// registers a stand-in whose draw throws "the type's draw.js did not load:
+// <why>": each of its elements reads draw-failed with the stand-in mark (no
+// new draw state); a failed digest is not imported again until the listing
+// names another digest or the page reloads. A slow draw is not caught. The
+// records a draw reads are the live ones, previewed node or not (the GET
+// names no node). A type that leaves the listing is unregistered; its module
+// stays in the realm's module map until the page reloads (an ES module cannot
+// be unloaded).
+//
+// THE REALM (B1; K.5 K2 a, J2 a; GT-17: the plan names the draw.js trust
+// model), in one sentence:
+//
+// an approved type's draw() runs in the surface page's own realm live, and in each document's own realm under PREVIEW_CSP (B1); a pack cannot add a layer or a placement mode
+//
+// K2's documented consequence: a type running in the chrome's realm has the
+// chrome's reach, private records included; pack review and approve are the
+// boundary. A plug-in type's draw ctx (and its move's) carries two accessors,
+// so no pack builds a route URL itself:
+//
+//   record(id)  the type's record as GET /api/elements?type=<type> answered
+//               it for this viewer (masked by the daemon; a private record
+//               only for a viewer who sees private), kept current by the
+//               type's `element:<type>` frame; null for an id it does not
+//               hold. A change in the records re-registers the type, so the
+//               overlay redraws. Frozen: a draw cannot edit what it reads.
+//   asset(rel)  rel is the path below the type's assets/ directory
+//               ('mark.png', 'fonts/hand.woff2'), checked as 'assets/' + rel
+//               by lib/core/element-assets mediaOf, the one grammar: live, the
+//               same-origin URL /api/elements/types/<type>/assets/<rel> with
+//               the listing's draw sha256 as its ?d= cache key (U511's
+//               route); in a document, the inlined data: URI (U522). null for
+//               a rel mediaOf refuses, one with a leading slash or a '..'
+//               segment, or one that starts 'assets/'. The chrome reaches
+//               mediaOf through the `mediaOf` seam of initElementTypes; with
+//               none handed in, asset() answers null (fails closed).
 //
 // TARGETS (K.2-78). A registration may name what its tool's presses land on:
 // `targets: 'items'` (the default) — a pane's content and a markdown item —
@@ -95,13 +145,29 @@ const registrations = new Map();  // type → {spec, unregister}
 const states = new Map();         // id → {id, v, type, state, schema, error}
 const seen = new Map();           // id → {v, type}: what the overlay delivered
 const groupsOk = new WeakMap();   // a drawn group → the ids its draw drew
+// The plug-in loader's state (U512, below): type → {sha, token, promise, off,
+// frameOff, records, recSeq, recSig}; the spec key that marks a loaded type.
+const plugins = new Map();
+const PLUGIN = Symbol('element-types.plugin');
+// The one dynamic import of a daemon URL (test/conventions.test.js holds it
+// here, B1): the URL is drawPath's, built from a listed row alone.
+const defaultImport = (url) => import(url);
+let importModule = defaultImport;
+let mediaOfFn = null;             // lib/core/element-assets mediaOf, handed in
 
 // ── the listing ─────────────────────────────────────────────────────────────
-// initElementTypes({overlay}) — idempotent. `overlay` is injectable (a test's
-// stub): handing another one moves every registration and the answers
-// listener onto it.
+// initElementTypes({overlay, importModule, mediaOf}) — idempotent. `overlay`
+// is injectable (a test's stub): handing another one moves every
+// registration and the answers listener onto it. `importModule(url)` is the
+// loader's importer (default: the dynamic import of the URL; jsdom runs no
+// module fetched from a URL, so a test hands its own); `mediaOf(rel)` is
+// lib/core/element-assets' grammar, which asset(rel) asks (none: null).
 let answersOff = null;
 export function initElementTypes(opts = {}) {
+  if (opts && Object.hasOwn(opts, 'importModule')) {
+    importModule = typeof opts.importModule === 'function' ? opts.importModule : defaultImport;
+  }
+  if (opts && Object.hasOwn(opts, 'mediaOf')) mediaOfFn = typeof opts.mediaOf === 'function' ? opts.mediaOf : null;
   if (opts && opts.overlay && opts.overlay !== ov) {
     ov = opts.overlay;
     if (answersOff) { try { answersOff(); } catch {} answersOff = null; }
@@ -112,6 +178,9 @@ export function initElementTypes(opts = {}) {
   inited = true;
   onHello(() => { loadTypes(); });
   onFrame('components', () => { loadTypes(); });
+  // A reset (a wipe, a new graph) re-reads every plug-in type's records, as
+  // the highlight type re-reads its own.
+  onFrame('reset', () => { for (const type of plugins.keys()) loadRecords(type); });
   loadTypes();
 }
 
@@ -143,6 +212,7 @@ function setListing(types, names) {
   // is drawn at once.
   for (const type of [...registrations.keys()]) reregister(type);
   recheckUnregistered();
+  loadPluginTypes().catch(() => {});
 }
 
 export function listedTypes() { return [...listing.values()]; }
@@ -310,7 +380,7 @@ function gatedDraw(type, spec, group, ctx) {
   if (!drawable.length) { standIn(group, type); return; }
   const view = drawable.length === items.length ? group : { ...group, items: drawable };
   try {
-    spec.draw(view, ctx);
+    spec.draw(view, pluginCtx(spec, ctx));
   } catch (err) {
     console.error(`[web-chat] element type '${type}': its draw failed`, err);
     const error = String((err && err.message) || err);
@@ -328,10 +398,200 @@ function gatedMove(spec, group, ctx) {
   const items = (group.items || []).filter((it) => ids.has(String(it.id)));
   if (!items.length) return;
   try {
-    spec.move(items.length === group.items.length ? group : { ...group, items }, ctx);
+    spec.move(items.length === group.items.length ? group : { ...group, items }, pluginCtx(spec, ctx));
   } catch (err) {
     console.error(`[web-chat] element type '${group.type}': its move failed`, err);
   }
+}
+
+// ── the plug-in loader (U512; plan 4A.2; B1; DRAW@loader) ──────────────────
+// The header's THE LOADER and THE REALM paragraphs say what this is and is
+// not. A loaded type's spec carries PLUGIN (its type), so gatedDraw hands its
+// draw (and its move) the plug-in ctx; nothing outside this module can set it.
+export const ELEMENTS_PATH = '/api/elements';
+export const DID_NOT_LOAD = 'the type\'s draw.js did not load';
+export const MODULE_EXPORTS = Object.freeze(['create', 'move', 'glyph', 'sourceGlyph', 'targets']);
+const ASSETS_PREFIX = 'assets/';
+
+// The route's URL for a listed type's draw.js at a digest.
+export function drawPath(type, sha) {
+  return `${TYPES_PATH}/${encodeURIComponent(type)}/draw.js?d=${encodeURIComponent(sha)}`;
+}
+
+// Whether a listing row names a draw module this loader may import: a pack's
+// type (never a built-in or a reserved name), not of the chat family, with
+// the daemon's digest for its draw.js.
+function loadableSha(row) {
+  if (!row || row.builtin !== false || row.family === 'chat' || reserved.has(row.type)) return null;
+  const sha = row.draw && typeof row.draw === 'object' ? row.draw.sha256 : null;
+  return typeof sha === 'string' && sha ? sha : null;
+}
+
+// loadPluginTypes() → a promise of the types whose module is loaded (or
+// failed) once every import it started has settled. Run after every listing;
+// never throws, never imports anything the listing does not name.
+export function loadPluginTypes() {
+  const wanted = new Map();
+  for (const row of listing.values()) {
+    const sha = loadableSha(row);
+    if (sha) wanted.set(row.type, sha);
+  }
+  for (const type of [...plugins.keys()]) if (!wanted.has(type)) dropPlugin(type);
+  const waits = [];
+  for (const [type, sha] of wanted) {
+    let p = plugins.get(type);
+    if (!p) {
+      p = { sha: null, token: null, promise: null, off: null, frameOff: null, records: new Map(), recSeq: 0, recSig: '' };
+      plugins.set(type, p);
+      p.frameOff = onFrame(`element:${type}`, (msg) => onRecordsFrame(type, p, msg));
+    }
+    if (p.sha !== sha) startImport(type, p, sha);
+    if (p.promise) waits.push(p.promise);
+    waits.push(loadRecords(type));
+  }
+  return Promise.all(waits).then(() => [...plugins.keys()]);
+}
+
+function dropPlugin(type) {
+  const p = plugins.get(type);
+  if (!p) return;
+  plugins.delete(type);
+  p.token = null;
+  if (p.frameOff) { try { p.frameOff(); } catch {} }
+  if (p.off) { try { p.off(); } catch {} }
+}
+
+// Single-flight per (type, digest): a newer digest supersedes an import still
+// on its way, whose answer is then dropped. The type keeps its earlier module
+// (if any) until the new one settles.
+function startImport(type, p, sha) {
+  const token = {};
+  p.sha = sha;
+  p.token = token;
+  const url = drawPath(type, sha);
+  const done = (mod, err) => {
+    if (plugins.get(type) !== p || p.token !== token) return;
+    p.promise = null;
+    let spec = null;
+    let why = err ? String((err && err.message) || err) : null;
+    if (!why) {
+      const built = specOf(mod, listing.get(type));
+      if (built.error) why = built.error; else spec = built.spec;
+    }
+    if (spec) {
+      try {
+        install(type, p, spec);
+        return;
+      } catch (e) {
+        why = String((e && e.message) || e);
+      }
+    }
+    console.error(`[web-chat] element type '${type}': ${DID_NOT_LOAD}: ${why}`);
+    install(type, p, failedSpec(why));
+  };
+  p.promise = Promise.resolve()
+    .then(() => importModule(url))
+    .then((mod) => done(mod, null), (err) => done(null, err || new Error('the import was refused')));
+}
+
+// The registration spec from a module: mod.default (the function draw) plus
+// the named exports MODULE_EXPORTS lists; `input` and `place` from the
+// listing row's toolbar fields (the manifest wins over the module).
+function specOf(mod, row) {
+  let draw;
+  try { draw = mod ? mod.default : undefined; } catch (e) { return { error: String((e && e.message) || e) }; }
+  if (typeof draw !== 'function') return { error: 'its default export is not the function draw' };
+  const spec = { draw };
+  for (const k of MODULE_EXPORTS) {
+    let v;
+    try { v = mod[k]; } catch (e) { return { error: String((e && e.message) || e) }; }
+    if (v == null) continue;
+    if ((k === 'create' || k === 'move') && typeof v !== 'function') return { error: `its export ${k} is not a function` };
+    spec[k] = v;
+  }
+  const tb = row && row.toolbar && typeof row.toolbar === 'object' ? row.toolbar : {};
+  if (overlayModule.INPUT_KINDS.includes(tb.input)) spec.input = tb.input;
+  if (overlayModule.PLACE_MODES.includes(tb.place)) spec.place = tb.place;
+  return { spec };
+}
+
+// What a type whose module did not load registers: a draw that throws, so
+// the gate marks each element draw-failed with the stand-in; nothing creates.
+function failedSpec(why) {
+  const error = `${DID_NOT_LOAD}: ${why}`;
+  return { draw() { throw new Error(error); } };
+}
+
+// registerElementType replaces the type's earlier registration (its
+// unregister turns into a no-op), so only the newest is kept.
+function install(type, p, spec) {
+  p.off = registerElementType(type, { ...spec, [PLUGIN]: type });
+}
+
+// ── the record seam ────────────────────────────────────────────────────────
+function loadRecords(type) {
+  const p = plugins.get(type);
+  if (!p) return Promise.resolve();
+  const mine = ++p.recSeq;
+  return request('GET', `${ELEMENTS_PATH}?type=${encodeURIComponent(type)}`).then((r) => {
+    if (plugins.get(type) !== p || mine !== p.recSeq) return;
+    if (!r || !r.ok || !r.body || !Array.isArray(r.body.elements)) return;
+    setRecords(type, p, r.body.elements);
+  }, () => {});
+}
+function onRecordsFrame(type, p, msg) {
+  if (plugins.get(type) !== p) return;
+  p.recSeq++;
+  setRecords(type, p, msg && Array.isArray(msg.elements) ? msg.elements : []);
+}
+function deepFreeze(x) {
+  if (x && typeof x === 'object' && !Object.isFrozen(x)) {
+    Object.freeze(x);
+    for (const k of Object.keys(x)) deepFreeze(x[k]);
+  }
+  return x;
+}
+function setRecords(type, p, list) {
+  let sig;
+  try { sig = JSON.stringify(list); } catch { sig = null; }
+  if (sig != null && sig === p.recSig) return;
+  p.recSig = sig == null ? '' : sig;
+  const next = new Map();
+  for (const rec of list) {
+    if (!rec || typeof rec !== 'object' || rec.id == null) continue;
+    if (rec.type != null && rec.type !== type) continue;
+    next.set(String(rec.id), deepFreeze(structuredClone(rec)));
+  }
+  p.records = next;
+  const entry = registrations.get(type);
+  if (entry && entry.spec[PLUGIN] === type) reregister(type);
+}
+
+// record(id) for a plug-in type's draw: the record, or null.
+export function recordOf(type, id) {
+  const p = plugins.get(type);
+  if (!p || id == null) return null;
+  return p.records.get(String(id)) || null;
+}
+
+// asset(rel) for a plug-in type's draw: the same-origin URL, or null.
+export function assetOf(type, rel) {
+  if (typeof rel !== 'string' || !rel || rel.startsWith(ASSETS_PREFIX) || typeof mediaOfFn !== 'function') return null;
+  const sha = loadableSha(listing.get(type));
+  if (!sha) return null;
+  let media;
+  try { media = mediaOfFn(ASSETS_PREFIX + rel); } catch { return null; }
+  if (!media || typeof media !== 'object' || media.refused || media.kind === 'draw') return null;
+  const path = rel.split('/').map(encodeURIComponent).join('/');
+  return `${TYPES_PATH}/${encodeURIComponent(type)}/assets/${path}?d=${encodeURIComponent(sha)}`;
+}
+
+// The ctx a plug-in type's draw and move see: the overlay's, plus record and
+// asset. A built-in's ctx is the overlay's, untouched.
+function pluginCtx(spec, ctx) {
+  const type = spec && spec[PLUGIN];
+  if (!type) return ctx;
+  return { ...(ctx || {}), record: (id) => recordOf(type, id), asset: (rel) => assetOf(type, rel) };
 }
 
 // ── the tray action guard (TRAY@guard) ─────────────────────────────────────
