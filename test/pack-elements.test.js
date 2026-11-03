@@ -47,6 +47,9 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect 
 const DRAW = (type) => `export default function draw(el, ctx) { ctx.box(el).dataset.type = '${type}'; }\n`;
 const SOURCE = { via: 'tarball', sha: 'a'.repeat(40), url: 'https://github.com/acme/marks' };
 const SHA = 'a'.repeat(40);
+// A sound payload declaration (U514: a pack's type that declares none passes
+// review with a warning, so a test asserting no warnings declares one).
+const PAYLOAD = Object.freeze({ keys: ['anchor', 'shared', 'note'] });
 
 // One element type's files. `json` overrides element.json's fields (a key set
 // to undefined is left out); `draw: null` ships no draw.js.
@@ -292,7 +295,7 @@ test('elementFiles: element.json, draw.js, then assets/** depth first; nothing e
 
 // ── validateManifest ────────────────────────────────────────────────────────
 test('validateManifest accepts elements-only, elements + components and elements + skill packs', () => {
-  const only = elementPack({ name: 'mark-pack', elements: [el('sticky')] });
+  const only = elementPack({ name: 'mark-pack', elements: [el('sticky', { json: { payload: PAYLOAD } })] });
   let m = validateManifest(parseManifest(only), { stageDir: only });
   assert.equal(m.ok, true, m.errors.join('; '));
   assert.deepStrictEqual(m.elements.map((e) => [e.name, e.schema, e.reads, e.anchors]), [['sticky', 'sticky@1', ['sticky@1'], ['element', 'range']]]);
@@ -305,7 +308,7 @@ test('validateManifest accepts elements-only, elements + components and elements
   assert.deepStrictEqual(m.components.map((c) => c.name), ['flag-board']);
   assert.deepStrictEqual(m.elements.map((e) => e.name), ['flag']);
 
-  const withSkill = elementPack({ name: 'skill-pack', elements: [el('callout')], skill: true });
+  const withSkill = elementPack({ name: 'skill-pack', elements: [el('callout', { json: { payload: PAYLOAD } })], skill: true });
   m = validateManifest(parseManifest(withSkill), { stageDir: withSkill });
   assert.equal(m.ok, true, m.errors.join('; '));
   assert.equal(m.skill.present, true);

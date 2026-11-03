@@ -121,6 +121,28 @@
 // element and queues it, or queues a shared one that is not queued (an item
 // already queued answers `already`); Push still decides when. A tray draws
 // its Send to Claude button only when maySend() (canWrite, and no preview).
+//
+// THE PLUG-IN TRAY HOST (tranche 4, U514; plan 4A.2; TRAY@guard; PRIVATE@
+// create a; M2 a). A pack's type writes only through `ctx.tray` — on its
+// draw ctx (and its move's: pluginCtx, beside record and asset) bound to its
+// own type, and on EVERY type's create ctx through the overlay's
+// registerCreateCtx('tray', …) seam (U516; the type there is the armed one,
+// as ctx.stroke's) — so no pack builds a route URL or a write of its own:
+//
+//   add({anchor, payload})       POST /api/elements {type, anchor, payload}
+//   edit(id, patch, {base_v}?)   PATCH /api/elements/:id {payload: patch, base_v}
+//   remove(id)                   DELETE /api/elements/:id (an eraser's delete)
+//   share(id, shared)            PATCH /api/elements/:id {shared}
+//   send(id)                     sendToClaude(id) — Send to Claude (M2)
+//
+// Each is ONE request through http.js with the device claim, run through
+// trayAction (a preview answers TRAY_REFUSAL with READONLY_HINT and sends
+// nothing: one rule, one hint), and answers a promise of {ok, element?,
+// hint?} (a refusal also its `status`). add sends the payload exactly as the
+// type made it: the engine never adds or defaults `shared` (PRIVATE@create —
+// the type's create sends shared: false; the route's own default is the
+// daemon's, not this module's). The built-in trays keep their own code, on
+// trayAction already; none of them goes through ctx.tray.
 import * as overlayModule from './overlay.js';
 import { request } from './http.js';
 import { bus } from './bus.js';
@@ -163,6 +185,7 @@ let mediaOfFn = null;             // lib/core/element-assets mediaOf, handed in
 // module fetched from a URL, so a test hands its own); `mediaOf(rel)` is
 // lib/core/element-assets' grammar, which asset(rel) asks (none: null).
 let answersOff = null;
+let createTrayOff = null;         // the create ctx's tray registration (U514)
 export function initElementTypes(opts = {}) {
   if (opts && Object.hasOwn(opts, 'importModule')) {
     importModule = typeof opts.importModule === 'function' ? opts.importModule : defaultImport;
@@ -171,9 +194,11 @@ export function initElementTypes(opts = {}) {
   if (opts && opts.overlay && opts.overlay !== ov) {
     ov = opts.overlay;
     if (answersOff) { try { answersOff(); } catch {} answersOff = null; }
+    if (createTrayOff) { try { createTrayOff(); } catch {} createTrayOff = null; }
     for (const type of [...registrations.keys()]) reregister(type);
   }
   if (!answersOff && typeof ov.onAnswers === 'function') answersOff = ov.onAnswers(onAnswers) || (() => {});
+  if (!createTrayOff) registerCreateTray(ov);
   if (inited) return;
   inited = true;
   onHello(() => { loadTypes(); });
@@ -586,12 +611,13 @@ export function assetOf(type, rel) {
   return `${TYPES_PATH}/${encodeURIComponent(type)}/assets/${path}?d=${encodeURIComponent(sha)}`;
 }
 
-// The ctx a plug-in type's draw and move see: the overlay's, plus record and
-// asset. A built-in's ctx is the overlay's, untouched.
+// The ctx a plug-in type's draw and move see: the overlay's, plus record,
+// asset and its tray (U514, bound to its type). A built-in's ctx is the
+// overlay's, untouched.
 function pluginCtx(spec, ctx) {
   const type = spec && spec[PLUGIN];
   if (!type) return ctx;
-  return { ...(ctx || {}), record: (id) => recordOf(type, id), asset: (rel) => assetOf(type, rel) };
+  return { ...(ctx || {}), record: (id) => recordOf(type, id), asset: (rel) => assetOf(type, rel), tray: trayOf(type) };
 }
 
 // ── the tray action guard (TRAY@guard) ─────────────────────────────────────
@@ -645,4 +671,95 @@ export async function sendToClaude(id, { note } = {}) {
       note: already ? ALREADY_NOTE : SENT_NOTE,
     };
   }, { note: typeof note === 'function' ? note : () => {} });
+}
+
+// ── the plug-in tray host (U514; plan 4A.2; TRAY@guard; PRIVATE@create a) ──
+// The header's THE PLUG-IN TRAY HOST says what each member sends.
+export const TRAY_MEMBERS = Object.freeze(['add', 'edit', 'remove', 'share', 'send']);
+export const CREATE_TRAY_NAME = 'tray';
+const TRAY_FAILED = 'It was not saved: try again.';
+const TRAY_NO_TYPE = 'No element tool is armed: arm the tool, then try again.';
+const TRAY_NO_ID = 'No element was named.';
+const TRAY_NO_PAYLOAD = 'A payload is an object of the type\'s declared keys.';
+const TRAY_NO_PATCH = 'An edit is an object of the payload keys it changes.';
+const TRAY_NO_SHARED = 'Share takes true or false.';
+const elementUrl = (id) => `${ELEMENTS_PATH}/${encodeURIComponent(String(id))}`;
+const plainObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const idOk = (id) => (typeof id === 'string' && id !== '') || Number.isSafeInteger(id);
+
+// One write: one request with the device claim, answered {ok, element?, hint?}.
+async function trayWrite(method, url, body) {
+  const r = await request(method, url, { body, device: true });
+  if (!r.ok) return { ok: false, status: r.status, hint: r.hint || TRAY_FAILED };
+  const b = r.body && typeof r.body === 'object' ? r.body : {};
+  const out = { ok: true, element: b.element || null };
+  if (b.unchanged === true) out.unchanged = true;
+  return out;
+}
+
+// Through the guard, always a promise: a preview answers TRAY_REFUSAL (the
+// topbar's note shows READONLY_HINT) and run is never called.
+const trayRun = (run) => Promise.resolve(trayAction(run));
+
+// A tray whose add writes the type typeName() answers at the call.
+function makeTray(typeName) {
+  return Object.freeze({
+    add({ anchor, payload } = {}) {
+      return trayRun(async () => {
+        const type = typeName();
+        if (typeof type !== 'string' || !type) return { ok: false, hint: TRAY_NO_TYPE };
+        if (!plainObject(payload)) return { ok: false, hint: TRAY_NO_PAYLOAD };
+        // The payload as the type made it: no `shared` the type did not set.
+        return trayWrite('POST', ELEMENTS_PATH, { type, ...(anchor !== undefined ? { anchor } : {}), payload });
+      });
+    },
+    edit(id, patch, { base_v } = {}) {
+      return trayRun(async () => {
+        if (!idOk(id)) return { ok: false, hint: TRAY_NO_ID };
+        if (!plainObject(patch)) return { ok: false, hint: TRAY_NO_PATCH };
+        return trayWrite('PATCH', elementUrl(id), { payload: patch, ...(base_v != null ? { base_v } : {}) });
+      });
+    },
+    remove(id) {
+      return trayRun(async () => {
+        if (!idOk(id)) return { ok: false, hint: TRAY_NO_ID };
+        return trayWrite('DELETE', elementUrl(id), {});
+      });
+    },
+    share(id, shared) {
+      return trayRun(async () => {
+        if (!idOk(id)) return { ok: false, hint: TRAY_NO_ID };
+        if (typeof shared !== 'boolean') return { ok: false, hint: TRAY_NO_SHARED };
+        return trayWrite('PATCH', elementUrl(id), { shared });
+      });
+    },
+    // sendToClaude is the one Send request and runs the guard itself.
+    send(id) { return Promise.resolve(sendToClaude(id, { note: showNote })); },
+  });
+}
+
+// A plug-in type's draw (and move) ctx tray, bound to its type; one frozen
+// object per type, so a draw allocates nothing for it.
+const traysByType = new Map();
+function trayOf(type) {
+  let t = traysByType.get(type);
+  if (!t) { t = makeTray(() => type); traysByType.set(type, t); }
+  return t;
+}
+
+// The create ctx's tray (every type's create): the type is the armed one at
+// the call, read from the overlay it was registered on (as ctx.stroke's);
+// registered by initElementTypes, moved with the overlay (createTrayOff).
+function registerCreateTray(target) {
+  if (!target || typeof target.registerCreateCtx !== 'function') return;
+  const armedType = () => {
+    let a = null;
+    try { a = typeof target.armed === 'function' ? target.armed() : null; } catch {}
+    return a && typeof a.type === 'string' ? a.type : null;
+  };
+  try {
+    createTrayOff = target.registerCreateCtx(CREATE_TRAY_NAME, makeTray(armedType)) || (() => {});
+  } catch (err) {
+    console.error('[web-chat] element types: the create ctx\'s tray did not register', err);
+  }
 }

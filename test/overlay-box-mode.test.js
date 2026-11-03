@@ -357,7 +357,7 @@ test('registerCreateCtx: refusals; a registered value is on the create ctx and l
     // BOOT_MEMBERS: the engine members main.js registers at boot, on every
     // create ctx: U517's initWetLayer (`wet`) and U561's initTargetFrame
     // (frameAt and stroke).
-    const BOOT_MEMBERS = ['wet', 'frameAt', 'stroke'];
+    const BOOT_MEMBERS = ['wet', 'frameAt', 'stroke', 'tray'];
     assert.deepStrictEqual(Object.keys(seen[0]).filter((k) => !ov.CREATE_CTX_KEYS.includes(k) && !BOOT_MEMBERS.includes(k)), ['wetProbe'], 'nothing else added');
     offWet();
     offWet();   // idempotent

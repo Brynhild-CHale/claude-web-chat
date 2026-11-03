@@ -59,6 +59,9 @@ const GOOD = Object.freeze({
   wake: true,
   summary_key: 'note',
   needs: { network: 'api.example.com, to fetch the sticker set', key: { name: 'sticker-key', label: 'Sticker API key' } },
+  // U514: a sound payload declaration (U513-U565@payload-decl a), so a sound
+  // pack's review carries no "declares no payload" warning.
+  payload: { keys: ['anchor', 'shared', 'note'], max_bytes: 4096 },
 });
 
 // One type's files on disk: element.json from `json` (a key set to undefined
@@ -337,4 +340,94 @@ test('place: glyph and box accepted and kept in the descriptor; box without an e
     assert.deepStrictEqual(t.errors.map((e) => e.field), ['place'], JSON.stringify(bad));
     assert.match(t.errors[0].why, /must be one of glyph, box/);
   }
+});
+
+// ── payload (U514, plan 4A.1's review end; U513-U565@payload-decl a) ─────────
+// The payload declaration is checked at review by lib/core/element-log
+// payloadDeclProblem: sound → kept in the descriptor as written; malformed →
+// the pack fails review naming the field; none → a warning, still valid. A
+// built-in's element.json is not checked for it, and the registry's own read
+// (no stage) leaves a malformed one to its listed-but-unwritable path (U513).
+test('payload: a sound declaration passes review kept in the descriptor; a malformed one fails naming the field; none warns', () => {
+  assert.ok(TOOLBAR_KEYS.includes('payload'), 'a toolbar field, kept as written');
+  assert.ok(!elements.KNOWN_KEYS.includes('payload') && !elements.KNOWN_KEYS.includes('place'), 'never a KNOWN_KEYS field (it would leave the descriptor)');
+  const decl = { keys: ['anchor', 'shared', 'tool', 'points'], max_bytes: 16384 };
+  const ok = validateStage(stage({ json: { ...GOOD, payload: decl } }));
+  assert.deepStrictEqual([ok.errors, ok.warnings], [[], []]);
+  assert.deepStrictEqual(ok.elements[0].descriptor.payload, decl, 'kept in the descriptor as written');
+  assert.deepStrictEqual(validateStage(stage({ json: { ...GOOD, payload: { keys: ['anchor', 'shared'] } } })).errors, [], 'max_bytes optional');
+
+  const many = Array.from({ length: 25 }, (_, i) => (i === 0 ? 'anchor' : i === 1 ? 'shared' : `k${i}`));
+  const bad = {
+    'no anchor key': [{ keys: ['shared', 'note'] }, /"payload" keys names anchor and shared \(missing anchor\)/],
+    'meta named': [{ keys: ['anchor', 'shared', 'meta'] }, /"payload" keys never names meta/],
+    '25 keys': [{ keys: many }, /"payload" keys is a list of 1 to 24 names/],
+    'max_bytes 70000': [{ keys: ['anchor', 'shared'], max_bytes: 70000 }, /"payload" max_bytes is an integer from 1 to 65536/],
+    'not an object': [['anchor', 'shared'], /"payload" is an object/],
+    'an unknown field': [{ keys: ['anchor', 'shared'], limit: 3 }, /"payload" holds "limit"/],
+  };
+  for (const [what, [payload, re]] of Object.entries(bad)) {
+    const m = validateStage(stage({ json: { ...GOOD, payload } }));
+    assert.equal(m.ok, false, what);
+    assert.deepStrictEqual(fieldsOf(m.errors), ['payload'], `${what}: the error names the field`);
+    assert.match(m.errors[0], re, what);
+  }
+
+  // None: valid, with the one warning.
+  const none = validateStage(stage({ json: { ...GOOD, payload: undefined } }));
+  assert.deepStrictEqual(none.errors, []);
+  assert.equal(none.ok, true);
+  assert.deepStrictEqual(none.warnings, [`element "sticky": element.json ${elements.NO_PAYLOAD_WARNING}`]);
+  assert.equal(elements.NO_PAYLOAD_WARNING, 'declares no payload: its type will draw but never write');
+  assert.equal('payload' in none.elements[0].descriptor, false);
+
+  // A built-in's element.json is not checked for it; nor is the registry's
+  // read of an installed type (no stage).
+  const raw = { type: 'sticky', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'sticky@1', anchors: ['element'] };
+  const dir = stage({ json: { ...GOOD, payload: undefined } });
+  const b = validateElement(raw, { stageDir: dir, name: 'sticky', builtin: true });
+  assert.deepStrictEqual([b.errors, b.warnings], [[], []], 'a built-in: no payload check, no warning');
+  assert.equal(validateElement({ ...raw, payload: { keys: ['shared'] } }, { stageDir: dir, name: 'sticky', builtin: true }).ok, true, 'a built-in\'s declaration is not checked');
+  const reg = validateElement({ ...raw, payload: { keys: ['shared'] } }, { name: 'sticky' });
+  assert.equal(reg.ok, true, 'no stage: the registry lists it and records it unwritable (U513)');
+  assert.deepStrictEqual(reg.descriptor.payload, { keys: ['shared'] });
+});
+
+// ── draw.js's default export (U514; U512-U522@draw-module-contract a) ────────
+// Read, never evaluated (B1): a pack's draw.js must carry a line starting
+// `export default function draw(` — the line a document's splice names
+// (lib/server/runtime/elements-doc-src MODULE_HEAD) — so a module that passes
+// review is never skipped as 'draw-contract' in a document.
+test('draw.js: a default export that is not a function named draw fails review naming the file and the line it needs', () => {
+  const { MODULE_HEAD } = require('../lib/server/runtime/elements-doc-src');
+  assert.equal(elements.DRAW_HEAD, MODULE_HEAD, 'one draw line, two spellings held equal');
+  assert.ok(elements.DRAW_LINE.startsWith(elements.DRAW_HEAD));
+  assert.equal(elements.DRAW_LINE, 'export default function draw(group, ctx)');
+  const withDraw = (text) => validateStage(stage({ files: { ...ICONS, 'draw.js': text } }));
+  const bad = {
+    'an object': 'export default { draw(group, ctx) {} };\n',
+    'an arrow': 'export default (group, ctx) => { group.container.textContent = "x"; };\n',
+    'an anonymous function': 'export default function (group, ctx) { group.container.textContent = "x"; }\n',
+    'a function of another name': 'export default function paint(group, ctx) {}\n',
+    'a named draw, not the default': 'export function draw(group, ctx) {}\nexport default {};\n',
+    'the line in a comment only': '// export default function draw(group, ctx)\nexport default () => {};\n',
+    'an async draw': 'export default async function draw(group, ctx) {}\n',
+  };
+  for (const [what, text] of Object.entries(bad)) {
+    const m = withDraw(text);
+    assert.equal(m.ok, false, what);
+    assert.equal(m.errors.length, 1, `${what}: ${m.errors.join(' | ')}`);
+    assert.match(m.errors[0], /^element "sticky": elements\/sticky\/draw\.js's default export is not a function named draw/, what);
+    assert.ok(m.errors[0].includes('`export default function draw(group, ctx)`'), `${what}: the hint names the line it needs`);
+    assert.ok(m.errors[0].includes('export default function draw('), what);
+  }
+  const good = withDraw('// a sticky note\nexport default function draw(group, ctx) {\n  group.container.textContent = "x";\n}\nexport function create(input, ctx) { return ctx; }\nexport const glyph = { w: 20, h: 20 };\n');
+  assert.deepStrictEqual([good.errors, good.warnings], [[], []], 'the default draw with a named create passes');
+  assert.equal(withDraw('  export default function draw(group) {}\n').ok, true, 'leading blanks allowed');
+  // A built-in's draw code is the chrome's own: no draw.js is read.
+  const raw = readElementJson(path.join(stage({ files: { ...ICONS, 'draw.js': 'export default {};\n' } }), 'elements', 'sticky')).raw;
+  const dir = stage({ files: { ...ICONS, 'draw.js': 'export default {};\n' } });
+  assert.deepStrictEqual(validateElement(raw, { stageDir: dir, name: 'sticky', builtin: true }).errors, []);
+  // No stage (the registry's read): the file is not looked at.
+  assert.equal(validateElement(raw, { name: 'sticky' }).ok, true);
 });
