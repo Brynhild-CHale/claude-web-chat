@@ -348,6 +348,25 @@ test('the ring: the host reads the anchor; below read it goes (type, tag and id 
   }
 });
 
+test('the daemon\'s event branch passes its own redactor: a secret-shaped head reaches the ring masked', async (t) => {
+  const ghp = fakeSecrets().find((f) => f.id === 'github-ghp');
+  const d = await withServer(t);
+  const r = await d.api.post('/api/render', { id: MOUNT, html: '<ul><li class="row"><b>first</b><button class="go" id="go">Run</button></li></ul>' });
+  assert.ok(r.status < 300, `render ${r.status}`);
+  const anchor = { ...ANCHOR, fp: { ...ANCHOR.fp, head: ghp.text.slice(0, 120) }, rows: [{ ...ANCHOR.rows[0], head: ghp.text }] };
+  const sock = await sendEvents(d.port, [{ ...CLICK, mountId: MOUNT, anchor }]);
+  t.after(() => sock.close());
+  let dom = null;
+  assert.ok(await waitUntil(async () => {
+    dom = domsOf((await d.api.get('/api/events?since=0')).json)[0] || null;
+    return !!dom;
+  }), 'the event reached the ring');
+  assert.ok(dom.anchor, 'the redacted anchor is kept');
+  assert.deepStrictEqual(dom.anchor.at, ANCHOR.at, 'the record\'s shape stands');
+  assert.deepStrictEqual(findLeaks(dom.anchor, [ghp]), []);
+  assert.ok(!JSON.stringify(dom.anchor).includes(ghp.secrets[0]), 'no secret on the ring');
+});
+
 test('the ring\'s other readers below read: the stream\'s catch-up and /api/wait\'s matched event carry no anchor', async (t) => {
   const d = await boot(t);
   const http = require('http');
