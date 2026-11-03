@@ -270,6 +270,30 @@ test('one capture per send: a second send with no member changed reuses the pict
   assert.ok(rel.x >= 0.09 && rel.x <= 0.11 && rel.w > 0.4, JSON.stringify(rel));
 });
 
+test('a member edited since the picture (a new version, the same ids) draws a new picture: the reuse is by the members\' id@v set, never by ids alone', async (t) => {
+  const b = await boot(t);
+  const { d, srv, calls } = b;
+  const a = await b.post({ dx: 0 });
+  const bb = await b.post({ dx: 0.05 });
+  await b.push();
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the first picture' });
+  const first = pictures(srv)[0];
+  await settled(srv, first.id);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(first.distilled.elements, [`${a.id}@1`, `${bb.id}@1`]);
+
+  await ok(d.anonApi.patch(`/api/elements/${bb.id}`, { colour: 'gold' }), 'edit bb');
+  await b.push();
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 2, { timeout: 10000, what: 'the picture of the edited group' });
+  const second = pictures(srv)[1];
+  await settled(srv, second.id);
+  assert.equal(calls.length, 2, 'a second render: bb is at a new version');
+  assert.deepEqual(second.distilled.elements, [`${a.id}@1`, `${bb.id}@2`]);
+  assert.ok(!calls[1].html.includes('data-wc-picture'), 'no member is new, so none is greyed');
+});
+
 // ── the box grab's own render site ──────────────────────────────────────────
 
 test('a box grab over a pane beside a private highlight hands captureImpl a document with no private element, and draws a shared plug-in element by its module', async (t) => {
