@@ -23,6 +23,9 @@ const SERVED = new Map([
   // (lib/server/routes/page.js serves lib/core/tier-merge's browserModuleSource()).
   [pathToFileURL(path.join(REPO, 'public/app/tier-merge.js')).href,
     () => require(path.join(REPO, 'lib/core/tier-merge.js')).browserModuleSource()],
+  // /app/strokes.js, the stroke record target-frame.js commits (lib/core/strokes).
+  [pathToFileURL(path.join(REPO, 'public/app/strokes.js')).href,
+    () => require(path.join(REPO, 'lib/core/strokes.js')).browserModuleSource()],
 ]);
 
 exports.resolve = function resolve(specifier, context, next) {
