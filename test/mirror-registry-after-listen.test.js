@@ -103,6 +103,16 @@ function seeded(t, n = N) {
   return { root, ch, ids };
 }
 
+// A daemon that is constructed but NOT listened by the harness (withServer
+// always listens): the boot order before the listen, start()'s own fixed-port
+// listen and a failed bind are what these tests pin. Torn down on t.after.
+function bareServer(t, root, port = 0) {
+  const { createServer } = require('../lib/server');
+  const srv = createServer({ root, port });
+  t.after(() => srv.stop());
+  return srv;
+}
+
 const envelopeOf = (ch, event, s, extra = {}) => hookEnvelope({
   hook_event_name: event, session_id: s, transcript_path: ch.transcript(s), cwd: ch.cwd, permission_mode: 'default', ...extra,
 }, { CLAUDE_CODE_ENTRYPOINT: 'cli' }, { now: Date.now() });
@@ -173,10 +183,7 @@ test('the gap: queueRelease.send releases as a daemon without a mirror (accepted
 
 test('createServer alone never starts the mirror; the bridge, control and the scheduler are started; stop() resolves ready', async (t) => {
   const w = seeded(t);
-  const { createServer } = require('../lib/server');
-  const srv = createServer({ root: w.root, port: 0 });
-  let stopped = false;
-  t.after(async () => { if (!stopped) await srv.stop(); });
+  const srv = bareServer(t, w.root);
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(await pending(srv.mirror.ready), 'pending', 'ready pending: never listened');
   const st = srv.mirror.stats();
@@ -192,17 +199,14 @@ test('createServer alone never starts the mirror; the bridge, control and the sc
   srv.hooks.publish(envelopeOf(w.ch, 'SessionEnd', ATTACHED, { reason: 'other' }));
   assert.equal(srv.bridge.attached(ATTACHED), false, 'the bridge hears the tap before any listen');
   await srv.stop();
-  stopped = true;
   await srv.mirror.ready;
   assert.equal(srv.mirror.stats().sources.some((s) => s.started), false, 'stopped before the listen: never started');
 });
 
 test('start()\'s fixed-port listen starts the mirror after the listen; a failed bind never does', async (t) => {
-  const { createServer } = require('../lib/server');
   {
     const w = seeded(t);
-    const srv = createServer({ root: w.root, port: 0 });
-    t.after(() => srv.stop());
+    const srv = bareServer(t, w.root);
     const log = console.log;
     console.log = () => {};
     try { await srv.start({ writePortfile: false }); } finally { console.log = log; }
@@ -215,8 +219,7 @@ test('start()\'s fixed-port listen starts the mirror after the listen; a failed 
     const taken = net.createServer();
     await new Promise((r) => taken.listen(0, LISTEN_HOST, r));
     t.after(() => new Promise((r) => taken.close(() => r())));
-    const srv = createServer({ root: w.root, port: taken.address().port });
-    t.after(() => srv.stop());
+    const srv = bareServer(t, w.root, taken.address().port);
     await assert.rejects(srv.start({ writePortfile: false }), (e) => e && e.code === 'EADDRINUSE');
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(srv.mirror.stats().conversations.conversations, 0, 'a failed bind loads no registry');
