@@ -31,13 +31,16 @@
 //   handle.frame     the frame begin found (a type's wet layer begins on
 //                    handle.frame.target)
 //   handle.count     the samples held
-//   handle.rect      the rect the last push read ({left, top, w, h}): ONE
+//   handle.rect      the rect the last read took ({left, top, w, h}): ONE
 //                    object per handle, written in place (read only)
 //   handle.push(x)   a later event's samples: x is the create's input (its
 //                    samples, else its event; any sample in input.predicted
 //                    is skipped) or the samples list itself. Each sample's
 //                    clientX/Y goes to frame units against the target's rect —
-//                    re-read once per push, never per sample — clamped to
+//                    re-read at most once per animation frame (U561b: the
+//                    first push after a frame boundary, and the first after a
+//                    re-render, resize or scroll; never per sample, never per
+//                    push inside a frame) — clamped to
 //                    [0, 1], with its pressure (0.5 when the pointer reports
 //                    none) and its ms since pen-down, into ONE growable
 //                    Float64Array (capacity doubling): no allocation per
@@ -61,6 +64,11 @@
 //   ctx.stroke.strokesOn(frame, {type}) → the live rows of that type the
 //     resolver places on the frame's target (an eraser's hit test, and
 //     nothing more).
+//
+//   initTargetFrame({raf?}) — idempotent; every call may set raf, the frame
+//     scheduler the rect read waits on (the tests' fake frame; null or absent:
+//     the window's requestAnimationFrame). A document with no rAF (an export,
+//     a jsdom without it) reads the rect on every push, as before U561b.
 //
 //   registerStrokeDerive(name, fn) → unregister: fn({frame, points, bbox,
 //     target}) → a partial payload; only its DESCRIBE_KEYS are kept. A throw
@@ -96,6 +104,23 @@ export const BUFFER_START = 256;   // numbers (64 samples); doubled as a stroke 
 // innermost element only).
 const CONTROL = 'button, input, select, textarea, option, label, [contenteditable]:not([contenteditable="false"])';
 const FRAMES = new Set(['iframe', 'frame', 'object', 'embed']);
+
+// The frame scheduler the rect read waits on: the injected one, else the
+// window's; false when there is none (the caller reads per push).
+const cfg = { raf: null };
+function askFrame(fn) {
+  if (cfg.raf) { cfg.raf(fn); return true; }
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(fn);
+    return true;
+  }
+  return false;
+}
+// Bumped by a re-render (the mount runtime's settle), a window resize or a
+// scroll: a handle whose rect was read under an older count reads at once,
+// whatever the frame (the re-render follow, U561a's).
+let layoutEpoch = 0;
+const layoutMoved = () => { layoutEpoch++; };
 
 function note(text) {
   try { showReaimNote(text); } catch { /* the note is a courtesy */ }
@@ -188,6 +213,13 @@ function makeHandle(type, frame, first) {
   // builds no object; frame.rect itself stays the begin-time box.
   const rect = { left: frame.rect.left, top: frame.rect.top, w: frame.rect.w, h: frame.rect.h };
   let done = false;
+  // At most one rect read per animation frame (GT-22 F3, U561b): rectFresh is
+  // set by a read and cleared by ONE held frame callback, made once here,
+  // never per push; readAt is the layout count the read was taken under.
+  let rectFresh = false;
+  let rafPending = false;
+  let readAt = -1;
+  const clearFresh = () => { rectFresh = false; rafPending = false; };
 
   function grow() {
     const next = new Float64Array(buf.length * 2);
@@ -214,6 +246,15 @@ function makeHandle(type, frame, first) {
     // A zero-size box leaves the previous rect in place.
     if (b && b.width > 0 && b.height > 0) { rect.left = b.left; rect.top = b.top; rect.w = b.width; rect.h = b.height; }
   }
+  // The push's read: skipped while this frame's read stands and the layout
+  // has not moved since; with no frame scheduler, every push reads.
+  function freshRect() {
+    if (rectFresh && readAt === layoutEpoch) return;
+    readRect();
+    readAt = layoutEpoch;
+    if (rafPending) { rectFresh = true; return; }
+    if (askFrame(clearFresh)) { rafPending = true; rectFresh = true; }
+  }
   function push(x) {
     if (done || x == null) return;
     let list = x;
@@ -225,12 +266,12 @@ function makeHandle(type, frame, first) {
         // A browser without coalesced samples: the event itself.
         const e = x.event && typeof x.event === 'object' ? x.event : x;
         if (e.predicted === true || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
-        readRect();
+        freshRect();
         take(e);
         return;
       }
     }
-    readRect();
+    freshRect();
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       if (!s || s.predicted === true || (predicted && predicted.includes(s))) continue;
@@ -240,6 +281,8 @@ function makeHandle(type, frame, first) {
   }
   function cancel() {
     done = true;
+    rectFresh = false;
+    rafPending = false;
     len = 0;
     buf = null;
   }
@@ -258,6 +301,8 @@ function makeHandle(type, frame, first) {
     const held = len;
     const raw = buf ? buf.subarray(0, held) : null;
     done = true;
+    rectFresh = false;
+    rafPending = false;
     buf = null;
     len = 0;
     if (!held) { note(EMPTY_HINT); return { ok: false, hint: EMPTY_HINT }; }
@@ -290,7 +335,7 @@ function makeHandle(type, frame, first) {
     type,
     frame,
     get count() { return len / STROKE_STRIDE; },
-    get rect() { return rect; },   // the held rect (read only): the box the last push read
+    get rect() { return rect; },   // the held rect (read only): the box the last read took
     push,
     commit,
     cancel,
@@ -331,9 +376,29 @@ export const stroke = Object.freeze({ begin, strokesOn });
 export { frameAt };
 
 let unregister = null;
-export function initTargetFrame() {
+export function initTargetFrame(opts = {}) {
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'raf')) {
+    if (opts.raf != null && typeof opts.raf !== 'function') throw new TypeError('initTargetFrame: raf must be a function');
+    cfg.raf = opts.raf || null;
+  }
   if (unregister) return;
   const a = registerCreateCtx('frameAt', frameAt);
   const b = registerCreateCtx('stroke', stroke);
-  unregister = () => { a(); b(); unregister = null; };
+  // The re-render follow: a settle, a resize or a scroll moves the layout
+  // count, so the next push reads the rect at once.
+  const M = typeof window !== 'undefined' ? window.__wcMount : null;
+  const c = M && typeof M.onSettle === 'function' ? M.onSettle(layoutMoved) : null;
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('scroll', layoutMoved, { capture: true, passive: true });
+    window.addEventListener('resize', layoutMoved, { passive: true });
+  }
+  unregister = () => {
+    a(); b();
+    if (c) c();
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('scroll', layoutMoved, { capture: true });
+      window.removeEventListener('resize', layoutMoved);
+    }
+    unregister = null;
+  };
 }

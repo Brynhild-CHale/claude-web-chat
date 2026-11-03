@@ -17,8 +17,11 @@
 //     stroke, and a pen-down → moves → pen-up through the overlay's one
 //     pointer dispatch posts ONE element;
 //   - points normalised against the rect (the four corners map to 0/1; a
-//     sample outside the box is clamped to [0, 1]); the rect read once per
-//     push, never per sample; a predicted sample is never stored;
+//     sample outside the box is clamped to [0, 1]); the rect read at most
+//     once per animation frame (U561b: a fake frame — three pushes in one
+//     frame read it once, the next frame's first push reads again, a
+//     re-render, resize or scroll reads at once, and with no rAF every push
+//     reads), never per sample; a predicted sample is never stored;
 //     input.samples absent → the event itself;
 //   - commit without a boolean shared is refused with its hint and sends
 //     nothing; commit with shared:false sends exactly ONE POST /api/elements
@@ -30,7 +33,7 @@
 //     throwing deriver is logged and the stroke still commits; duplicate names
 //     are refused;
 //   - pushing 10,000 samples allocates O(log n) buffers (a counting wrapper
-//     over Float64Array construction), reads the rect once per push, and
+//     over Float64Array construction), reads no rect inside begin's frame, and
 //     the per-sample path builds no array or object (a source pin);
 //   - a stored stroke record re-resolves after its pane re-renders with the
 //     svg moved one sibling down (strokesOn finds it on the moved svg); with
@@ -370,7 +373,7 @@ test('registerStrokeDerive merges only DESCRIBE_KEYS; a throwing deriver is logg
 
 // ── no allocation per sample ──────────────────────────────────────────────
 
-test('pushing 10,000 samples performs O(log n) buffer growths and reads the rect once per push', async () => {
+test('pushing 10,000 samples performs O(log n) buffer growths and reads no rect inside begin\'s frame', async () => {
   const Real = globalThis.Float64Array;
   let made = 0;
   const svg = q('svg.art');
@@ -389,7 +392,9 @@ test('pushing 10,000 samples performs O(log n) buffer growths and reads the rect
   assert.equal(h.count, 10001);
   const bound = Math.ceil(Math.log2((10001 * 4) / TF.BUFFER_START)) + 1;
   assert.ok(made <= bound, `${made} buffers ≤ ${bound} (the first and each doubling)`);
-  assert.equal(reads, 2500, 'one rect read per push');
+  // U561b: the 2,500 pushes all land in begin's frame (no frame boundary in a
+  // synchronous loop), so none reads; before U561b each read (2,500).
+  assert.equal(reads, 0, 'no rect read inside the frame begin read in');
   const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
   assert.equal(r.ok, true);
   assert.ok(posts()[0].body.payload.points.length / 4 <= ST.STROKE_POINTS_MAX, 'decimated to the bound');
@@ -423,7 +428,10 @@ test('the handle holds ONE rect: two pushes with a re-render between them write 
   h.push([sample(700, 600, 8)]);
   assert.strictEqual(h.rect, held, 'the same object after a re-render');
   assert.deepStrictEqual({ ...held }, { left: 300, top: 400, w: 400, h: 200 }, 'its values are the new box\'s');
-  // A zero-size box leaves the previous rect in place, as before.
+  // A zero-size box leaves the previous rect in place, as before. A frame
+  // boundary first (U561b): inside the frame the last push read in, the push
+  // would not read at all, and the guard would go untested.
+  await shell.tick();
   boxed(target, { left: 0, top: 0, width: 0, height: 0 });
   h.push([sample(500, 500, 12)]);
   assert.strictEqual(h.rect, held);
@@ -440,6 +448,133 @@ test('the handle holds ONE rect: two pushes with a re-render between them write 
   assert.ok(rr, 'readRect found');
   assert.doesNotMatch(rr[1], /rect\s*=\s*\{/, 'no rect object per push');
   assert.match(rr[1], /rect\.left = b\.left; rect\.top = b\.top; rect\.w = b\.width; rect\.h = b\.height;/);
+});
+
+// ── the rect at most once per frame (U561b) ───────────────────────────────
+
+// A fake frame scheduler: callbacks held until flush() runs them, as one frame.
+function fakeFrames() {
+  const queue = [];
+  const raf = (fn) => { queue.push(fn); return queue.length; };
+  raf.calls = () => queue.length;
+  const flush = () => { const run = queue.splice(0); for (const fn of run) fn(0); };
+  return { raf, flush, queue };
+}
+// Count the svg's getBoundingClientRect calls over the box the test sets.
+function countedSvg(box) {
+  const svg = q('svg.art');
+  const own = svg.getBoundingClientRect;
+  const c = { reads: 0, box: { ...box } };
+  svg.getBoundingClientRect = function () {
+    c.reads++;
+    const r = c.box;
+    return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height };
+  };
+  c.restore = () => { svg.getBoundingClientRect = own; };
+  return c;
+}
+
+test('three pushes inside one frame read the rect ONCE; the next frame\'s first push reads again; one frame callback per frame (U561b)', async () => {
+  const F = fakeFrames();
+  TF.initTargetFrame({ raf: F.raf });
+  const c = countedSvg(RECTS.svg);
+  try {
+    const h = TF.stroke.begin(inputOf(press(q('path.line'), 100, 200)));
+    // The press: the resolver's targetFrame walk reads the box once, and
+    // begin's own push (the pointerdown's samples) once.
+    assert.equal(c.reads, 2, 'the walk and begin\'s own push');
+    c.reads = 0;
+    assert.equal(F.queue.length, 1, 'one frame asked for');
+    F.flush();
+    h.push([sample(150, 225, 4)]);
+    h.push({ samples: [sample(200, 250, 8)], predicted: [] });
+    h.push({ event: sample(250, 275, 12) });
+    assert.equal(c.reads, 1, 'three pushes in one frame: one read');
+    assert.equal(F.queue.length, 1, 'one held callback for the frame, never one per push');
+    F.flush();
+    h.push([sample(260, 280, 16)]);
+    assert.equal(c.reads, 2, 'the next frame\'s first push reads again');
+    h.push([sample(270, 285, 20)]);
+    h.push([sample(280, 290, 24)]);
+    assert.equal(c.reads, 2, 'and only the first');
+    assert.equal(h.count, 7);
+    h.cancel();
+    F.flush();   // the pending callback after a cancel: harmless
+    assert.equal(F.queue.length, 0, 'nothing re-asked after the cancel');
+  } finally { c.restore(); TF.initTargetFrame({ raf: null }); }
+});
+
+test('a sample takes the rect the frame\'s read took: the begin-time box until the next frame\'s read (U561b)', async () => {
+  const F = fakeFrames();
+  TF.initTargetFrame({ raf: F.raf });
+  const c = countedSvg(RECTS.svg);
+  try {
+    const h = TF.stroke.begin(inputOf(press(q('path.line'), 100, 200)));
+    // Laid out anew with no re-render, resize or scroll the chrome hears: the
+    // frame's read stands until the frame ends.
+    c.box = { left: 300, top: 400, width: 400, height: 200 };
+    h.push([sample(300, 300, 4)]);
+    assert.deepStrictEqual({ ...h.rect }, { left: 100, top: 200, w: 200, h: 100 }, 'the begin-time box inside its frame');
+    F.flush();
+    h.push([sample(700, 600, 8)]);
+    assert.deepStrictEqual({ ...h.rect }, { left: 300, top: 400, w: 400, h: 200 }, 'the next frame\'s read');
+    const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
+    assert.equal(r.ok, true);
+    const pts = posts()[0].body.payload.points;
+    assert.deepStrictEqual(pts.filter((_, i) => i % 4 < 2), [0, 0, 1, 1, 1, 1],
+      'begin\'s sample and the same-frame push against the begin-time box, the next frame\'s against the new one');
+    assert.equal(F.queue.length, 1, 'the last push\'s frame, never one of the commit\'s');
+    F.flush();   // after the commit: harmless
+  } finally { c.restore(); TF.initTargetFrame({ raf: null }); }
+});
+
+test('the re-render follow reads at once, whatever the frame: a settle, a resize and a scroll (U561b)', async () => {
+  const F = fakeFrames();
+  TF.initTargetFrame({ raf: F.raf });
+  const c = countedSvg(RECTS.svg);
+  try {
+    const h = TF.stroke.begin(inputOf(press(q('path.line'), 100, 200)));
+    c.reads = 0;   // the press's walk and begin's push
+    c.box = { left: 300, top: 400, width: 400, height: 200 };
+    W.__wcMount.settle(rootOf('tf1'), 'tf1', 'mount');   // the pane re-rendered
+    h.push([sample(700, 600, 4)]);
+    assert.equal(c.reads, 1, 'a settle: read at once, inside the same frame');
+    assert.deepStrictEqual({ ...h.rect }, { left: 300, top: 400, w: 400, h: 200 });
+    h.push([sample(700, 600, 6)]);
+    assert.equal(c.reads, 1, 'then held again for the frame');
+    W.dispatchEvent(new W.Event('resize'));
+    h.push([sample(700, 600, 8)]);
+    assert.equal(c.reads, 2, 'a resize: read at once');
+    W.document.dispatchEvent(new W.Event('scroll'));
+    h.push([sample(700, 600, 10)]);
+    assert.equal(c.reads, 3, 'a scroll: read at once');
+    h.push([sample(700, 600, 12)]);
+    assert.equal(c.reads, 3);
+    assert.equal(F.queue.length, 1, 'still one frame asked for');
+    h.cancel();
+    F.flush();
+  } finally { c.restore(); TF.initTargetFrame({ raf: null }); }
+});
+
+test('with no frame scheduler (an export, a jsdom without rAF) every push reads the rect, as before (U561b)', async () => {
+  TF.initTargetFrame({ raf: null });
+  const ownRaf = W.requestAnimationFrame;
+  W.requestAnimationFrame = undefined;
+  const c = countedSvg(RECTS.svg);
+  try {
+    const h = TF.stroke.begin(inputOf(press(q('path.line'), 100, 200)));
+    c.reads = 0;   // the press's walk and begin's push
+    h.push([sample(150, 225, 4)]);
+    h.push({ event: sample(200, 250, 8) });
+    h.push([sample(160, 230, 10)]);
+    assert.equal(c.reads, 3, 'three pushes, three reads');
+    c.box = { left: 300, top: 400, width: 400, height: 200 };
+    h.push([sample(700, 600, 12)]);
+    assert.equal(c.reads, 4);
+    assert.deepStrictEqual({ ...h.rect }, { left: 300, top: 400, w: 400, h: 200 }, 'the new box at the very next push');
+    h.cancel();
+  } finally { c.restore(); W.requestAnimationFrame = ownRaf; }
+  assert.throws(() => TF.initTargetFrame({ raf: 'soon' }), /raf must be a function/);
 });
 
 // ── re-anchoring ──────────────────────────────────────────────────────────
