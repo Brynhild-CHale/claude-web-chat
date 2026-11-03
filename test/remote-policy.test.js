@@ -27,8 +27,9 @@
 //      to the code that sends those frames and bodies. TEXT_RULES is also
 //      proved by a probe: a daemon holding marked prompts, summaries and
 //      replies serves none of them, once each entry is stripped, from any
-//      route the table lets a `basic` viewer GET — save the replay documents,
-//      the one carrier still waiting on the maintainer's decision.
+//      route the table lets a `basic` viewer GET — the replay documents
+//      included: below read they are served with no caption and no element
+//      (DOCS@replay-text a), and a rendered replay file is refused 403 (AI10 a).
 //
 //   4. THE ANNOTATION ENGINE (protocol 11, PLAN.md 1B.1-1B.3, 1D.4): the
 //      comment routes at read and full, the element floor, the writer leases
