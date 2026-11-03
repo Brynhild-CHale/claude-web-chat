@@ -83,9 +83,10 @@ function checkWithStub(t, stub) {
   return require(CHECK_MODULE);
 }
 
-function withoutSwitch(t) {
+// The switch absent (value undefined), or set to anything but its off spelling.
+function withoutSwitch(t, value) {
   const prev = process.env.WEB_CHAT_UPDATE_CHECK;
-  delete process.env.WEB_CHAT_UPDATE_CHECK;
+  if (value === undefined) delete process.env.WEB_CHAT_UPDATE_CHECK; else process.env.WEB_CHAT_UPDATE_CHECK = value;
   t.after(() => { if (prev === undefined) delete process.env.WEB_CHAT_UPDATE_CHECK; else process.env.WEB_CHAT_UPDATE_CHECK = prev; });
 }
 
@@ -120,8 +121,8 @@ test('check() with WEB_CHAT_UPDATE_CHECK=0 makes no fetch and writes no cache', 
   assert.equal(fs.existsSync(cachePath()), false, 'no update-check record');
 });
 
-test('check() without the switch: a stale cache triggers the fetch as before', async (t) => {
-  withoutSwitch(t);
+for (const [label, value] of [['without the switch', undefined], ["with WEB_CHAT_UPDATE_CHECK=1 (only '0' is off)", '1']]) test(`check() ${label}: a stale cache triggers the fetch as before`, async (t) => {
+  withoutSwitch(t, value);
   withTempHome(t);
   let calls = 0;
   const { check, cachePath } = checkWithStub(t, async () => { calls++; return { version: '99.0.0' }; });
