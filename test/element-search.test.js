@@ -469,3 +469,72 @@ test('the tables: PRIVATE_RULES.routes and TEXT_RULES.routes key the route; drop
   assert.equal(PORTAL_PROTOCOL_VERSION, 12);
   assert.equal(mcpTools().length, 24);
 });
+
+// ── a stroke's page record: found by its label (tranche 5, U623) ────────────
+// describeAnchor reads lib/core/strokes pageLabel for a page record ('from A
+// to B', 'inside A', 'beside A'), so search finds a page stroke by its items
+// and names it in its hit; a private one is never a hit for a reader that
+// does not see private records (GT-16: 0 private hits).
+const strokes = require('../lib/core/strokes');
+const { approveElementPack } = require('../test-support/element-type-fixture');
+const PAGE_ARROW = (a, b) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 0.5, y: 0.5, w: 600, h: 200 },
+  to: { item: b, x: 0.25, y: 0.5, w: 600, h: 200 },
+});
+const PAGE_MARGIN = (a) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 1.1, y: 0.2, w: 600, h: 200 },
+  to: { item: a, x: 1.2, y: 0.8, w: 600, h: 200 },
+});
+const pageInk = (d) => approveElementPack(d, {
+  name: 'tq-search-ink-pack', type: 'tq-search-ink',
+  json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'tool'] } },
+});
+
+test('U623: a shared page stroke is found by its label "from A to B" at read and named in its hit; a margin stroke by "beside A"; a private one is 0 hits for lib/client and the remote read viewer, 403 at remote basic, and the local browser\'s alone', async (t) => {
+  const d = await boot(t, ['basic', 'read']);
+  for (const level of ['basic', 'read']) pageInk(d[level]);
+  for (const level of ['basic', 'read']) {
+    const { api } = d[level];
+    await render(api, 'wcpa');
+    await render(api, 'wcpb');
+    await render(api, 'wcpz');
+    await ok(api.post('/api/elements', { type: 'tq-search-ink', anchor: PAGE_ARROW('wcpa', 'wcpb'), payload: { tool: 'pen', shared: true } }), `${level}: a shared arrow`);
+    await ok(api.post('/api/elements', { type: 'tq-search-ink', anchor: PAGE_MARGIN('wcpa'), payload: { tool: 'pen', shared: true } }), `${level}: a shared margin stroke`);
+    await ok(api.post('/api/elements', { type: 'tq-search-ink', anchor: PAGE_ARROW('wcpz', 'wcpb'), payload: { tool: 'pen', shared: false } }), `${level}: a private arrow`);
+  }
+  const read = d.read;
+  const hit = await tool(read, url('from wcpa to wcpb'));
+  assert.equal(hit.hits.length, 1, JSON.stringify(hit));
+  assert.equal(hit.hits[0].type, 'tq-search-ink');
+  assert.equal(hit.hits[0].field, 'anchor');
+  assert.equal(hit.hits[0].anchor_label, 'from wcpa to wcpb', 'named in its hit');
+  assert.equal(hit.hits[0].snippet, 'from wcpa to wcpb');
+  assert.equal(hit.hits[0].live, true);
+  const beside = await tool(read, url('beside wcpa'));
+  assert.deepStrictEqual(beside.hits.map((x) => x.anchor_label), ['beside wcpa']);
+  // The remote read viewer finds the shared arrow too.
+  const remote = await read.call('GET', url('from wcpa to wcpb'), null, REMOTE);
+  assert.equal(remote.status, 200, JSON.stringify(remote.body));
+  assert.deepStrictEqual(remote.body.hits.map((x) => x.anchor_label), ['from wcpa to wcpb']);
+
+  // The private arrow (from wcpz to wcpb): 0 hits below seesPrivate.
+  for (const level of ['basic', 'read']) {
+    const dl = d[level];
+    for (const q of ['from wcpz', 'wcpz', 'to wcpb']) {
+      const body = await tool(dl, url(q));
+      assert.ok(!has(body, 'wcpz'), `${level}: lib/client q=${q}: the private stroke's item nowhere`);
+      assert.ok(body.hits.every((x) => x.shared !== false), `${level}: lib/client q=${q}: no private hit`);
+      const r = await dl.call('GET', url(q), null, REMOTE);
+      if (level === 'basic') assert.equal(r.status, 403, 'remote basic: refused before anything is read');
+      else {
+        assert.equal(r.status, 200);
+        assert.ok(!has(r.body, 'wcpz') && r.body.hits.every((x) => x.shared !== false), `remote read q=${q}: no private hit`);
+      }
+    }
+    assert.deepStrictEqual(await tool(dl, url('from wcpz')), { hits: [], truncated: false }, `${level}: lib/client: 0 private hits`);
+    const browser = await ok(dl.api.get(url('from wcpz to wcpb')), `${level}: browser`);
+    assert.deepStrictEqual(browser.hits.map((x) => [x.anchor_label, x.shared]), [['from wcpz to wcpb', false]], `${level}: the local browser sees its own private stroke`);
+  }
+});
