@@ -27,6 +27,21 @@
 //   - end() detaches after the next frame, cancel() at once; a second begin
 //     reuses the same canvas; a scroll mid-stroke moves the canvas with the
 //     target on the next frame.
+// Tranche 5, U615 (WET@clip-viewport, WET@trail; the timers stubbed through
+// initWetLayer({setTimeout, clearTimeout}), the layout viewport through
+// documentElement's clientWidth / clientHeight, the well through rectOf):
+//   - begin answers a token (a positive integer); a page target (#main,
+//     1,100 × 20,000 CSS px) at DPR 2 is clipped to the well's visible part,
+//     never over the viewport × dpr; a gutter sample is kept;
+//   - a scroll mid-stroke moves the clip, shifts the kept samples with the
+//     target and the next push reads the new clip origin;
+//   - a target in a nested shadow root hears a scroll on the OUTER root;
+//   - a second begin before end(N) keeps N on the trail (one drawImage,
+//     before the live canvas is cleared; no clearRect of the trail) until
+//     end(N); cancel(N) clears it at once; WET_HOLD_MS releases a trail no
+//     call names; end() bare still ends the active stroke;
+//   - 10,000 samples with holds between them: stats().allocs unchanged after
+//     the first begin, the trail canvas included.
 const test = require('node:test');
 const { before, after, afterEach } = test;
 const assert = require('node:assert');
@@ -48,6 +63,16 @@ function flush(max = 100) {
   return n;
 }
 
+// ── the fake timers the hold runs on (WET_HOLD_MS) ─────────────────────────
+const timers = [];
+const fakeSetTimeout = (fn, ms, arg) => { const h = { fn, ms, arg }; timers.push(h); return h; };
+const fakeClearTimeout = (h) => { const i = timers.indexOf(h); if (i >= 0) timers.splice(i, 1); };
+function fireTimers() {
+  let n = 0;
+  while (timers.length) { const h = timers.shift(); h.fn(h.arg); n++; }
+  return n;
+}
+
 // ── the geometry ────────────────────────────────────────────────────────────
 const rects = new Map();
 function rectOf(el) {
@@ -56,22 +81,19 @@ function rectOf(el) {
 }
 
 // ── the recording 2D context ────────────────────────────────────────────────
+// Every context's calls also go to `allCalls` (canvas class, call), so a test
+// can read their order across the two canvases.
 const contexts = [];
+const allCalls = [];
 function stubContext(canvasEl) {
   const calls = [];
-  const c = {
-    canvas: canvasEl,
-    calls,
-    setTransform: (...a) => calls.push(['setTransform', ...a]),
-    clearRect: (...a) => calls.push(['clearRect', ...a]),
-    beginPath: () => calls.push(['beginPath']),
-    moveTo: (...a) => calls.push(['moveTo', ...a]),
-    lineTo: (...a) => calls.push(['lineTo', ...a]),
-    stroke: () => calls.push(['stroke']),
-  };
+  const rec = (k) => (...a) => { calls.push([k, ...a]); allCalls.push([canvasEl.className, k, ...a]); };
+  const c = { canvas: canvasEl, calls };
+  for (const k of ['setTransform', 'clearRect', 'beginPath', 'moveTo', 'lineTo', 'stroke', 'drawImage']) c[k] = rec(k);
   contexts.push(c);
   return c;
 }
+const ctxOf = (el) => contexts.find((c) => c.canvas === el) || null;
 
 const PANE = {
   id: 'wet-pane', target: 'main', params: {},
@@ -80,6 +102,9 @@ const PANE = {
 const rootOf = (id) => M.itemEl(W.document, id).el.shadowRoot;
 const sheet = () => rootOf('wet-pane').querySelector('.sheet');
 const wetCanvases = () => [...W.document.querySelectorAll('canvas.el-wet')];
+const trailCanvas = () => W.document.querySelector('canvas.el-wet-trail');
+const WELL = { left: 0, top: 32, width: 1280, height: 768 };
+const VIEW = { width: 1280, height: 800 };
 const setDpr = (v) => Object.defineProperty(W, 'devicePixelRatio', { value: v, configurable: true, writable: true });
 const sample = (x, y, t, pressure = 0.5) => ({ clientX: x, clientY: y, pressure, timeStamp: t });
 
@@ -95,12 +120,16 @@ before(async () => {
   WL = await shell.importApp('wet-layer.js');
   await shell.frame(helloFrame({ mounts: [PANE] }));
   rects.set(sheet(), { left: 40, top: 100, width: 300, height: 200 });
-  wet = WL.initWetLayer({ raf: fakeRaf, rectOf });
+  rects.set(W.document.querySelector('.well-wrap'), WELL);
+  shell.scrollMetrics(W.document.documentElement, { clientWidth: VIEW.width, clientHeight: VIEW.height });
+  wet = WL.initWetLayer({ raf: fakeRaf, rectOf, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout });
 });
 
 afterEach(() => {
   if (wet) wet.cancel();
+  fireTimers();   // a stroke a test left on the trail is released
   flush();
+  assert.equal(wet.stats().held, 0, 'nothing left on the trail');
   setDpr(1);
 });
 
@@ -134,9 +163,13 @@ test('initWetLayer registers ctx.wet on every create ctx, once', () => {
 
 test('begin lays ONE canvas in the chrome\'s body over the target, backing rect × DPR (1, 2, 3), context scaled', () => {
   let first = null;
+  let prev = 0;
   for (const d of [1, 2, 3]) {
     setDpr(d);
-    assert.equal(wet.begin(sheet(), { pointerId: 3 }), true, `DPR ${d}: begun`);
+    const tok = wet.begin(sheet(), { pointerId: 3 });
+    assert.ok(Number.isInteger(tok) && tok > prev, `DPR ${d}: begun, a new positive token (${tok})`);
+    prev = tok;
+    if (!first) assert.equal(wet.stats().allocs, 7, 'the first begin: the canvas, the ring, the predicted slot, the trail canvas and the held table\'s three arrays');
     assert.equal(wet.active(), true);
     const all = wetCanvases();
     assert.equal(all.length, 1, `DPR ${d}: one canvas`);
@@ -256,7 +289,7 @@ test('push and the frame create nothing: no new, closure, literal or copy in the
     }
     throw new Error(name);
   };
-  for (const name of ['push', 'onWetFrame', 'place', 'schedule']) {
+  for (const name of ['push', 'onWetFrame', 'place', 'schedule', 'shiftKept', 'trailFrame', 'onViewportChange']) {
     const b = body(name);
     for (const bad of [/\bnew\s/, /=>/, /\bfunction\b/, /\[\s*\]/, /\{\s*\}/, /\.\.\./, /\.(slice|subarray|map|filter|concat|from)\(/]) {
       assert.ok(!bad.test(b), `${name} has no ${bad}`);
@@ -326,9 +359,11 @@ test('end() keeps the canvas one frame, then clears and detaches it; cancel() at
   flush();
   assert.equal(c.parentNode, W.document.body, 'the ending stroke\'s frame does not take the new one\'s canvas');
   assert.equal(wet.active(), true);
-  // A begin while active ends the previous stroke: its samples are gone.
+  // A begin while active holds the previous stroke on the trail (U615,
+  // WET@trail): the live canvas carries a fresh stroke, its samples gone.
   wet.push([sample(41, 101, 1), sample(42, 102, 2)]);
   assert.ok(wet.begin(sheet(), { pointerId: 14 }));
+  assert.equal(wet.stats().held, 1, 'the previous stroke is on the trail');
   let count = -1;
   wet.paint((x, view) => { count = view.count; });
   flush();
@@ -481,5 +516,269 @@ test('a scroll inside the pane\'s shadow root (no window event) moves the canvas
     delete root.addEventListener;
     delete root.removeEventListener;
     rects.set(sheet(), { left: 40, top: 100, width: 300, height: 200 });
+  }
+});
+
+// ── tranche 5, U615 ─────────────────────────────────────────────────────────
+
+test('a page target (#main, 1,100 × 20,000 CSS px) at DPR 2: the canvas is the well\'s visible part, never over the viewport × dpr; a gutter sample is kept (WET@clip-viewport, REQ@margins)', () => {
+  const main = W.document.getElementById('main');
+  rects.set(main, { left: 90, top: -5000, width: 1100, height: 20000 });
+  setDpr(2);
+  try {
+    const tok = wet.begin(main, { pointerId: 30 });
+    assert.ok(tok > 0, 'a page target begins');
+    const [c] = wetCanvases();
+    assert.ok(c.width <= VIEW.width * 2 && c.height <= VIEW.height * 2, `${c.width} × ${c.height}: within the viewport × dpr`);
+    assert.ok(c.width * c.height <= VIEW.width * VIEW.height * 2 * 2, 'its area within the viewport × dpr²');
+    assert.ok(c.width * c.height <= 16777216, 'under iOS Safari\'s canvas area cap');
+    assert.deepStrictEqual([c.style.left, c.style.top, c.style.width, c.style.height],
+      [`${WELL.left}px`, `${WELL.top}px`, `${WELL.width}px`, `${WELL.height}px`], 'the well\'s visible part, gutters included');
+    assert.deepStrictEqual([c.width, c.height], [WELL.width * 2, WELL.height * 2]);
+    // A sample in the gutter, left of the column (#main starts at 90), is kept against the clip's origin.
+    wet.push([sample(30, 300, 1), sample(600, 400, 2)]);
+    let seen = null;
+    wet.paint((x, view) => { seen = [view.x(0), view.y(0), view.x(1), view.y(1)]; });
+    flush();
+    assert.deepStrictEqual(seen, [30, 300 - WELL.top, 600, 400 - WELL.top]);
+    // The well scrolls under the page stroke: the clip stays, the kept samples move with #main.
+    rects.set(main, { left: 90, top: -5200, width: 1100, height: 20000 });
+    const live = ctxOf(c);
+    const clears = live.calls.filter((k) => k[0] === 'clearRect').length;
+    W.dispatchEvent(new W.Event('scroll'));
+    let fresh = -1;
+    wet.paint((x, view) => { seen = [view.x(0), view.y(0), view.x(1), view.y(1)]; fresh = view.fresh; });
+    flush();
+    assert.deepStrictEqual(seen, [30, 100 - WELL.top, 600, 200 - WELL.top], 'the kept samples followed the content');
+    assert.equal(fresh, 2, 'every kept sample fresh');
+    assert.ok(live.calls.filter((k) => k[0] === 'clearRect').length > clears, 'the canvas cleared for the redraw');
+    assert.equal(c.style.top, `${WELL.top}px`, 'the clip did not move');
+  } finally {
+    rects.delete(main);
+  }
+});
+
+test('a scroll mid-stroke moves the clip; the kept samples move with the target and a push reads the new clip origin', () => {
+  // The sheet starts above the well's top edge (32): the clip is its visible part.
+  const r = { left: 40, top: 20, width: 300, height: 200 };
+  rects.set(sheet(), r);
+  try {
+    assert.ok(wet.begin(sheet(), { pointerId: 31 }));
+    const [c] = wetCanvases();
+    assert.deepStrictEqual([c.style.left, c.style.top, c.style.width, c.style.height], ['40px', '32px', '300px', '188px'], 'the sheet ∩ the well');
+    wet.push([sample(50, 60, 1)]);
+    let seen = null;
+    wet.paint((x, view) => { seen = [view.x(0), view.y(0)]; });
+    flush();
+    assert.deepStrictEqual(seen, [10, 28], 'against the clip\'s origin (40, 32)');
+    // The page scrolls back: the sheet's top at 60, all of it inside the well.
+    r.top = 60;
+    W.dispatchEvent(new W.Event('scroll'));
+    flush();
+    assert.deepStrictEqual([c.style.top, c.style.height], ['60px', '200px'], 'the clip moved');
+    wet.push([sample(50, 110, 2)]);
+    wet.paint((x, view) => { seen = [view.x(0), view.y(0), view.x(1), view.y(1)]; });
+    flush();
+    assert.deepStrictEqual(seen, [10, 40, 10, 50], 'the kept sample moved with the sheet; the push reads the new origin (40, 60)');
+  } finally {
+    rects.set(sheet(), { left: 40, top: 100, width: 300, height: 200 });
+  }
+});
+
+test('a target in a nested shadow root follows a scroll dispatched on the OUTER root; both roots unheard after the detach', () => {
+  const outer = rootOf('wet-pane');
+  const host = W.document.createElement('div');
+  host.className = 'nested-host';
+  outer.appendChild(host);
+  const inner = host.attachShadow({ mode: 'open' });
+  const deep = W.document.createElement('div');
+  inner.appendChild(deep);
+  const r = { left: 60, top: 120, width: 100, height: 80 };
+  rects.set(deep, r);
+  try {
+    assert.ok(wet.begin(deep, { pointerId: 32 }));
+    const [c] = wetCanvases();
+    flush();
+    r.top = 140;
+    const before = rafCalls;
+    outer.querySelector('p.cap').dispatchEvent(new W.Event('scroll'));
+    assert.equal(rafCalls - before, 1, 'a scroll on the outer shadow root asks for one frame');
+    flush();
+    assert.equal(c.style.top, '140px', 'the canvas follows the nested target');
+    r.top = 150;
+    deep.dispatchEvent(new W.Event('scroll'));
+    flush();
+    assert.equal(c.style.top, '150px', 'its own root still heard');
+    wet.end();
+    flush();
+    const idle = rafCalls;
+    outer.querySelector('p.cap').dispatchEvent(new W.Event('scroll'));
+    deep.dispatchEvent(new W.Event('scroll'));
+    assert.equal(rafCalls, idle, 'no listener left on either root');
+  } finally {
+    rects.delete(deep);
+    host.remove();
+  }
+});
+
+test('a second begin before end(N) keeps stroke N on the trail until end(N); cancel(N) clears it at once (WET@trail)', () => {
+  const draw = (g, view) => {
+    view.clear();
+    g.beginPath();
+    for (let i = 0; i < view.count; i++) g.lineTo(view.x(i), view.y(i));
+    g.stroke();
+  };
+  const n = wet.begin(sheet(), { pointerId: 40 });
+  const [c] = wetCanvases();
+  wet.push([sample(50, 110, 1), sample(60, 120, 2)]);
+  wet.paint(draw);
+  flush();
+  // Samples pushed and asked for, not yet painted, when the next pen comes down.
+  wet.push([sample(70, 130, 3)]);
+  wet.paint(draw);
+  const at = allCalls.length;
+  const m = wet.begin(sheet(), { pointerId: 41 });
+  assert.ok(m > n, 'a new token');
+  const t = trailCanvas();
+  assert.ok(t && t.isConnected, 'the trail is laid');
+  assert.equal(t.parentNode, W.document.body);
+  assert.equal(t.nextSibling, c, 'just before the live canvas');
+  assert.deepStrictEqual([t.style.position, t.style.pointerEvents, t.style.zIndex, t.getAttribute('aria-hidden')], ['fixed', 'none', 'var(--z-pins)', 'true']);
+  assert.deepStrictEqual([t.style.left, t.style.top, t.style.width, t.style.height], ['0px', '0px', `${VIEW.width}px`, `${VIEW.height}px`], 'over the layout viewport');
+  const tc = ctxOf(t);
+  assert.ok(tc, 'the trail took its context at its first hold');
+  const trailClears = () => tc.calls.filter((k) => k[0] === 'clearRect').length;
+  const tc0 = trailClears();
+  const since = allCalls.slice(at);
+  const painted = since.findIndex((k) => k[0] === 'el-wet' && k[1] === 'lineTo' && k[2] === 30 && k[3] === 30);
+  const copied = since.findIndex((k) => k[0] === 'el-wet-trail' && k[1] === 'drawImage');
+  const cleared = since.findIndex((k, i) => i > copied && k[0] === 'el-wet' && k[1] === 'clearRect');
+  assert.ok(painted >= 0 && painted < copied, 'the unpainted tail was painted before the copy');
+  assert.ok(copied >= 0 && copied < cleared, 'copied onto the trail, then the live canvas cleared for the new stroke');
+  assert.equal(since.filter((k) => k[0] === 'el-wet-trail' && k[1] === 'drawImage').length, 1, 'one drawImage');
+  assert.deepStrictEqual(since[copied].slice(2), [c, 40, 100, 300, 200], 'at the two canvases\' placement offset');
+  assert.equal(wet.stats().held, 1);
+  // Stroke m draws and ends; frames run; stroke n stays wet on the trail.
+  wet.push([sample(80, 140, 4)]);
+  wet.paint(draw);
+  flush();
+  assert.equal(wet.end(), true, 'end() bare ends the active stroke');
+  flush();
+  assert.equal(c.parentNode, null, 'the live canvas detached');
+  assert.ok(t.isConnected, 'stroke N still wet');
+  assert.equal(trailClears() - tc0, 0, 'no clearRect of the trail');
+  assert.equal(wet.end(m), false, 'm already ended');
+  // end(N): the trail dries at the next frame, after N's dry marker paints.
+  assert.equal(wet.end(n), true);
+  assert.ok(t.isConnected, 'still laid until the frame');
+  assert.equal(flush(), 1);
+  assert.equal(t.parentNode, null, 'the trail detached');
+  assert.equal(trailClears() - tc0, 1, 'and cleared');
+  assert.equal(wet.stats().held, 0);
+  assert.equal(wet.end(n), false, 'a released token ends nothing');
+  // cancel(N) of a held stroke clears the trail at once; the active stroke goes on.
+  const a = wet.begin(sheet(), { pointerId: 42 });
+  wet.push([sample(50, 110, 5)]);
+  wet.paint(draw);
+  flush();
+  const b = wet.begin(sheet(), { pointerId: 43 });
+  assert.ok(t.isConnected && wet.stats().held === 1);
+  assert.equal(wet.cancel(a), true);
+  assert.equal(t.parentNode, null, 'cleared at once (a failed save)');
+  assert.equal(wet.stats().held, 0);
+  assert.equal(wet.active(), true, 'stroke b is untouched');
+  assert.equal(wet.cancel(a), false);
+  assert.equal(wet.end(a), false, 'a stale token never ends the active stroke');
+  assert.equal(wet.active(), true);
+  assert.equal(wet.cancel(b), true, 'cancel(token) of the active stroke drops it');
+  assert.equal(wet.active(), false);
+});
+
+test('WET_HOLD_MS releases a trail no end names; an ended stroke a begin catches dries at the next frame; the trail follows a scroll', () => {
+  assert.ok(WL.WET_HOLD_MS > 0 && WL.WET_HOLD_MS <= 1500, `WET_HOLD_MS ${WL.WET_HOLD_MS}`);
+  const r = { left: 40, top: 100, width: 300, height: 200 };
+  rects.set(sheet(), r);
+  try {
+    wet.begin(sheet(), { pointerId: 50 });
+    wet.push([sample(50, 110, 1)]);
+    wet.paint(() => {});
+    flush();
+    assert.equal(timers.length, 0, 'no timer while nothing is held');
+    wet.begin(sheet(), { pointerId: 51 });   // the caller never names stroke 50 (the pack at 9e633b7, the fixture)
+    const t = trailCanvas();
+    assert.equal(wet.stats().held, 1);
+    assert.equal(timers.length, 1, 'one hold timer');
+    assert.equal(timers[0].ms, WL.WET_HOLD_MS);
+    // The trail follows a scroll at the frame (one rect read: the same target's, already read).
+    r.top = 70;
+    W.dispatchEvent(new W.Event('scroll'));
+    flush();
+    assert.deepStrictEqual([t.style.left, t.style.top], ['0px', '-30px'], 'the trail moved with the sheet');
+    assert.equal(flush(), 0, 'and no frame runs after it (no idle loop)');
+    // The active stroke ends bare; the trail still waits for its timer.
+    assert.equal(wet.end(), true);
+    flush();
+    assert.equal(wet.active(), false);
+    assert.ok(t.isConnected, 'held past the active stroke\'s end');
+    // With no stroke active the trail still follows a scroll, reading its target's rect.
+    r.top = 60;
+    W.dispatchEvent(new W.Event('scroll'));
+    assert.equal(flush(), 1);
+    assert.equal(t.style.top, '-40px');
+    assert.equal(fireTimers(), 1);
+    assert.equal(t.parentNode, null, 'WET_HOLD_MS released it');
+    assert.equal(wet.stats().held, 0);
+    const idle = rafCalls;
+    W.dispatchEvent(new W.Event('scroll'));
+    assert.equal(rafCalls, idle, 'nothing held, nothing active: a scroll asks for no frame');
+    // A stroke already ended when the next pen comes down: held without a timer, dry at the next frame.
+    wet.begin(sheet(), { pointerId: 52 });
+    wet.push([sample(50, 110, 2)]);
+    wet.paint(() => {});
+    flush();
+    wet.end();
+    wet.begin(sheet(), { pointerId: 53 });
+    assert.ok(t.isConnected && wet.stats().held === 1, 'the ended stroke is on the trail');
+    assert.equal(timers.length, 0, 'its end came: no hold timer');
+    assert.equal(flush(), 1);
+    assert.equal(t.parentNode, null, 'dried at the next frame');
+    assert.equal(wet.active(), true, 'the new stroke is untouched');
+  } finally {
+    rects.set(sheet(), { left: 40, top: 100, width: 300, height: 200 });
+  }
+});
+
+test('10,000 samples with a hold every 1,000: stats().allocs unchanged after the first begin, the trail canvas included; nothing created', () => {
+  assert.ok(wet.begin(sheet(), { pointerId: 60 }));
+  const a0 = wet.stats().allocs;
+  const t0 = trailCanvas();
+  let created = 0;
+  const realCreate = W.document.createElement;
+  W.document.createElement = function createElement(...a) { created++; return realCreate.apply(this, a); };
+  try {
+    const batch = [sample(0, 0, 0), sample(0, 0, 0), sample(0, 0, 0), sample(0, 0, 0)];
+    const opts = { predicted: [sample(0, 0, 0)] };
+    let trail = null;
+    for (let n = 0; n < 10000; n += 4) {
+      for (let j = 0; j < 4; j++) {
+        batch[j].clientX = 40 + ((n + j) % 300);
+        batch[j].clientY = 100 + ((n + j) % 200);
+        batch[j].timeStamp = n + j;
+      }
+      assert.equal(wet.push(batch, opts), 4);
+      if (n % 1000 === 996) {
+        wet.paint(() => {});
+        flush();
+        assert.ok(wet.begin(sheet(), { pointerId: 61 + n }));   // the next pen: the previous stroke held
+        if (!trail) trail = trailCanvas();
+        assert.equal(trailCanvas(), trail, 'one trail canvas');
+        if (n % 3000 === 996) fireTimers();
+      }
+    }
+    assert.ok(trail && (t0 === null || t0 === trail));
+    assert.equal(wet.stats().allocs, a0, 'no allocation per sample, per push or per hold');
+    assert.equal(created, 0, 'no element created');
+  } finally {
+    W.document.createElement = realCreate;
   }
 });
