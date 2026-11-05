@@ -185,3 +185,104 @@ test('TEXT_UNDER_MAX is lib/core/ink-shape\'s; a long alt is cut there', () => {
   assert.deepStrictEqual(I.deriveDescribe({ target: null, points: [0.1, 0.2, 0.5, 0, 0.3, 0.6, 0.5, 8] }), { bbox: [0.1, 0.2, 0.2, 0.4] });
   assert.deepStrictEqual(I.deriveDescribe(null), {});
 });
+
+// ── pane and page strokes (tranche 5, 5A.5, U622) ───────────────────────────
+// A page stroke (frame.kind 'page', target-frame.js's derive input: points
+// and bbox in the page box's units, frame.rect that box, `items` the
+// endpoints' items from-item first) is read from its items' roots only — a
+// pane's shadowRoot (never a nested root nor an iframe) or a markdown block —
+// under ONE TEXT_NODES_MAX over both, the joined text cut at TEXT_UNDER_MAX;
+// a pane-frame stroke reads its element as before.
+const PAGE_BOX = { left: 0, top: 0, w: 1000, h: 2000 };
+const pageArg = (bbox, items) => ({ frame: { kind: 'page', target: W.document.getElementById('main'), rect: PAGE_BOX }, target: W.document.getElementById('main'), bbox, points: [], items });
+// A pane-like host with an open shadow root holding `html`, connected.
+function paneRoot(id, html) {
+  const host = W.document.createElement('div');
+  host.className = 'u622-host';
+  host.dataset.id = id;
+  W.document.body.appendChild(host);
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = html;
+  return root;
+}
+const itemOf = (id, root, kind = 'pane') => ({ id, kind, root, rect: { left: 0, top: 0, w: 100, h: 100 } });
+const rectText = (root, sel, r) => { for (const n of root.querySelectorAll(sel)) rangeRects.set(n.firstChild, [r]); };
+
+test('U622: an arrow\'s text_under joins the words under the stroke in pane A then pane B; text_box in the page box\'s units; a missed line is not taken', () => {
+  const A = paneRoot('ua', '<p class="a1">Alpha words</p><p class="a2">Alpha missed</p>');
+  const B = paneRoot('ub', '<p class="b1">Beta words</p>');
+  rectText(A, 'p.a1', R(100, 200, 100, 20));   // page units x 0.1..0.2, y 0.1..0.11
+  rectText(A, 'p.a2', R(100, 1200, 100, 20));  // far below the stroke
+  rectText(B, 'p.b1', R(600, 200, 100, 20));   // x 0.6..0.7
+  const bbox = [0.1, 0.1, 0.6, 0.01];
+  const d = I.deriveDescribe(pageArg(bbox, [itemOf('ua', A), itemOf('ub', B)]));
+  assert.equal(d.text_under, 'Alpha words Beta words', 'from-item first');
+  assert.deepStrictEqual(d.text_box, [0.1, 0.1, 0.6, 0.01]);
+  assert.deepStrictEqual(d.bbox, bbox);
+  const back = I.deriveDescribe(pageArg(bbox, [itemOf('ub', B), itemOf('ua', A)]));
+  assert.equal(back.text_under, 'Beta words Alpha words', 'the from item is read first, wherever it lies');
+  assert.ok(!/missed|outside|Revenue/.test(JSON.stringify([d, back])), 'nothing outside the items under the stroke is read');
+});
+
+test('U622: one TEXT_NODES_MAX over both items, the joined text cut at TEXT_UNDER_MAX', () => {
+  const span = (p, n) => Array.from({ length: n }, (_, i) => `<span>${p}${i}</span>`).join('');
+  const A = paneRoot('uc', span('alpha', 150));
+  const B = paneRoot('ud', span('beta', 150));
+  rectText(A, 'span', R(0, 0, 1000, 200));
+  rectText(B, 'span', R(0, 0, 1000, 200));
+  rangeReads = 0;
+  const d = I.deriveDescribe(pageArg([0, 0, 1, 0.1], [itemOf('uc', A), itemOf('ud', B)]));
+  assert.equal(rangeReads, I.TEXT_NODES_MAX, 'the bound over both items: 150 of A, 50 of B');
+  assert.ok(d.text_under.length <= I.TEXT_UNDER_MAX && d.text_under.endsWith('…'), 'cut at TEXT_UNDER_MAX');
+  assert.ok(d.text_under.startsWith('alpha0 alpha1'), 'from A first');
+
+  // A meeting nothing: B's first 50 nodes are read, the 51st never.
+  rectText(A, 'span', R(0, 1500, 10, 10));
+  const seen = [];
+  const own = W.Range.prototype.getClientRects;
+  W.Range.prototype.getClientRects = function probe() { seen.push(this.startContainer.nodeValue); return own.call(this); };
+  try {
+    const only = I.deriveDescribe(pageArg([0, 0, 1, 0.1], [itemOf('uc', A), itemOf('ud', B)]));
+    assert.equal(seen.length, I.TEXT_NODES_MAX);
+    assert.ok(seen.includes('beta49') && !seen.includes('beta50'), 'B read only to the shared bound');
+    assert.ok(only.text_under.startsWith('beta0 beta1'));
+  } finally { W.Range.prototype.getClientRects = own; }
+});
+
+test('U622: a pane item\'s walk enters no nested shadow root and no iframe; a markdown block item is read by its own tree', () => {
+  const B = paneRoot('ue', '<p class="e1">Outer words</p><div class="nest"></div><iframe class="fr"></iframe>');
+  rectText(B, 'p.e1', R(100, 200, 100, 20));
+  const nested = B.querySelector('div.nest').attachShadow({ mode: 'open' });
+  nested.innerHTML = '<span>Nested words</span>';
+  rectText(nested, 'span', R(100, 200, 100, 20));
+  const d = I.deriveDescribe(pageArg([0.1, 0.1, 0.2, 0.01], [itemOf('ue', B)]));
+  assert.equal(d.text_under, 'Outer words', 'the nested root and the iframe are never read');
+
+  const md = W.document.createElement('div');
+  md.dataset.mdId = 'md-u622';
+  md.innerHTML = '<p>Markdown words</p>';
+  W.document.body.appendChild(md);
+  rangeRects.set(md.querySelector('p').firstChild, [R(100, 200, 100, 20)]);
+  const m = I.deriveDescribe(pageArg([0.1, 0.1, 0.2, 0.01], [itemOf('md-u622', md, 'md')]));
+  assert.equal(m.text_under, 'Markdown words');
+  md.remove();
+});
+
+test('U622: a margin (\'beside\') stroke reads its nearest item\'s text under the stroke\'s box, none when it lies in the gutter; no items or no root read nothing', () => {
+  const A = paneRoot('uf', '<p class="f1">Near words</p>');
+  rectText(A, 'p.f1', R(100, 200, 100, 20));
+  const over = I.deriveDescribe(pageArg([0.05, 0.1, 0.1, 0.01], [itemOf('uf', A)]));
+  assert.equal(over.text_under, 'Near words', 'a margin stroke reaching over its item\'s words');
+  const gutter = I.deriveDescribe(pageArg([0.9, 0.1, 0.05, 0.01], [itemOf('uf', A)]));
+  assert.deepStrictEqual(gutter, { bbox: [0.9, 0.1, 0.05, 0.01] }, 'in the gutter: no text_under, no text_box');
+  // #main holds the panes and the markdown, and is never walked.
+  assert.deepStrictEqual(I.deriveDescribe(pageArg([0, 0, 1, 1], undefined)), { bbox: [0, 0, 1, 1] }, 'no items: the bbox alone');
+  assert.deepStrictEqual(I.deriveDescribe(pageArg([0, 0, 1, 1], [{ id: 'closed', kind: 'pane', root: null }])), { bbox: [0, 0, 1, 1] }, 'a closed root: nothing');
+});
+
+test('U622: a pane-frame stroke on a paragraph reads the paragraph\'s words (the unchanged Range path)', () => {
+  const p = q('p.outside');
+  const d = I.deriveDescribe({ frame: { kind: 'pane', target: p, rect: null }, target: p, bbox: [0, 0, 1, 1], points: [] });
+  assert.equal(d.text_under, 'Words outside every target');
+  assert.deepStrictEqual(d.text_box, [0, 0, 1, 1]);
+});
