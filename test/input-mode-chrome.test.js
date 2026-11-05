@@ -366,10 +366,22 @@ test('the stylesheet (U616): with no strokes tool armed the well keeps the finge
   const wrap = main.closest('.well-wrap');
   const html = W.document.documentElement;
   const both = () => [css.value(main, 'touch-action'), css.value(wrap, 'touch-action')];
+  // A locked pane's header under #main: .pane.locked .pane-header's auto is
+  // (0,3,0), which the well's armed rule (0,2,1) loses to, so the armed
+  // #main rule (1,1,1) must beat it (FINGER@page-limit: no finger gesture is the
+  // browser's anywhere in the well while a strokes tool is armed).
+  const lockedPane = W.document.createElement('div');
+  lockedPane.className = 'pane locked';
+  const lockedHeader = W.document.createElement('div');
+  lockedHeader.className = 'pane-header';
+  lockedPane.appendChild(lockedHeader);
+  main.appendChild(lockedPane);
+  const locked = () => css.value(lockedHeader, 'touch-action');
   ov.setArmed(null);
   IM.setFingerDraws('off');
   try {
     assert.deepEqual(both(), ['manipulation', null], 'disarmed: the browser pans and pinches');
+    assert.equal(locked(), 'auto', 'disarmed: a locked pane\'s header keeps auto');
     // The pen tool's stand-in (a strokes type: the ink pack's pen is a
     // plugin) and the box grab, finger-draws off and on.
     for (const t of ['im-strokes', 'box-grab']) {
@@ -378,8 +390,10 @@ test('the stylesheet (U616): with no strokes tool armed the well keeps the finge
         ov.setArmed(t);
         assert.equal(html.classList.contains('strokes-armed'), true, `${t} ${fd}`);
         assert.deepEqual(both(), ['none', 'none'], `${t}, finger-draws ${fd}: the well gives up every finger gesture (pinch-zoom off)`);
+        assert.equal(locked(), 'none', `${t}, finger-draws ${fd}: a locked pane's header gives them up too`);
         ov.setArmed(null);
         assert.deepEqual(both(), ['manipulation', null], `${t} disarmed: back to the browser's`);
+        assert.equal(locked(), 'auto', `${t} disarmed: a locked pane's header back to auto`);
       }
     }
     // No strokes tool armed (a taps tool, a selection tool): unchanged.
@@ -394,6 +408,7 @@ test('the stylesheet (U616): with no strokes tool armed the well keeps the finge
   } finally {
     ov.setArmed(null);
     IM.setFingerDraws('off');
+    lockedPane.remove();
   }
   // Every touch-action rule, by selector: the chrome's handles as they were
   // (graph canvas, pane grips, the dock's grips, the sheet's scrim and tab, the
@@ -416,6 +431,7 @@ test('the stylesheet (U616): with no strokes tool armed the well keeps the finge
     '#main => manipulation',
     'html.finger-strokes #main => none',
     'html.strokes-armed #main, html.strokes-armed .well-wrap, html.strokes-armed .well-wrap * => none',
+    'html.strokes-armed #main * => none',
   ]);
 });
 

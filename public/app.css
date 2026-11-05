@@ -3243,6 +3243,12 @@ html.finger-strokes #main { touch-action: none; }
    (STROKES_SHEET), which app.css cannot reach; a light-DOM fixed-aspect sheet
    also gives up selection and the callout. A tap still reaches a control. */
 html.strokes-armed #main, html.strokes-armed .well-wrap, html.strokes-armed .well-wrap * { touch-action: none; }
+/* a locked pane's header (.pane.locked .pane-header, auto, at (0,3,0)) would
+   beat the rule above (0,2,1) and keep the browser's finger gestures in the
+   well; at an id's specificity (1,1,1) this one beats every class rule in
+   #main while a strokes tool is armed (FINGER@page-limit), and changes nothing
+   disarmed, where the locked and phone headers still give the pan back. */
+html.strokes-armed #main * { touch-action: none; }
 html.strokes-armed #main [data-fixed-aspect] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
 /* ── U306 · orphans visible and the re-anchor card (public/app/orphans.js;
