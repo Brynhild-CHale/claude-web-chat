@@ -516,3 +516,88 @@ test('remote: a private element is neither undone nor named for a viewer that do
   assert.ok(!r.text.includes(priv.id) && !r.text.includes(PRIVATE));
   assert.deepEqual(d.srv.state.elements, [`${priv.id}@1`]);
 });
+
+// ── a stroke's page record: undone from either item (tranche 5, U623) ───────
+// UNDO@either-end: a page record names its item and both endpoints' items
+// (element-refs anchorItems), so the chrome's item finds an arrow from A to B
+// at A or at B, and a margin stroke at the item nearest its pen-down;
+// UNDO@scope (a) and WRITER@undo-selection (a) are unchanged.
+const strokes = require('../lib/core/strokes');
+const { approveElementPack } = require('../test-support/element-type-fixture');
+const PAGE_ARROW = (a, b) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 0.5, y: 0.5, w: 600, h: 200 },
+  to: { item: b, x: 0.25, y: 0.5, w: 600, h: 200 },
+});
+const PAGE_MARGIN = (a) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 1.1, y: 0.2, w: 600, h: 200 },
+  to: { item: a, x: 1.2, y: 0.8, w: 600, h: 200 },
+});
+const INK = 'tq-undo-ink';
+async function bootInk(t) {
+  const d = await boot(t);
+  await render(d.api, 'm3');
+  approveElementPack(d, { name: 'tq-undo-ink-pack', type: INK, json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'tool'] } } });
+  return d;
+}
+const ink = async (who, anchor, headers) => (await ok(who.post('/api/elements', { type: INK, anchor, payload: { tool: 'pen' } }, headers), 'POST ink')).element;
+const liveIds = (d) => (d.srv.state.elements || []).map((r) => r.split('@')[0]);
+
+test('UNDO@either-end (U623): an arrow from m1 to m2 is undone with the chrome\'s item m2 (the answer names m2), and another from m1 with item m1; an item it does not touch finds nothing', async (t) => {
+  const d = await bootInk(t);
+  const arrow = await ink(d.anonApi, PAGE_ARROW('m1', 'm2'));
+  const elsewhere = await d.anonApi.post(UNDO, { item: 'm3' });
+  assert.equal(elsewhere.status, 409, elsewhere.text);
+  assert.equal(elsewhere.json.error, 'nothing to undo');
+  assert.deepEqual(liveIds(d), [arrow.id]);
+
+  const r = await ok(d.anonApi.post(UNDO, { item: 'm2', device: 'desktop' }), 'undo from the end item');
+  assert.deepEqual(r.undone, { id: arrow.id, type: INK, v: 1, item: 'm2', how: 'removed' });
+  assert.deepEqual(liveIds(d), [], 'the arrow removed');
+
+  const again = await ink(d.anonApi, PAGE_ARROW('m1', 'm2'));
+  const s = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo from the start item');
+  assert.deepEqual(s.undone, { id: again.id, type: INK, v: 1, item: 'm1', how: 'removed' });
+
+  // An edit (v2) is reverted from the end item too.
+  const third = await ink(d.anonApi, PAGE_ARROW('m1', 'm2'));
+  await ok(d.anonApi.patch(`/api/elements/${third.id}`, { payload: { tool: 'marker' } }), 'PATCH v2');
+  const e = await ok(d.anonApi.post(UNDO, { item: 'm2' }), 'undo the edit from the end item');
+  assert.deepEqual([e.undone.id, e.undone.how, e.undone.to_v, e.undone.item], [third.id, 'reverted', 1, 'm2']);
+});
+
+test('UNDO@either-end (U623): a margin stroke is undone from its nearest item; with no item the page-wide newest is the caller\'s and its answer names its item', async (t) => {
+  const d = await bootInk(t);
+  const margin = await ink(d.anonApi, PAGE_MARGIN('m1'));
+  const off = await d.anonApi.post(UNDO, { item: 'm2' });
+  assert.equal(off.status, 409, 'not on another item');
+  const r = await ok(d.anonApi.post(UNDO, { item: 'm1' }), 'undo from its nearest item');
+  assert.deepEqual(r.undone, { id: margin.id, type: INK, v: 1, item: 'm1', how: 'removed' });
+
+  const arrow = await ink(d.anonApi, PAGE_ARROW('m2', 'm3'));
+  const page = await ok(d.anonApi.post(UNDO, {}), 'undo with no item');
+  assert.deepEqual(page.undone, { id: arrow.id, type: INK, v: 1, item: 'm2', how: 'removed' }, 'the record\'s own item');
+});
+
+test('WRITER@undo-selection (U623, unchanged): a pane\'s newer arrow ending on m2 is named in the hint when the user\'s highlight on m2 is undone, and left as it is; page-wide, a pane\'s newer highlight on the arrow\'s end item is named', async (t) => {
+  const d = await bootInk(t);
+  const mine = await highlight(d.anonApi, 'm2');
+  const theirs = await ink(d.anonApi, PAGE_ARROW('m1', 'm2'), PANE('m1'));
+  assert.deepEqual(theirs.writer, { class: 'pane', owner: 'pane:m1', verified: false });
+  const r = await ok(d.anonApi.post(UNDO, { item: 'm2' }), 'undo on m2');
+  assert.equal(r.undone.id, mine.id);
+  assert.deepEqual(r.newer, [{ id: theirs.id, type: INK, writer_class: 'pane' }]);
+  assert.match(r.hint, /a newer annotation on this pane is tq undo ink by pane; it was left as it is/);
+  assert.deepEqual(liveIds(d), [theirs.id], 'the pane\'s arrow is left');
+  const none = await d.anonApi.post(UNDO, { item: 'm2' });
+  assert.equal(none.status, 409, 'never a refusal keyed on writer, and nothing of the user\'s is left');
+  assert.deepEqual(none.json.newer, [{ id: theirs.id, type: INK, writer_class: 'pane' }]);
+
+  // Page-wide: the user's arrow from m1 to m3, then a pane's highlight on m3.
+  const arrow = await ink(d.anonApi, PAGE_ARROW('m1', 'm3'));
+  const pane = await highlight(d.anonApi, 'm3', PANE('m3'));
+  const w = await ok(d.anonApi.post(UNDO, {}), 'undo with no item');
+  assert.equal(w.undone.id, arrow.id);
+  assert.deepEqual(w.newer, [{ id: pane.id, type: 'highlight', writer_class: 'pane' }], 'a newer version on either of its items is named');
+});
