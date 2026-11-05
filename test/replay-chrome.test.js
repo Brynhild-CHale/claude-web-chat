@@ -581,3 +581,242 @@ test('a replay:open frame without a script id opens nothing', async () => {
   await tick();
   assert.equal(replayOpen(), false);
 });
+
+/* ---------- lib/replay/chrome captureClip: two shots in one session (U617) ---------- */
+//
+// captureClip against an in-process fake browser handed in through launchChrome's
+// spawnImpl seam: the DevTools pipe is two streams, and every page script the
+// capture sends is evaluated for real in a small jsdom page whose elements have
+// fixed boxes. (test-support/fake-chrome.js answers no page script, so a capture
+// against it never reaches a screenshot.) What is pinned: with `second`, one
+// launch, two Page.captureScreenshot calls with deep-equal clips, the style
+// injected between them (one <style data-wc-second>, as text) and two animation
+// frames drawn before the second; without it, exactly today's one shot and
+// return shape; and the region's union of several elements under
+// REGION_HEIGHT_MAX.
+const os = require('os');
+const { EventEmitter } = require('events');
+const { PassThrough, Writable } = require('stream');
+const timers = require('timers');
+const { encodePng, solid } = require('../test-support/png-encode');
+const chrome = require('../lib/replay/chrome');
+
+// A page whose elements (by id) have the given boxes, in document coordinates.
+// scrollIntoView scrolls the page (the element near the top-left of the
+// viewport) and getBoundingClientRect answers in viewport coordinates, as a
+// browser's do, so a box read without the scroll offset lands in the wrong place.
+function fakePage(boxes, docSize = { w: 1280, h: 6000 }) {
+  const body = Object.keys(boxes).map((id) => `<div id="${id}">${id}</div>`).join('');
+  const dom = new JSDOM(`<!doctype html><html><head></head><body>${body}</body></html>`, { pretendToBeVisual: true, runScripts: 'outside-only' });
+  const { window } = dom;
+  const zero = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+  const at = { x: 0, y: 0 };
+  for (const [k, a] of [['scrollX', 'x'], ['pageXOffset', 'x'], ['scrollY', 'y'], ['pageYOffset', 'y']]) {
+    Object.defineProperty(window, k, { configurable: true, get: () => at[a] });
+  }
+  window.Element.prototype.getBoundingClientRect = function () {
+    const b = boxes[this.id];
+    if (!b) return zero;
+    const left = b.left - at.x;
+    const top = b.top - at.y;
+    return { left, top, width: b.width, height: b.height, right: left + b.width, bottom: top + b.height };
+  };
+  window.Element.prototype.scrollIntoView = function () {
+    window.__scrolled = (window.__scrolled || []).concat(this.id);
+    const b = boxes[this.id];
+    if (b) { at.x = Math.max(0, b.left - 20); at.y = Math.max(0, b.top - 40); }
+  };
+  for (const k of ['scrollWidth', 'scrollHeight']) {
+    Object.defineProperty(window.document.documentElement, k, { value: k === 'scrollWidth' ? docSize.w : docSize.h });
+  }
+  return dom;
+}
+
+// spawnImpl → a fake Chrome process speaking the pipe protocol over `dom`.
+// `log` gets {launch}, {method, params}, {raf} (each requestAnimationFrame the
+// page asks for) and {shot, clip, styles} entries in the order they happen.
+function fakeChrome(dom, log) {
+  const { window } = dom;
+  // The page's own frames, on Node's timers: jsdom's requestAnimationFrame
+  // runs on the global setInterval, which this file's shell stubs out.
+  window.requestAnimationFrame = (fn) => { log.push({ raf: true }); return timers.setTimeout(() => fn(Date.now()), 16); };
+  let shots = 0;
+  return (bin, args) => {
+    log.push({ launch: args });
+    const proc = new EventEmitter();
+    proc.exitCode = null;
+    proc.signalCode = null;
+    proc.kill = () => false;
+    const replies = new PassThrough();
+    const send = (o) => replies.write(JSON.stringify(o) + '\0');
+    const reply = (msg, result = {}) => send({ id: msg.id, result, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+    const handle = async (msg) => {
+      log.push({ method: msg.method, params: msg.params });
+      switch (msg.method) {
+        case 'Target.createTarget': return reply(msg, { targetId: 'T1' });
+        case 'Target.attachToTarget': return reply(msg, { sessionId: 'S1' });
+        case 'Page.navigate':
+          reply(msg, { frameId: 'F1' });
+          return send({ method: 'Page.loadEventFired', params: {}, sessionId: msg.sessionId });
+        case 'Runtime.evaluate':
+          try {
+            return reply(msg, { result: { type: 'object', value: await window.eval(msg.params.expression) } });
+          } catch (e) {
+            return reply(msg, { exceptionDetails: { text: String(e && e.message) } });
+          }
+        case 'Page.captureScreenshot': {
+          shots += 1;
+          const styles = [...window.document.querySelectorAll('style[data-wc-second]')].map((s) => ({ parent: s.parentNode.nodeName, text: s.textContent }));
+          log.push({ shot: shots, clip: msg.params.clip, styles });
+          const png = encodePng(solid(4, 4, [shots * 60, 10, 10]), 4, 4, { alpha: false });
+          return reply(msg, { data: png.toString('base64') });
+        }
+        case 'Browser.close':
+          reply(msg);
+          setTimeout(() => { proc.exitCode = 0; replies.end(); proc.emit('exit', 0, null); }, 5);
+          return undefined;
+        default: return reply(msg);
+      }
+    };
+    let buf = '';
+    const cmds = new Writable({
+      write(chunk, enc, cb) {
+        buf += chunk.toString('utf8');
+        let i;
+        while ((i = buf.indexOf('\0')) >= 0) { const raw = buf.slice(0, i); buf = buf.slice(i + 1); handle(JSON.parse(raw)); }
+        cb();
+      },
+    });
+    proc.stdio = [null, null, null, cmds, replies];
+    return proc;
+  };
+}
+
+async function clipRun(t, { boxes, docSize, ...opts }) {
+  const dom = fakePage(boxes, docSize);
+  t.after(() => dom.window.close());
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-two-shots-'));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  const log = [];
+  const out = await chrome.captureClip({
+    chromePath: '/fake/chrome', html: '<!doctype html><p>x</p>', width: 800, height: 600, tmpDir, timeoutMs: 10000,
+    grace: { closeMs: 500, termMs: 100, killMs: 100 }, spawnImpl: fakeChrome(dom, log), ...opts,
+  });
+  assert.equal(chrome.liveBrowsers(), 0, 'the browser is torn down');
+  return { out, log, dom };
+}
+
+const BOXES = { a: { left: 100, top: 100, width: 400, height: 100 }, b: { left: 600, top: 700, width: 200, height: 100 } };
+
+test('captureClip with `second`: one launch, two screenshots of one clip object, the style injected as text between them and two frames drawn before the second', async (t) => {
+  const style = '.wc-ink { visibility: hidden } /* </style><script>x()</script> */';
+  const { out, log } = await clipRun(t, { boxes: BOXES, selector: '#a', clip: { x: 1, y: 2, w: 30, h: 40 }, second: { style } });
+  assert.equal(log.filter((l) => l.launch).length, 1, 'one browser launch');
+  const shots = log.filter((l) => l.shot);
+  assert.equal(shots.length, 2, 'two Page.captureScreenshot calls');
+  assert.deepEqual(shots[0].clip, shots[1].clip, 'the same clip');
+  assert.deepEqual(shots[0].clip, { x: 101, y: 102, width: 30, height: 40, scale: 1 });
+  const screenshotParams = log.filter((l) => l.method === 'Page.captureScreenshot').map((l) => l.params);
+  assert.deepEqual(screenshotParams[0], screenshotParams[1], 'every screenshot parameter equal');
+  assert.deepEqual(shots[0].styles, [], 'the first shot is taken before any style is injected');
+  assert.deepEqual(shots[1].styles, [{ parent: 'HEAD', text: style }], 'ONE <style data-wc-second> in the head, its text exactly the style');
+  const first = log.indexOf(shots[0]);
+  const second = log.indexOf(shots[1]);
+  const evals = log.map((l, i) => [l, i]).filter(([l]) => l.method === 'Runtime.evaluate');
+  const between = evals.filter(([, i]) => i > first && i < second);
+  assert.equal(between.length, 1, 'one page script between the shots');
+  const ex = String(between[0][0].params.expression);
+  assert.ok(ex.includes(JSON.stringify(style)), 'the style handed in as a JSON string');
+  assert.ok(ex.includes('.textContent =') && !/innerHTML|insertAdjacentHTML/.test(ex), 'set as text, never parsed as markup');
+  assert.equal(log.slice(between[0][1], second).filter((l) => l.raf).length, 2, 'two animation frames before the second shot');
+  assert.ok(Buffer.isBuffer(out.png) && Buffer.isBuffer(out.png_without), 'png and png_without');
+  assert.notDeepEqual(out.png, out.png_without, 'two shots, not one returned twice');
+  assert.deepEqual(Object.keys(out).sort(), ['box', 'png', 'png_without', 'scroll']);
+  assert.deepEqual(out.box, { x: 100, y: 100, w: 400, h: 100 });
+});
+
+test('captureClip without `second`: exactly one screenshot and the one-shot return shape', async (t) => {
+  const { out, log } = await clipRun(t, { boxes: BOXES, selector: '#a', clip: { x: 1, y: 2, w: 30, h: 40 } });
+  const shots = log.filter((l) => l.shot);
+  assert.equal(shots.length, 1, 'one screenshot');
+  assert.equal(log.slice(log.indexOf(shots[0])).filter((l) => l.method === 'Runtime.evaluate').length, 0, 'no page script after it');
+  assert.deepEqual(Object.keys(out).sort(), ['box', 'png', 'scroll']);
+  assert.deepEqual(out.scroll, { top: 0, left: 0 });
+  // With a region: the clip rides beside it, as before.
+  const r = await clipRun(t, { boxes: BOXES, item: null, selector: '#a', region: { selector: '#a', rel: { x: 0, y: 0, w: 1, h: 1 }, margin: 24 } });
+  assert.deepEqual(Object.keys(r.out).sort(), ['box', 'clip', 'png', 'scroll']);
+  assert.deepEqual(r.out.clip, { x: 76, y: 76, w: 448, h: 148 });
+  assert.equal(r.log.filter((l) => l.shot).length, 1);
+});
+
+test('unionBox: two boxes ± margin, clamped to the document; with no others and no cap it is regionClip', () => {
+  const doc = { w: 1000, h: 3000 };
+  assert.deepEqual(chrome.unionBox({ left: 100, top: 100, width: 400, height: 100 }, null, [{ left: 600, top: 700, width: 200, height: 100 }], 24, doc, Infinity),
+    { x: 76, y: 76, w: 748, h: 748 }, 'both boxes and the gap between them');
+  assert.deepEqual(chrome.unionBox({ left: 10, top: 10, width: 100, height: 100 }, null, [{ left: 900, top: 2950, width: 300, height: 200 }], 24, doc, Infinity),
+    { x: 0, y: 0, w: 1000, h: 3000 }, 'clamped to the document on every side');
+  assert.deepEqual(chrome.unionBox({ left: 100, top: 100, width: 400, height: 100 }, { x: 0.5, y: 0.5, w: 0.25, h: 0.5 }, [{ left: 150, top: 300, width: 10, height: 10 }], 0, doc, Infinity),
+    { x: 150, y: 150, w: 250, h: 160 }, 'the primary\'s REL box, the other\'s whole box');
+  assert.deepEqual(chrome.unionBox({ left: 100, top: 100, width: 400, height: 100 }, null, [null, { left: 'x', top: 5 }, { left: NaN, top: 0 }], 0, doc, Infinity),
+    { x: 100, y: 100, w: 400, h: 100 }, 'a box that is not one is ignored');
+  for (const [box, rel, m, d] of [
+    [{ left: 100, top: 50, width: 200, height: 100 }, { x: 0.25, y: 0.5, w: 0.5, h: 0.25 }, 24, { w: 1280, h: 2000 }],
+    [{ left: 10, top: 10, width: 200, height: 100 }, { x: 0, y: 0, w: 1, h: 1 }, 24, { w: 150, h: 2000 }],
+    [{ left: 0, top: 0, width: 200, height: 100 }, { x: 0.5, y: 0.5, w: 0, h: 0 }, 0, { w: 1000, h: 1000 }],
+  ]) assert.deepEqual(chrome.unionBox(box, rel, [], m, d, Infinity), chrome.regionClip(box, rel, m, d));
+  for (const fn of [chrome.regionClip, chrome.unionBox]) {
+    assert.doesNotThrow(() => new Function(`return (${fn.toString()})`)(), `${fn.name} is self-contained`);
+    assert.ok(!/REGION_|require\(/.test(fn.toString()), `${fn.name} names nothing outside its body`);
+  }
+});
+
+test('REGION_HEIGHT_MAX caps a tall union, centred on the primary\'s rel box, which stays inside it', () => {
+  const H = chrome.REGION_HEIGHT_MAX;
+  assert.ok(Number.isInteger(H) && H >= 2048 && H <= 8192, `about 4,096 CSS px (${H})`);
+  const doc = { w: 1280, h: 20000 };
+  const primary = { left: 100, top: 5000, width: 400, height: 200 };
+  const far = (top) => ({ left: 100, top, width: 400, height: 100 });
+  // Others far above and below: the window is centred on the primary.
+  const c = chrome.unionBox(primary, null, [far(100), far(12000)], 24, doc, H);
+  assert.equal(c.h, H);
+  assert.ok(c.y <= 5000 - 24 && c.y + c.h >= 5200 + 24, `the primary ± margin inside ${JSON.stringify(c)}`);
+  assert.equal(c.y, Math.floor(4976 - (H - 248) / 2), 'centred on it');
+  // An other only far below: the window is shifted inside the union, the primary still in it.
+  const d = chrome.unionBox({ left: 100, top: 100, width: 400, height: 200 }, null, [far(9000)], 24, doc, H);
+  assert.deepEqual([d.y, d.h], [76, H], 'starts at the union\'s top');
+  // The rel box is what is kept, not the primary's whole box.
+  const e = chrome.unionBox({ left: 0, top: 0, width: 400, height: 8000 }, { x: 0, y: 0.75, w: 1, h: 0.125 }, [], 0, doc, H);
+  assert.deepEqual([e.y, e.h], [6000, 1000], 'a rel box under the cap is not cut');
+  const f = chrome.unionBox({ left: 0, top: 0, width: 400, height: 8000 }, { x: 0, y: 0.75, w: 1, h: 0.125 }, [{ left: 0, top: 0, width: 10, height: 10 }], 0, doc, H);
+  assert.equal(f.h, H);
+  assert.ok(f.y <= 6000 && f.y + f.h >= 7000, `the rel box inside ${JSON.stringify(f)}`);
+});
+
+test('a region with two selectors covers both boxes and the gap between; a missing or unparsable listed selector is ignored; the primary is the one scrolled into view', async (t) => {
+  const region = (selectors, extra = {}) => ({ selector: '#a', rel: { x: 0, y: 0, w: 1, h: 1 }, margin: 24, selectors, ...extra });
+  const { out, log, dom } = await clipRun(t, { boxes: BOXES, selector: '#a', region: region(['#b']) });
+  assert.deepEqual(out.clip, { x: 76, y: 76, w: 748, h: 748 });
+  assert.deepEqual(log.filter((l) => l.shot)[0].clip, { x: 76, y: 76, width: 748, height: 748, scale: 1 });
+  assert.deepEqual(dom.window.__scrolled.filter((id) => id !== 'a'), [], 'only the primary is scrolled');
+  // #z is on the page but never laid out (no box): ignored like a missing one.
+  const missing = await clipRun(t, { boxes: { ...BOXES, z: { left: 0, top: 3000, width: 0, height: 0 } }, selector: '#a', region: region(['#nope', '[[bad', '#z', '#b']) });
+  assert.deepEqual(missing.out.clip, { x: 76, y: 76, w: 748, h: 748 }, 'the listed element that is there still widens it');
+  const none = await clipRun(t, { boxes: BOXES, selector: '#a', region: region(['#nope']) });
+  assert.deepEqual(none.out.clip, { x: 76, y: 76, w: 448, h: 148 }, 'only missing ones: the primary still clips');
+  // At most REGION_SELECTORS_MAX listed; the rest (and non-strings) are dropped from the page script.
+  const many = Array.from({ length: 12 }, (_, i) => `#s${i}`);
+  const ex = chrome.regionScript(region([...many, 7, null]));
+  assert.equal(chrome.REGION_SELECTORS_MAX, 8);
+  for (const s of many.slice(0, 8)) assert.ok(ex.includes(JSON.stringify(s)), s);
+  for (const s of many.slice(8)) assert.ok(!ex.includes(JSON.stringify(s)), `${s} dropped`);
+  assert.ok(ex.includes(String(chrome.REGION_HEIGHT_MAX)), 'the cap reaches the page script');
+  // A tall union through the page script is capped too, with `second` taking the same capped clip.
+  const tall = await clipRun(t, {
+    boxes: { a: { left: 100, top: 100, width: 400, height: 100 }, b: { left: 100, top: 9000, width: 400, height: 100 } }, docSize: { w: 1280, h: 12000 },
+    selector: '#a', region: region(['#b']), second: { style: '' },
+  });
+  assert.deepEqual(tall.out.clip, { x: 76, y: 76, w: 448, h: chrome.REGION_HEIGHT_MAX });
+  const shots = tall.log.filter((l) => l.shot);
+  assert.equal(shots.length, 2);
+  assert.deepEqual(shots[0].clip, shots[1].clip);
+});
