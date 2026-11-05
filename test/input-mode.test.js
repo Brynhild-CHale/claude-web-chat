@@ -863,3 +863,15 @@ test('STROKES_TARGETS equals targetFrame\'s set: its tags (img, canvas, svg) and
     assert.equal(n, 5, 'the five probes in the set');
   } finally { probe.remove(); }
 });
+
+test('the gutter (U612; REQ@margins (a)): with finger-draws on, a finger landing in .well-wrap outside #main routes \'tool\' — isInteractive stops at the well, never climbing to #stage\'s tabindex', () => {
+  const margin = W.document.getElementById('main').closest('.well-wrap');
+  assert.ok(margin && !W.document.getElementById('main').contains(margin), 'the well, outside #main');
+  assert.equal(IM.isInteractive(margin), false, 'the well is no control');
+  withStrokes('on', () => {
+    touchAt(margin, 'pointerdown', 161, { isPrimary: true });
+    assert.deepEqual(IM.touchesForTests({ routes: true }).routes, { 161: 'tool' }, 'the finger is the tool\'s in the gutter');
+    touchAt(margin, 'pointercancel', 161);
+    assert.deepEqual(IM.touchesForTests().touches, []);
+  });
+});

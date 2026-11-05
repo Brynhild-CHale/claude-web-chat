@@ -150,7 +150,8 @@ function selfInteractive(el, { tabindex = true } = {}) {
 // interactive. A focus sink below a host's root (#chat-stream's tabindex -1)
 // is hostSink's, below (K.2-181).
 function isWell(el) {
-  return (el.id === 'main' && el.getRootNode && el.getRootNode() === el.ownerDocument) || isHostRoot(el);
+  // The well's .well-wrap too (U612, REQ@margins (a)): a press in the gutters beside the column is the page's, never #stage's (tabindex 0).
+  return ((el.id === 'main' || el.classList.contains('well-wrap')) && el.getRootNode && el.getRootNode() === el.ownerDocument) || isHostRoot(el);
 }
 // isFocusSink(el): a focused element that takes focus without being a control
 // — #stage, the page's focusable scroll container (index.html gives it

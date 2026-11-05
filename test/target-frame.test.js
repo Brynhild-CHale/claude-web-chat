@@ -21,14 +21,42 @@
 //     iframe, a press inside an
 //     iframe's document and one in a data-wc-chrome subtree are refused with
 //     FRAME_HINT (REQ@hint-reflow's words), and begin() on them posts
-//     nothing; a press on the .mount-host itself (the pane's padding) is the
-//     page placeholder {ok: false, page: true, hint}; the derive input's
+//     nothing; for a type that does not declare 'page', a press on the
+//     .mount-host itself (the pane's padding) is refused as a page press
+//     {ok: false, page: true, hint: PAGE_KIND_HINT}; the derive input's
 //     frame carries its kind;
+//   - the page frame and REFRAME@commit (tranche 5, 5A.1, U612; REQ@ink-
+//     scope-v2 (2), REQ@margins (a), FRAME@pane-element (c), REQ@arrow-
+//     endpoints (a)), for a type whose listing row declares 'page': a
+//     pen-down in #main's padding and one in the well's gutter take kind
+//     'page' over the page box (the well's client box × #main's border box)
+//     and post a page record (lib/core/strokes pageRecord's) whose item is
+//     the item whose vertical span holds the pen-down y, from.x outside
+//     [0, 1]; markdown A → markdown B and pane A → pane B post 'between'
+//     records, every point in [0, 1] of the page box; block A → sibling block
+//     B of one pane, and a block → the same pane's padding, post the pane's
+//     'inside' record (never clamped to the first block); a 4 px overshoot
+//     past an svg stays on the svg, clamped (REFRAME_SLOP_PX), 40 px into
+//     prose is the pane's 'inside' record; no point outside [0, 1] after the
+//     commit's clamp over each frame kind; one #main read per animation frame
+//     per handle on the sample path, the well's only at begin and after a
+//     resize, and at commit each item's rect at most once; a type declaring
+//     only 'element' is refused in the margins with PAGE_KIND_HINT and its
+//     strokes keep 627c5f53's clamp; a pane header (its title too), the
+//     resize handles, a run's stacks button and head, a min chip, the run's
+//     fixed hint, the page meta and a data-wc-chrome subtree are refused with
+//     FRAME_HINT; strokesOn's page arm (a drawn #el-layer box marker → a
+//     frozen {...row, box}; under a pane frame only boxes meeting its rect);
+//     the arrow's derive input carries both endpoints' items; MARGIN@nearest-
+//     item's ties (in x among spans, in y) go to the earlier item; a
+//     data-wc-chrome subtree inside a markdown block is refused; no allocation
+//     per sample on a page frame; each posted payload passes the element
+//     log's plug-in check (the daemon's admission, U613);
 //   - the real create ctx a strokes type's create receives carries frameAt and
 //     stroke, and a pen-down → moves → pen-up through the overlay's one
 //     pointer dispatch posts ONE element;
 //   - points normalised against the rect (the four corners map to 0/1; a
-//     sample outside the box is clamped to [0, 1]); the rect read at most
+//     sample outside the box is clamped to [0, 1] at commit); the rect read at most
 //     once per animation frame (U561b: a fake frame — three pushes in one
 //     frame read it once, the next frame's first push reads again, a
 //     re-render, resize or scroll reads at once, and with no rAF every push
@@ -57,7 +85,7 @@ const { before, after, beforeEach } = test;
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { bootShell, helloFrame, respond } = require('../test-support/chrome-shell');
+const { bootShell, helloFrame, respond, DEFAULT_ROUTES } = require('../test-support/chrome-shell');
 const { waitUntil } = require('../test-support/helpers');
 
 const REPO = path.join(__dirname, '..');
@@ -94,12 +122,25 @@ const PROSE = {
     + '<div class="nest"></div><div class="nest2"><span class="slotted">slotted into a button</span></div>'
     + '</div></section><aside class="side">a note beside</aside>',
 };
+// The page frame's fixture (U612): a titled markdown item, a run of two panes
+// (A with two top-level blocks, an svg in the second; B with one) and a second
+// markdown item, laid out by stubPage().
+const PANE_A = { id: 'tfa', target: 'main', params: {}, gen: 0,
+  html: '<p class="a1">First block of pane A.</p>'
+    + '<div class="a2"><svg class="ch" viewBox="0 0 10 10"><rect class="cr" width="5" height="5"/></svg></div>' };
+const PANE_B = { id: 'tfb', target: 'main', params: {}, gen: 0, html: '<p class="b1">Pane B\'s prose.</p>' };
+const MD = [
+  { id: 'md-a', text: '# Page title\n\nA framing line.', owner: 'claude', headings: [{ level: 1, text: 'Page title', slug: 'page-title' }] },
+  { id: 'md-b', text: '## Part B\n\nMore prose.', owner: 'claude', headings: [{ level: 2, text: 'Part B', slug: 'part-b' }] },
+];
+const PAGE_TYPE = 'tf-page';   // its listing row declares 'page'
+const EL_TYPE = 'tf-el';       // its listing row declares only 'element'
 const MOVE_A = { id: 'tf2', target: 'main', params: {}, gen: 0,
   html: '<div class="box"><svg class="chart" viewBox="0 0 10 10"><rect width="5" height="5"/></svg><p>a caption under the chart</p></div>' };
 const MOVE_B = '<div class="box"><p class="new">a line added above</p><svg class="chart" viewBox="0 0 10 10"><rect width="5" height="5"/></svg><p>a caption under the chart</p></div>';
 const MOVE_C = '<div class="box"><p class="new">a line added above</p><p>a caption under the chart</p></div>';
 
-let shell, W, M, ov, TF, ST, anchors, topbar, state, oh;
+let shell, W, M, ov, TF, ST, anchors, topbar, state, oh, IMOD;
 let nextId = 1;
 let postAnswer = null;   // a function (body) → a route answer, or null for the default
 const posts = () => shell.calls.filter((c) => c.method === 'POST' && c.url === '/api/elements');
@@ -129,6 +170,32 @@ function stubProse() {
   boxed(q('aside.side', 'tf3'), { left: 500, top: 320, width: 400, height: 40 });
   for (const sel of ['svg.fig', 'img.im', 'canvas.cv3', 'div.fa']) boxed(q(sel, 'tf3'), { left: 520, top: 120, width: 40, height: 40 });
 }
+// The page box (U612): the well 1,600 px wide with a 16 px scrollbar
+// (clientWidth 1,584), #main the 1,180 px column 2,000 px tall — so the page
+// box is {left 0, top 50, w 1584, h 2000}.
+const WELL_BOX = { left: 0, top: 50, width: 1600, height: 900 };
+const MAIN_BOX = { left: 210, top: 50, width: 1180, height: 2000 };
+const PAGE_BOX = { left: 0, top: 50, w: 1584, h: 2000 };
+const ITEM_BOXES = {
+  'md-a': { left: 238, top: 76, width: 1124, height: 40 },
+  tfa: { left: 238, top: 140, width: 550, height: 300 },
+  tfb: { left: 812, top: 140, width: 550, height: 300 },
+  'md-b': { left: 238, top: 470, width: 1124, height: 40 },
+};
+const mainEl = () => W.document.getElementById('main');
+const wellEl = () => mainEl().closest('.well-wrap');
+const itemOf = (id) => M.itemEl(W.document, id).el;
+function stubPage() {
+  boxed(wellEl(), WELL_BOX);
+  Object.defineProperty(wellEl(), 'clientWidth', { configurable: true, get: () => 1584 });
+  Object.defineProperty(wellEl(), 'clientLeft', { configurable: true, get: () => 0 });
+  boxed(mainEl(), MAIN_BOX);
+  for (const [id, r] of Object.entries(ITEM_BOXES)) boxed(itemOf(id), r);
+  boxed(q('p.a1', 'tfa'), { left: 250, top: 150, width: 526, height: 60 });
+  boxed(q('div.a2', 'tfa'), { left: 250, top: 230, width: 526, height: 200 });
+  boxed(q('svg.ch', 'tfa'), { left: 300, top: 250, width: 200, height: 100 });
+  boxed(q('p.b1', 'tfb'), { left: 824, top: 150, width: 526, height: 60 });
+}
 // An event-like press: its composedPath() as a capture listener sees it.
 function press(el, x, y, extra = {}) {
   const pathOf = [];
@@ -148,8 +215,15 @@ function elementsRoute(url, init) {
   return { ok: true, element: { id: `p${nextId++}`, v: 1, type: body.type, ...body.payload, anchor: body.anchor } };
 }
 
+const BASE_TYPES = DEFAULT_ROUTES['/api/elements/types'];
+const typeRow = (type, anchorKinds) => ({ type, name: type, schema: `${type}@1`, reads: [`${type}@1`], anchors: anchorKinds,
+  family: 'markup', remote: { see: 'basic', send: 'basic' }, private: false, builtin: false, tier: 'local', pack: 'tf-pack', toolbar: {} });
+
 before(async () => {
-  shell = await bootShell({ routes: { '/api/elements': elementsRoute } });
+  shell = await bootShell({ routes: {
+    '/api/elements': elementsRoute,
+    '/api/elements/types': () => ({ ...BASE_TYPES, types: [...BASE_TYPES.types, typeRow(PAGE_TYPE, ['element', 'page']), typeRow(EL_TYPE, ['element'])] }),
+  } });
   W = shell.window;
   M = W.__wcMount;
   ov = await shell.importApp('overlay.js');
@@ -161,14 +235,20 @@ before(async () => {
   ({ view: state } = await shell.importApp('state.js'));
   const IM = await shell.importApp('input-mode.js');
   IM.setFingerDraws('off');
-  await shell.frame(helloFrame({ active: 'n1', mounts: [PANE, MOVE_A, PROSE] }));
+  IMOD = await shell.importApp('element-types.js');
+  await shell.frame(helloFrame({ active: 'n1', mounts: [PANE, MOVE_A, PROSE, PANE_A, PANE_B], markdown: MD,
+    order: ['tf1', 'tf2', 'tf3', 'md-a', 'tfa', 'tfb', 'md-b'] }));
   await shell.tick();
+  await waitUntil(() => IMOD.typeOf(PAGE_TYPE) && IMOD.typeOf(EL_TYPE), { timeout: 3000, what: 'the listing' });
   stubRects();
   stubProse();
+  stubPage();
   const nest = q('div.nest', 'tf3').attachShadow({ mode: 'open' });
   nest.innerHTML = '<p class="deep">a nested component\'s prose</p><button class="dbtn">Nested</button>';
   q('div.nest2', 'tf3').attachShadow({ mode: 'open' }).innerHTML = '<button class="sb"><slot></slot></button>';
   ov.registerType(TYPE, { input: 'strokes', place: 'box', draw() {} });
+  ov.registerType(PAGE_TYPE, { input: 'strokes', place: 'box', draw() {} });
+  ov.registerType(EL_TYPE, { input: 'strokes', place: 'box', draw() {} });
 });
 after(async () => {
   if (ov) { ov.setArmed(null); ov.setElements('live', []); }
@@ -321,20 +401,22 @@ test('a control, the chrome and a nested component\'s button are refused with FR
   assert.equal(posts().length, 0, 'nothing is posted');
 });
 
-test('a press on the .mount-host itself (the pane\'s padding) is the page placeholder: {ok: false, page: true, hint}, nothing posted', async () => {
+test('for a type that does not declare \'page\', a press on the .mount-host itself (the pane\'s padding) is a page press refused with PAGE_KIND_HINT, nothing posted', async () => {
+  // U612 re-stated U611's placeholder: a type declaring 'page' takes the page
+  // frame there (below); this one (no listing row) keeps 627c5f53's frames.
   const host = M.itemEl(W.document, 'tf3').el;
   assert.ok(host.classList.contains('mount-host'));
   const e = press(host, 495, 95);
-  assert.deepStrictEqual({ ...TF.frameAt(e) }, { ok: false, page: true, hint: TF.FRAME_HINT });
+  assert.deepStrictEqual({ ...TF.frameAt(e) }, { ok: false, page: true, hint: TF.PAGE_KIND_HINT });
   note('');
   assert.equal(TF.stroke.begin(inputOf(e)), null, 'begin refuses');
-  assert.equal(reaimText(), TF.FRAME_HINT, 'the hint is shown');
-  // A zero box on the outermost element: the same placeholder.
+  assert.equal(reaimText(), TF.PAGE_KIND_HINT, 'the hint is shown');
+  // A zero box on the outermost element: the same page press.
   const aside = q('aside.side', 'tf3');
   const own = aside.getBoundingClientRect;
   boxed(aside, { left: 0, top: 0, width: 0, height: 0 });
   try {
-    assert.deepStrictEqual({ ...TF.frameAt(press(aside, 1, 1)) }, { ok: false, page: true, hint: TF.FRAME_HINT });
+    assert.deepStrictEqual({ ...TF.frameAt(press(aside, 1, 1)) }, { ok: false, page: true, hint: TF.PAGE_KIND_HINT });
   } finally { aside.getBoundingClientRect = own; }
   await shell.tick();
   assert.equal(posts().length, 0, 'nothing is posted');
@@ -827,4 +909,408 @@ test('target-frame.js plugs in through registerCreateCtx, names no tool, colour 
   assert.equal((main.match(/^initTargetFrame\(\);/gm) || []).length, 1);
   assert.ok(main.indexOf('initTargetFrame();') > main.indexOf('initBoxGrab();'), 'after the box grab');
   TF.initTargetFrame();   // idempotent: a second call registers nothing (a duplicate would throw)
+});
+
+// ── the page frame and REFRAME@commit (U612) ──────────────────────────────
+
+const { registerSchema } = require('../lib/core/element-log');
+let logRow = null;
+// The daemon's admission of a plug-in row's version (U613's hunk of
+// lib/core/element-log checkPluginPayload): it throws on a refused anchor.
+function admitted(body) {
+  if (!logRow) {
+    logRow = registerSchema(`${PAGE_TYPE}@1`, { type: PAGE_TYPE,
+      keys: ['anchor', 'shared', ...ST.STROKE_KEYS.filter((k) => k !== 'anchor' && k !== 'shared'), ...ST.DESCRIBE_KEYS] });
+  }
+  logRow.check({ ...body.payload, anchor: body.anchor });
+  return true;
+}
+const xyOf = (pts) => pts.filter((_, i) => i % 4 < 2);
+const inUnit = (pts) => xyOf(pts).every((v) => v >= 0 && v <= 1);
+// One stroke through begin → push → commit, the armed type's: the posted body.
+async function strokeOf(el, at, moves, { type = PAGE_TYPE, width = 4 } = {}) {
+  ov.setArmed(type);
+  shell.calls.length = 0;
+  const h = TF.stroke.begin(inputOf(press(el, at[0], at[1])));
+  assert.ok(h, 'a handle');
+  h.push(moves.map(([x, y], i) => sample(x, y, 4 * (i + 1))));
+  const r = await h.commit({ tool: 'line', width, colour: 'accent', shared: false });
+  assert.equal(r.ok, true, r.hint);
+  assert.equal(posts().length, 1, 'one POST');
+  return { h, body: posts()[0].body };
+}
+const endOf = (item, x, y, r = ITEM_BOXES[item]) => ({ item, x: (x - r.left) / r.width, y: (y - r.top) / r.height });
+function assertEnd(got, want, what) {
+  assert.equal(got.item, want.item, `${what}: item`);
+  assert.ok(Math.abs(got.x - want.x) < 2e-4 && Math.abs(got.y - want.y) < 2e-4, `${what}: ${JSON.stringify(got)} ≈ ${JSON.stringify(want)}`);
+}
+
+test('a pen-down in #main\'s padding and one in the well\'s gutter take the page frame and post a page record on the item whose vertical span holds the pen-down y, from.x outside [0, 1]', async () => {
+  ov.setArmed(PAGE_TYPE);
+  const f = TF.frameAt(press(wellEl(), 100, 300));
+  assert.equal(f.ok, true, 'a gutter press is not refused (U611\'s pen-down refusal)');
+  assert.equal(f.kind, 'page');
+  assert.strictEqual(f.target, mainEl());
+  assert.deepStrictEqual(f.rect, PAGE_BOX, 'x over the well\'s client box, y over #main\'s border box');
+  assert.deepStrictEqual([f.w, f.h, f.aspect], [1584, 2000, 0.792]);
+  assert.deepStrictEqual(f.down, { item: null, kind: null });
+  const m = TF.frameAt(press(mainEl(), 220, 90));
+  assert.equal(m.kind, 'page', '#main\'s padding');
+
+  // #main's padding beside md-a (y 90 in md-a's span 76–116).
+  const pad = await strokeOf(mainEl(), [220, 90], [[224, 100], [226, 104]]);
+  const a = pad.body.anchor;
+  assert.ok(ST.isPageRecord(a), JSON.stringify(a));
+  assert.equal(a.item, 'md-a');
+  assert.equal(ST.pageShape(a), 'beside');
+  assertEnd(a.from, endOf('md-a', 220, 90), 'from');
+  assert.ok(a.from.x < 0, `from.x outside [0, 1]: ${a.from.x}`);
+  assert.deepStrictEqual([a.from.w, a.from.h], [1124, 40], 'the item\'s box in px');
+  assert.deepStrictEqual(a.frame, { w: 1584, h: 2000 }, 'the page box at commit');
+  assert.ok(inUnit(pad.body.payload.points));
+  assert.equal(pad.body.payload.width, 4 / 1584, 'px ÷ the page box\'s w');
+  assert.equal(pad.body.payload.aspect, 0.792, 'the page box\'s w ÷ h');
+  assert.ok(admitted(pad.body));
+
+  // The gutter beside the run (y 300: tfa's and tfb's span; tfa nearer in x).
+  const gut = await strokeOf(wellEl(), [100, 300], [[120, 320], [130, 360]]);
+  const g = gut.body.anchor;
+  assert.equal(g.item, 'tfa');
+  assertEnd(g.from, endOf('tfa', 100, 300), 'from');
+  assert.ok(g.from.x < 0, `from.x outside [0, 1]: ${g.from.x}`);
+  assert.equal(ST.pageShape(g), 'beside');
+  assert.ok(admitted(gut.body));
+});
+
+test('a stroke from markdown item A ending over markdown item B posts a page record from A to B', async () => {
+  const para = itemOf('md-a').querySelector('p');
+  ov.setArmed(PAGE_TYPE);
+  const f = TF.frameAt(press(para, 300, 100));
+  assert.equal(f.kind, 'page');
+  assert.deepStrictEqual(f.down, { item: 'md-a', kind: 'md' });
+  const { body } = await strokeOf(para, [300, 100], [[310, 300], [320, 490]]);
+  const a = body.anchor;
+  assert.equal(ST.pageShape(a), 'between');
+  assertEnd(a.from, endOf('md-a', 300, 100), 'from');
+  assertEnd(a.to, endOf('md-b', 320, 490), 'to');
+  assert.equal(ST.pageLabel(a), 'from md-a to md-b');
+  assert.ok(inUnit(body.payload.points));
+  assert.ok(admitted(body));
+});
+
+test('a stroke from pane A\'s paragraph ending over pane B is re-framed at commit: item = from.item = A, to.item = B, every point in [0, 1] of the page box', async () => {
+  ov.setArmed(PAGE_TYPE);
+  const f = TF.frameAt(press(q('p.a1', 'tfa'), 300, 170));
+  assert.equal(f.kind, 'pane', 'the pen-down frame is the pane\'s block');
+  const { h, body } = await strokeOf(q('p.a1', 'tfa'), [300, 170], [[600, 175], [900, 180]]);
+  assert.equal(h.frame.kind, 'pane', 'the handle keeps its pen-down frame');
+  const a = body.anchor;
+  assert.equal(a.item, 'tfa');
+  assert.equal(a.from.item, 'tfa');
+  assert.equal(a.to.item, 'tfb');
+  assertEnd(a.from, endOf('tfa', 300, 170), 'from');
+  assertEnd(a.to, endOf('tfb', 900, 180), 'to');
+  assert.ok(inUnit(body.payload.points), JSON.stringify(xyOf(body.payload.points)));
+  // The points are page units: the first sample at (300, 170) in client px.
+  const [x0, y0] = body.payload.points;
+  assert.ok(Math.abs(x0 - 300 / 1584) < 1e-4 && Math.abs(y0 - 120 / 2000) < 1e-4, `${x0}, ${y0}`);
+  assert.equal(body.payload.width, 4 / 1584);
+  assert.ok(admitted(body));
+});
+
+test('a stroke from block A to sibling block B of one pane posts that pane\'s \'inside\' record, no sample clamped to block A\'s box; one ending in the pane\'s padding the same', async () => {
+  for (const [what, end] of [['to block B', [300, 300]], ['to the pane\'s padding', [245, 435]]]) {
+    const { body } = await strokeOf(q('p.a1', 'tfa'), [300, 170], [[300, 240], end]);
+    const a = body.anchor;
+    assert.equal(ST.pageShape(a), 'inside', what);
+    assert.deepStrictEqual([a.item, a.from.item, a.to.item], ['tfa', 'tfa', 'tfa'], what);
+    assertEnd(a.from, endOf('tfa', 300, 170), `${what}: from`);
+    assertEnd(a.to, endOf('tfa', end[0], end[1]), `${what}: to`);
+    // Block A's box ends at y 210: the last sample (y > 290) is never cut to it.
+    const pts = body.payload.points;
+    const lastY = 50 + pts[pts.length - 3] * 2000;
+    assert.ok(Math.abs(lastY - end[1]) < 0.5, `${what}: the last sample kept at y ${lastY}`);
+    assert.deepStrictEqual([a.from.w, a.from.h], [550, 300], `${what}: the pane's host box`);
+    assert.ok(admitted(body));
+  }
+});
+
+test('REFRAME_SLOP_PX: a stroke on an svg overshooting its edge by 4 px keeps the svg\'s element record, clamped; one leaving it by 40 px into prose is the pane\'s \'inside\' record', async () => {
+  assert.equal(TF.REFRAME_SLOP_PX, 8);
+  const svg = q('svg.ch', 'tfa');
+  const over = await strokeOf(q('rect.cr', 'tfa'), [310, 260], [[400, 300], [504, 300]]);
+  assert.deepStrictEqual(over.body.anchor, anchors.record(rootOf('tfa'), svg, { mount: 'tfa' }), 'the svg\'s element record');
+  assert.deepStrictEqual(xyOf(over.body.payload.points), [0.05, 0.1, 0.5, 0.5, 1, 0.5], 'clamped to the svg');
+  assert.equal(over.body.payload.width, 4 / 200, 'width ÷ the svg\'s width');
+  const out = await strokeOf(q('rect.cr', 'tfa'), [310, 260], [[400, 300], [400, 390]]);
+  assert.equal(ST.pageShape(out.body.anchor), 'inside');
+  assert.equal(out.body.anchor.item, 'tfa');
+  assertEnd(out.body.anchor.to, endOf('tfa', 400, 390), 'to');
+});
+
+test('no point outside [0, 1] after the commit\'s clamp, over each frame kind', async () => {
+  const cases = [
+    ['target (an svg)', q('rect.cr', 'tfa'), [310, 260], [[503, 352], [295, 246]], 'element'],
+    ['pane (a block)', q('p.a1', 'tfa'), [300, 170], [[780, 214], [246, 147]], 'element'],
+    ['page (the gutter)', wellEl(), [100, 300], [[-40, 20], [1700, 400]], 'page'],
+    ['widened (pane A → pane B)', q('p.a1', 'tfa'), [300, 170], [[900, 180]], 'page'],
+  ];
+  for (const [what, el, at, moves, kind] of cases) {
+    const { body } = await strokeOf(el, at, moves);
+    assert.equal(body.anchor.kind, kind, what);
+    assert.equal(xyOf(body.payload.points).filter((v) => v < 0 || v > 1).length, 0, `${what}: ${JSON.stringify(xyOf(body.payload.points))}`);
+  }
+  // An endpoint past PAGE_END_MAX item-units from its nearest item (the page
+  // box's foot, 1,540 px under md-b's 40 px): pageRecord makes none, and the
+  // stroke is refused, never posted with a clamped endpoint (U613's rule).
+  ov.setArmed(PAGE_TYPE);
+  shell.calls.length = 0;
+  const h = TF.stroke.begin(inputOf(press(wellEl(), 100, 300)));
+  h.push([sample(1500, 2040, 4)]);
+  const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
+  assert.deepStrictEqual(r, { ok: false, hint: TF.FAILED_HINT });
+  assert.equal(reaimText(), TF.FAILED_HINT);
+  await shell.tick();
+  assert.equal(posts().length, 0, 'nothing is posted');
+});
+
+test('MARGIN@nearest-item\'s ties go to the earlier item in page order: in the run\'s gap equidistant from pane A and pane B, and between md-a and the run equidistant in y', async () => {
+  // (792, 300): in tfa's and tfb's vertical span, 4 px from each in x (tfb
+  // moved to start at 796 for this case; 792 = 0.5 of the 1,584 px page box,
+  // so the rounded point keeps the tie exact).
+  boxed(itemOf('tfb'), { ...ITEM_BOXES.tfb, left: 796 });
+  let gap;
+  try {
+    gap = await strokeOf(itemOf('tfa').closest('.run-grid'), [792, 300], [[792, 302]]);
+  } finally { boxed(itemOf('tfb'), ITEM_BOXES.tfb); }
+  assert.equal(gap.body.anchor.from.item, 'tfa', 'the earlier of two spans equally near in x');
+  // (300, 128): 12 px under md-a (76–116) and 12 px over the run (140–440).
+  const between = await strokeOf(mainEl(), [300, 128], [[300, 129]]);
+  assert.equal(between.body.anchor.from.item, 'md-a', 'the earlier of two items equally near in y');
+  assert.ok(admitted(gap.body) && admitted(between.body));
+});
+
+test('a page frame reads #main once per animation frame per handle on the sample path, the well only at begin and after a resize; at commit each item at most once, none per sample', async () => {
+  const F = fakeFrames();
+  TF.initTargetFrame({ raf: F.raf });
+  const counts = new Map();
+  const restore = [];
+  // target-frame.js's own reads: a registered deriver's (ink-describe.js
+  // reads its target's rect) are its own, not the commit's.
+  const count = (key, el) => {
+    const own = el.getBoundingClientRect;
+    counts.set(key, 0);
+    el.getBoundingClientRect = function () {
+      if (!/ink-describe/.test(String(new Error().stack))) counts.set(key, counts.get(key) + 1);
+      return own.call(this);
+    };
+    restore.push(() => { el.getBoundingClientRect = own; });
+  };
+  count('main', mainEl());
+  count('well', wellEl());
+  const items = [...mainEl().querySelectorAll('.mount-host, [data-md-id]')];
+  items.forEach((el, i) => count(`item${i}`, el));
+  const itemReads = () => items.map((_, i) => counts.get(`item${i}`));
+  const zero = () => { for (const k of counts.keys()) counts.set(k, 0); };
+  try {
+    ov.setArmed(PAGE_TYPE);
+    const h = TF.stroke.begin(inputOf(press(wellEl(), 100, 300)));
+    assert.equal(h.frame.kind, 'page');
+    assert.deepStrictEqual([counts.get('main'), counts.get('well')], [2, 1], 'begin: the frame\'s box (both) and begin\'s own push (#main)');
+    zero();
+    F.flush();
+    for (let i = 0; i < 3; i++) h.push([sample(110 + i, 310, 4 + i), sample(111 + i, 311, 5 + i)]);
+    assert.deepStrictEqual([counts.get('main'), counts.get('well')], [1, 0], 'three pushes in one frame: one #main read, no well read');
+    F.flush();
+    h.push([sample(120, 330, 10)]);
+    h.push([sample(121, 331, 11)]);
+    assert.deepStrictEqual([counts.get('main'), counts.get('well')], [2, 0], 'the next frame: one more');
+    W.dispatchEvent(new W.Event('resize'));
+    h.push([sample(122, 332, 12)]);
+    assert.deepStrictEqual([counts.get('main'), counts.get('well')], [3, 1], 'a resize: #main and the well read again, once');
+    h.push([sample(123, 333, 13)]);
+    assert.deepStrictEqual([counts.get('main'), counts.get('well')], [3, 1]);
+    assert.ok(itemReads().every((n) => n === 0), 'no item read on the sample path');
+    zero();
+    for (let i = 0; i < 200; i++) h.push([sample(130 + (i % 50), 340 + (i % 30), 14 + i)]);
+    const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
+    assert.equal(r.ok, true);
+    assert.ok(itemReads().every((n) => n <= 1), `at commit each item at most once: ${itemReads()}`);
+    assert.ok(itemReads().some((n) => n === 1), 'the endpoint search read items');
+    assert.equal(counts.get('main'), 1, 'commit: the page box once (and no push read in the frame)');
+    assert.equal(counts.get('well'), 1);
+    F.flush();
+  } finally { for (const f of restore) f(); TF.initTargetFrame({ raf: null }); }
+});
+
+test('an armed type whose listing row declares only \'element\': a margin pen-down is refused with PAGE_KIND_HINT and posts nothing; its stroke leaving an svg is clamped to the svg', async () => {
+  assert.equal(TF.PAGE_KIND_HINT, 'This tool draws on panes, images and canvases only; its pack does not draw in the margins yet.');
+  ov.setArmed(EL_TYPE);
+  for (const [what, el] of [['the gutter', wellEl()], ['#main\'s padding', mainEl()], ['a markdown item', itemOf('md-a').querySelector('p')],
+    ['a pane\'s padding', itemOf('tfa')]]) {
+    const e = press(el, 100, 300);
+    assert.deepStrictEqual({ ...TF.frameAt(e) }, { ok: false, page: true, hint: TF.PAGE_KIND_HINT }, what);
+    note('');
+    assert.equal(TF.stroke.begin(inputOf(e)), null, `${what}: begin refuses`);
+    assert.equal(reaimText(), TF.PAGE_KIND_HINT, `${what}: the hint is shown`);
+  }
+  await shell.tick();
+  assert.equal(posts().length, 0, 'nothing is posted');
+  // Its stroke leaving the svg by 100 px: clamped to the svg, as at 627c5f53.
+  const { body } = await strokeOf(q('rect.cr', 'tfa'), [310, 260], [[400, 300], [600, 450]], { type: EL_TYPE });
+  assert.deepStrictEqual(body.anchor, anchors.record(rootOf('tfa'), q('svg.ch', 'tfa'), { mount: 'tfa' }));
+  assert.deepStrictEqual(xyOf(body.payload.points), [0.05, 0.1, 0.5, 0.5, 1, 1]);
+});
+
+test('the chrome in the well is refused with FRAME_HINT for a type declaring \'page\': a pane header (its title too), the resize handles, a run\'s head and stacks button, a min chip, the fixed hint, the page meta, a data-wc-chrome subtree', async () => {
+  ov.setArmed(PAGE_TYPE);
+  const wrap = itemOf('tfa').closest('.pane');
+  const run = wrap.closest('.page-run');
+  const chip = W.document.createElement('button');
+  chip.className = 'min-chip';
+  chip.innerHTML = '<span>tfa</span><span class="restore">↗</span>';
+  run.querySelector('.run-min').appendChild(chip);
+  const chromeStrip = mainEl().appendChild(W.document.createElement('div'));
+  chromeStrip.setAttribute('data-wc-chrome', '');
+  chromeStrip.innerHTML = '<span class="cs">a strip</span>';
+  // A data-wc-chrome subtree inside a markdown item's block: the md arm of the
+  // positive list must not admit it (the strip above is refused by the list
+  // alone, so it cannot tell the data-wc-chrome check is there).
+  const mdChrome = itemOf('md-a').appendChild(W.document.createElement('span'));
+  mdChrome.setAttribute('data-wc-chrome', '');
+  mdChrome.innerHTML = '<span class="mc">chrome in a block</span>';
+  try {
+    const stacks = run.querySelector('.run-stacks');
+    assert.ok(stacks, 'the run of two panes draws its stacks button');
+    const cases = [['.pane-header', wrap.querySelector('.pane-header')], ['the title text', wrap.querySelector('.pane-title')],
+      ['.pane-resize-r', wrap.querySelector('.pane-resize-r')], ['.pane-resize-b', wrap.querySelector('.pane-resize-b')],
+      ['.pane-resize-rb', wrap.querySelector('.pane-resize-rb')], ['.run-head', run.querySelector('.run-head')],
+      ['the stacks button', stacks], ['.min-chip', chip], ['the chip\'s .restore', chip.querySelector('.restore')],
+      ['.run-fixed-hint', run.querySelector('.run-fixed-hint')], ['.page-meta', mainEl().querySelector('.page-meta')],
+      ['a data-wc-chrome subtree', chromeStrip.querySelector('.cs')],
+      ['a data-wc-chrome subtree inside a markdown block', mdChrome.querySelector('.mc')]];
+    for (const [what, el] of cases) {
+      assert.ok(el, `${what} exists`);
+      const e = press(el, 300, 130);
+      assert.deepStrictEqual({ ...TF.frameAt(e) }, { ok: false, hint: TF.FRAME_HINT }, what);
+      note('');
+      assert.equal(TF.stroke.begin(inputOf(e)), null, `${what}: begin refuses`);
+      assert.equal(reaimText(), TF.FRAME_HINT, `${what}: the hint is shown`);
+    }
+    // The page's own surfaces are admitted (PAGE_SURFACES).
+    for (const [what, el] of [['.page-run', run], ['.run-grid', run.querySelector('.run-grid')], ['.pane (the wrapper\'s box)', wrap],
+      ['a pane\'s padding', itemOf('tfa')], ['.md-block', itemOf('md-a')], ['#main', mainEl()], ['.well-wrap', wellEl()]]) {
+      assert.equal(TF.frameAt(press(el, 300, 130)).kind, 'page', what);
+    }
+    assert.deepStrictEqual(TF.frameAt(press(wrap, 300, 130)).down, { item: 'tfa', kind: 'pane' }, 'the wrapper\'s pane');
+    assert.deepStrictEqual(TF.frameAt(press(itemOf('tfa'), 300, 130)).down, { item: 'tfa', kind: 'pane' }, 'the pane\'s padding');
+    assert.equal(TF.PAGE_SURFACES, '.md-block, .page-run, .run-grid, .page-tail, .pane, #main, .well-wrap');
+    await shell.tick();
+    assert.equal(posts().length, 0, 'nothing is posted');
+  } finally { chip.remove(); chromeStrip.remove(); mdChrome.remove(); }
+});
+
+test('strokesOn\'s page arm: a page row\'s frozen view with its drawn marker\'s box under a page frame; under a pane frame only page rows whose box meets the frame\'s rect; element rows unchanged', async () => {
+  const layer = W.document.getElementById('el-layer');
+  assert.ok(layer, 'the overlay\'s page layer');
+  const rec = ST.pageRecord({ from: { item: 'tfa', x: 0.1, y: 0.1, w: 550, h: 300 }, to: { item: 'tfa', x: 0.4, y: 0.2, w: 550, h: 300 }, frame: { w: 1584, h: 2000 } });
+  const pageRow = { id: 'pg1', v: 1, type: PAGE_TYPE, anchor: rec, shared: false, replies: 0 };
+  const hiddenRow = { id: 'pg2', v: 1, type: PAGE_TYPE, anchor: rec, shared: false, replies: 0 };
+  const strayRow = { id: 'pg3', v: 1, type: PAGE_TYPE, anchor: rec, shared: false, replies: 0 };   // no marker drawn
+  const elRow = { id: 'el1', v: 1, type: PAGE_TYPE, anchor: anchors.record(rootOf('tfa'), q('svg.ch', 'tfa'), { mount: 'tfa' }), shared: false, replies: 0 };
+  const mk = (ids, box, shown, place = 'box') => {
+    const m = W.document.createElement('div');
+    m.setAttribute('data-el-ids', ids);
+    m.dataset.place = place;
+    m.style.display = shown ? 'block' : 'none';
+    boxed(m, box);
+    layer.appendChild(m);
+    return m;
+  };
+  const BOX = { left: 238, top: 140, width: 300, height: 60 };
+  const made = [mk('el0 pg1', BOX, true), mk('pg2', BOX, false), mk('pg3', BOX, true, 'glyph')];
+  let reads = 0;
+  const own = made[0].getBoundingClientRect;
+  made[0].getBoundingClientRect = function () { reads++; return own.call(this); };
+  ov.setElements('live', [pageRow, hiddenRow, strayRow, elRow]);
+  try {
+    ov.setArmed(PAGE_TYPE);
+    const pf = TF.frameAt(press(wellEl(), 100, 300));
+    const got = TF.stroke.strokesOn(pf, { type: PAGE_TYPE });
+    assert.deepStrictEqual(got.map((r) => r.id), ['pg1'], 'the drawn page row only: no element row under a page frame, no hidden or glyph marker');
+    assert.ok(Object.isFrozen(got[0]), 'a frozen view');
+    assert.deepStrictEqual({ ...got[0].box }, { left: 238, top: 140, w: 300, h: 60 }, 'its marker\'s client rect');
+    assert.deepStrictEqual(got[0].anchor, rec);
+    assert.equal(got[0].shared, false);
+    TF.stroke.strokesOn(pf, { type: PAGE_TYPE });
+    assert.equal(reads, 1, 'the marker\'s rect cached under the layout count');
+    assert.deepStrictEqual(TF.stroke.strokesOn(pf, { type: 'another' }), [], 'of that type only');
+    // Under pane A's block (250, 150, 526 × 60): the box meets it.
+    const pa = TF.frameAt(press(q('p.a1', 'tfa'), 300, 170));
+    assert.deepStrictEqual(TF.stroke.strokesOn(pa, { type: PAGE_TYPE }).map((r) => r.id), ['pg1']);
+    // Under pane B's block (824, 150): it does not.
+    const pb = TF.frameAt(press(q('p.b1', 'tfb'), 900, 170));
+    assert.deepStrictEqual(TF.stroke.strokesOn(pb, { type: PAGE_TYPE }), []);
+    // Under the svg (300, 250, 200 × 100): the element row as it is; the page row's box ends at 200.
+    const sv = TF.frameAt(press(q('rect.cr', 'tfa'), 310, 260));
+    const on = TF.stroke.strokesOn(sv, { type: PAGE_TYPE });
+    assert.deepStrictEqual(on.map((r) => r.id), ['el1']);
+    assert.deepStrictEqual(on[0], ov.elementsOf('live').find((r) => r.id === 'el1'), 'an element row is returned as it is');
+    assert.equal(Object.isFrozen(on[0]), false, 'never a view');
+    assert.equal('box' in on[0], false, 'no box: the eraser keeps the target\'s rect');
+  } finally { for (const m of made) m.remove(); ov.setElements('live', []); }
+});
+
+test('the derive input of an arrow carries frame.kind \'page\', target #main and both endpoints\' items with their roots', async () => {
+  const seen = [];
+  const off = TF.registerStrokeDerive('page-probe', (a) => { seen.push(a); return {}; });
+  try {
+    await strokeOf(q('p.a1', 'tfa'), [300, 170], [[900, 180]]);
+    await strokeOf(q('p.a1', 'tfa'), [300, 170], [[300, 300]]);
+    await strokeOf(itemOf('md-a').querySelector('p'), [300, 100], [[320, 490]]);
+  } finally { off(); }
+  const [arrow, inside, md] = seen;
+  assert.equal(arrow.frame.kind, 'page');
+  assert.deepStrictEqual({ ...arrow.frame.rect }, PAGE_BOX);
+  assert.deepStrictEqual(arrow.frame.down, { item: 'tfa', kind: 'pane' });
+  assert.strictEqual(arrow.target, mainEl());
+  assert.deepStrictEqual(arrow.items.map((i) => [i.id, i.kind]), [['tfa', 'pane'], ['tfb', 'pane']]);
+  assert.strictEqual(arrow.items[0].root, rootOf('tfa'), 'pane A\'s shadow root');
+  assert.strictEqual(arrow.items[1].root, rootOf('tfb'), 'pane B\'s shadow root');
+  assert.deepStrictEqual(arrow.items[1].rect, { left: 812, top: 140, w: 550, h: 300 });
+  assert.deepStrictEqual(arrow.bbox, ST.bboxOf(arrow.points), 'bbox in page units');
+  assert.deepStrictEqual(inside.items.map((i) => i.id), ['tfa'], 'one entry when from.item === to.item');
+  assert.deepStrictEqual(md.items.map((i) => [i.id, i.kind]), [['md-a', 'md'], ['md-b', 'md']]);
+  assert.strictEqual(md.items[0].root, itemOf('md-a'), 'the md block itself');
+});
+
+test('pushing 10,000 samples on a page frame performs O(log n) buffer growths and reads no rect inside begin\'s frame', async () => {
+  const Real = globalThis.Float64Array;
+  let made = 0;
+  let reads = 0;
+  const main = mainEl();
+  const own = main.getBoundingClientRect;
+  main.getBoundingClientRect = function () { reads++; return own.call(this); };
+  const samples = [];
+  for (let i = 0; i < 10000; i++) samples.push(sample(100 + (i % 200), 200 + (i % 100), i));
+  ov.setArmed(PAGE_TYPE);
+  globalThis.Float64Array = new Proxy(Real, { construct(t, a, nt) { made++; return Reflect.construct(t, a, nt); } });
+  let h;
+  try {
+    h = TF.stroke.begin(inputOf(press(wellEl(), 100, 200)));
+    reads = 0;
+    for (let i = 0; i < samples.length; i += 4) h.push(samples.slice(i, i + 4));
+  } finally { globalThis.Float64Array = Real; main.getBoundingClientRect = own; }
+  assert.equal(h.frame.kind, 'page');
+  assert.equal(h.count, 10001);
+  const bound = Math.ceil(Math.log2((10001 * 4) / TF.BUFFER_START)) + 1;
+  assert.ok(made <= bound, `${made} buffers ≤ ${bound}`);
+  assert.equal(reads, 0, 'no rect read inside the frame begin read in');
+  const r = await h.commit({ tool: 'line', width: 2, colour: 'accent', shared: false });
+  assert.equal(r.ok, true);
+  // The per-sample path: readPageRect writes the held rect's fields only.
+  const src = fs.readFileSync(path.join(REPO, 'public/app/target-frame.js'), 'utf8');
+  const rp = /\n  function readPageRect\(\) \{\n([\s\S]*?)\n  \}\n/.exec(src);
+  assert.ok(rp, 'readPageRect found');
+  assert.doesNotMatch(rp[1], /\bnew\b|\{\s*\w+\s*[:,}]|\.\.\.|\[/, 'readPageRect allocates nothing');
 });
