@@ -1,5 +1,7 @@
 // The stroke frame and the engine's stroke commit (annotation engine tranche
-// 4, plan 4F.1, U561; DECISIONS.md N.1 AD2 (a), AD3 (b), AD5 (a); rulings
+// 4, plan 4F.1, U561; tranche 5, 5A.1, U611: the pane frame — AD2 (a) is
+// superseded for strokes, DECISIONS.md N.1, O.1; DECISIONS.md N.1 AD3 (b),
+// AD5 (a); rulings
 // STREAM@4F AF1 (a), PRIVATE@create AF2 (a), U561@stroke-keys-and-window (a),
 // U561-U516@orphan-removed-target (a); FRAME@shared, CANVAS@home, PROTO@none).
 //
@@ -8,18 +10,47 @@
 // thin and no type posts on its own. Generic to any strokes type: nothing here
 // names a tool, a colour or a pack.
 //
-//   ctx.frameAt(event) → {ok: true, target, record, w, h, aspect, rect} |
-//                        {ok: false, hint}
-//     The fixed-aspect target under a press: the innermost element on the
-//     event's composedPath(), inside the pane's content root (the shadow root
-//     of a .mount-host — never the chrome, a markdown item, another host or an
-//     iframe), handed ONCE to the resolver's target-frame walk
-//     (ctx.anchors.targetFrame, lib/core/anchors.js — the one walk; nothing
-//     here re-walks the path). record is the target's ELEMENT record; rect
-//     {left, top, w, h} its box. Any refusal — not over an img, a canvas, an
-//     svg or a [data-fixed-aspect] element, over a control, in or over an
-//     iframe — answers FRAME_HINT: ink never lands over prose (AD2).
-//     `event` may be the create's input (its .event is read).
+//   ctx.frameAt(event) → {ok: true, kind, target, record, w, h, aspect, rect}
+//                        | {ok: false, hint} | {ok: false, page: true, hint}
+//     The frame under a press (tranche 5, 5A.1, U611; REQ@ink-scope-v2 (1),
+//     DECISIONS.md K.2-259; FRAME@pane-element A9 (c); FRAME@above-the-walk).
+//     The press's composedPath() is scanned ONCE, inner to outer, up to the
+//     pane's content root: the ShadowRoot on the path whose host is a
+//     .mount-host (a press inside a nested component's shadow root is in its
+//     pane too). The press's element in that root's own tree — the innermost
+//     element, or the host of the nested root it lies in (the first element
+//     of the path whose getRootNode() is the pane root) — is what the walk
+//     reads. In order:
+//       1. the refusals: over an iframe (a frame element) or in one (another
+//          document's node); a CONTROL (a button, an input, a select, a
+//          textarea, an option, a label, a contenteditable that is not false)
+//          on the innermost element's closest(), on the in-tree element's,
+//          or anywhere on the path inside the pane (CONTROL@refused: a stroke
+//          may cross a control and never takes its press);
+//       2. kind 'target': the resolver's target-frame walk, called ONCE
+//          (ctx.anchors.targetFrame, lib/core/anchors.js — the one walk;
+//          nothing here re-walks the path): a fixed-aspect target (an img, a
+//          canvas, an svg, a [data-fixed-aspect] element) wins unchanged; its
+//          'chrome' refusal (a data-wc-chrome subtree) stays refused;
+//       3. kind 'pane' — its other refusals ('not-fixed-aspect', 'no-box',
+//          'unrecordable'): THE PANE FRAME, the OUTERMOST element on the path
+//          inside the pane root (the element just before that root in
+//          composedPath()), recorded by the anchors' own record() — no second
+//          walk, no second targetFrame call —, its box the frame's rect and
+//          w ÷ h to 4 decimals its aspect; mount and root ride beside. Over
+//          text a stroke may drift when the text re-wraps (drift is reported
+//          beside, never a state: U531@aspect-drift).
+//     No outermost element (a press on the .mount-host itself: the pane's
+//     padding), a null record or a zero box answers {ok: false, page: true,
+//     hint}: the page frame's placeholder, U612's to turn into its 'inside'
+//     arm; until then a refusal with the hint, nothing posted. A press
+//     outside every pane (a markdown item, #main's padding, the well) is
+//     REFUSED here (U612's). A path that stops short of the pane root (a
+//     synthetic press) takes the innermost element's own root, as before.
+//     Every refusal answers FRAME_HINT (REQ@hint-reflow's words), the one hint
+//     a type shows. Points are not re-ruled: recordPoint and its hint stay on
+//     fixed-aspect targets (REQ@point-scope (a)). `event` may be the create's
+//     input (its .event is read).
 //
 //   ctx.stroke.begin(input) → a handle, or null
 //     At the pointerdown: the tray guard first (element-types.js trayAction: a
@@ -28,8 +59,8 @@
 //     showReaimNote) and answers null: a refused press draws and posts nothing.
 //     The pointerdown's own samples are the stroke's first. The type is the
 //     armed one.
-//   handle.frame     the frame begin found (a type's wet layer begins on
-//                    handle.frame.target)
+//   handle.frame     the frame begin found, kind 'target' or 'pane' (a
+//                    type's wet layer begins on handle.frame.target)
 //   handle.count     the samples held
 //   handle.rect      the rect the last read took ({left, top, w, h}): ONE
 //                    object per handle, written in place (read only)
@@ -71,17 +102,18 @@
 //     a jsdom without it) reads the rect on every push, as before U561b.
 //
 //   registerStrokeDerive(name, fn) → unregister: fn({frame, points, bbox,
-//     target}) → a partial payload; only its DESCRIBE_KEYS are kept. A throw
+//     target}) → a partial payload (frame.kind tells a target from a pane); only its DESCRIBE_KEYS are kept. A throw
 //     is logged and the stroke commits without it. Names are unique.
 //
-// THE ANCHOR is the target's element record, so placing a stroke is the
-// resolver's and the overlay's DRAW_RULES' (unchanged): exact or re-resolved,
-// the box marker sits on the target's current rect and the stroke follows a
-// re-render, a move or a resize (its points are box units); orphaned with a
-// locator guess, drawn at the guess (group.kind 'guess', the type draws it
-// faded); orphaned with no guess, never drawn at a stale position — listed by
-// orphans(). A stroke group is strokes.js strokeGroups' read-time answer, never
-// stored here.
+// THE ANCHOR is the frame target's element record — a fixed-aspect target's
+// or, for a pane frame, the outermost element's (no new anchor kind) — so
+// placing a stroke is the resolver's and the overlay's DRAW_RULES'
+// (unchanged): exact or re-resolved, the box marker sits on the target's
+// current rect and the stroke follows a re-render, a move or a resize (its
+// points are box units); orphaned with a locator guess, drawn at the guess
+// (group.kind 'guess', the type draws it faded); orphaned with no guess,
+// never drawn at a stale position — listed by orphans(). A stroke group is
+// strokes.js strokeGroups' read-time answer, never stored here.
 import { registerCreateCtx, elementsOf, armed } from './overlay.js';
 import { trayAction, TRAY_REFUSAL } from './element-types.js';
 import { request } from './http.js';
@@ -92,7 +124,7 @@ import {
   decimate, roundPoints, bboxOf,
 } from './strokes.js';
 
-export const FRAME_HINT = 'Ink draws on an image, an svg, a canvas or a canvas sheet — never over text or a control';
+export const FRAME_HINT = 'Ink draws anywhere on the page but on a control or the chrome; over text it may drift when the text re-wraps';
 export const SHARED_HINT = 'A stroke is sent only with shared true or false, as its type passes it.';
 export const STYLE_HINT = `A stroke needs a tool and a colour (at most ${STROKE_NAME_MAX} characters each) and a width above 0.`;
 export const EMPTY_HINT = 'Nothing was drawn.';
@@ -126,40 +158,101 @@ function note(text) {
   try { showReaimNote(text); } catch { /* the note is a courtesy */ }
 }
 
+// A pane's mount id, read off its .mount-host; null for any other host.
+function mountOf(h) {
+  if (!h || !h.classList || !h.classList.contains('mount-host')) return null;
+  return (h.dataset && h.dataset.mountId) || h.id || null;
+}
+const isPaneRoot = (n) => !!(n && n.nodeType === 11 && n.host && mountOf(n.host));
+
 // The pane content root a node sits in: the shadow root of a .mount-host
 // (its mount id beside it), else null.
 function contentRootOf(el) {
   const root = el && typeof el.getRootNode === 'function' ? el.getRootNode() : null;
   if (!root || root.nodeType !== 11 || !root.host) return null;
-  const h = root.host;
-  if (!h.classList || !h.classList.contains('mount-host')) return null;
-  const mount = (h.dataset && h.dataset.mountId) || h.id || null;
+  const mount = mountOf(root.host);
   return mount ? { root, mount } : null;
 }
 
 const REFUSED = Object.freeze({ ok: false, hint: FRAME_HINT });
+// The page frame's placeholder (U612 turns it into the page's 'inside' arm):
+// until then a refusal with the hint, and nothing is posted.
+const PAGE = Object.freeze({ ok: false, page: true, hint: FRAME_HINT });
+const isControl = (n) => !!(n && n.nodeType === 1 && typeof n.matches === 'function' && n.matches(CONTROL));
+const inControl = (n) => !!(n && typeof n.closest === 'function' && n.closest(CONTROL));
 
 function frameOf(event, api) {
   const e = event && event.event && typeof event.event === 'object' ? event.event : event;
   if (!e || typeof e !== 'object') return REFUSED;
   const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  // ONE scan of the path, inner to outer, up to the pane's content root: the
+  // innermost element, a control anywhere on the way (a nested component's
+  // button is a control too), and the root's index k.
   let el = null;
-  for (const n of path) if (n && n.nodeType === 1) { el = n; break; }
+  let k = -1;
+  let control = false;
+  for (let i = 0; i < path.length; i++) {
+    const n = path[i];
+    if (!n) continue;
+    if (n.nodeType === 1) {
+      if (!el) el = n;
+      if (isControl(n)) control = true;
+    } else if (isPaneRoot(n)) { k = i; break; }
+  }
   if (!el && e.target && e.target.nodeType === 1) el = e.target;
   if (!el) return REFUSED;
   // Never through a frame: a press over one (the frame element) or in one
   // (another document's node).
   if (el.ownerDocument !== document || FRAMES.has(String(el.localName || '').toLowerCase())) return REFUSED;
-  const where = contentRootOf(el);
-  if (!where) return REFUSED;
-  if (typeof el.closest === 'function' && el.closest(CONTROL)) return REFUSED;
+  let root = null;
+  if (k >= 0) root = path[k];
+  else {
+    // A path that stops short of the root (a synthetic press): the innermost
+    // element's own root, as before; its outermost element is the last of
+    // the path's elements in that root.
+    const w = contentRootOf(el);
+    if (w) { root = w.root; k = path.length; }
+  }
+  if (!root) {
+    // The pane's padding: a press on the .mount-host itself.
+    return mountOf(el) ? PAGE : REFUSED;   // anything else outside every pane: U612's
+  }
+  const mount = mountOf(root.host);
+  // The press's element in the pane root's own tree: the innermost element,
+  // or the host of the nested shadow root it lies in.
+  let own = null;
+  let outer = null;
+  for (let i = 0; i < k; i++) {
+    const n = path[i];
+    if (!n || n.nodeType !== 1 || typeof n.getRootNode !== 'function' || n.getRootNode() !== root) continue;
+    if (!own) own = n;
+    outer = n;
+  }
+  if (!own) own = el.getRootNode && el.getRootNode() === root ? el : null;
+  if (!own) return REFUSED;
+  if (control || inControl(el) || inControl(own)) return REFUSED;
   const a = api || anchorsApi;
   if (!a || typeof a.targetFrame !== 'function') return REFUSED;
-  const f = a.targetFrame(where.root, el, { mount: where.mount });
-  if (!f || f.refused || !f.target || !f.record) return REFUSED;
+  const f = a.targetFrame(root, own, { mount });
+  if (f && !f.refused && f.target && f.record) {
+    return {
+      ok: true, kind: 'target', target: f.target, record: f.record, w: f.w, h: f.h, aspect: f.aspect,
+      rect: { left: f.left, top: f.top, w: f.w, h: f.h },
+    };
+  }
+  // A control or the chrome stays refused (CONTROL@refused).
+  if (!f || f.refused === 'chrome' || !f.refused) return REFUSED;
+  // THE PANE FRAME (FRAME@pane-element): the outermost element on the path
+  // inside the pane root, its element record and its box.
+  if (!outer) return PAGE;
+  const rec = (typeof a.record === 'function' ? a : anchorsApi).record(root, outer, { mount });
+  if (!rec) return PAGE;
+  const b = typeof outer.getBoundingClientRect === 'function' ? outer.getBoundingClientRect() : null;
+  if (!b || !(b.width > 0) || !(b.height > 0)) return PAGE;
   return {
-    ok: true, target: f.target, record: f.record, w: f.w, h: f.h, aspect: f.aspect,
-    rect: { left: f.left, top: f.top, w: f.w, h: f.h },
+    ok: true, kind: 'pane', target: outer, record: rec, w: b.width, h: b.height,
+    aspect: Math.round(b.width / b.height * 1e4) / 1e4,
+    rect: { left: b.left, top: b.top, w: b.width, h: b.height }, mount, root,
   };
 }
 
