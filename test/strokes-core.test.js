@@ -552,6 +552,14 @@ test('pageShape and pageLabel for the three shapes; frameKindOf for each frame',
   assert.equal(S.pageLabel(between), 'from pane-a to pane-b');
   assert.equal(S.pageLabel(inside), 'inside md-2');
   assert.equal(S.pageLabel(beside), 'beside pane-a');
+  // [0, 1]² is inclusive: an end on its item's edge is inside; just past it, beside.
+  const RU = { left: 0, top: 0, w: 1000, h: 1000 };
+  const edges = (a, b) => S.pageShape(S.pageRecord({ frame: FRAME, from: endOf('A', RU, a), to: endOf('A', RU, b) }));
+  assert.equal(edges([0, 0], [1000, 1000]), 'inside', 'both ends on the corners');
+  assert.equal(edges([0, 1000], [1000, 0]), 'inside', 'the other corners');
+  assert.equal(edges([0, 0], [1000.1, 500]), 'beside', 'x just past 1');
+  assert.equal(edges([-0.1, 500], [500, 500]), 'beside', 'x just under 0');
+  assert.equal(edges([500, 500], [500, 1000.1]), 'beside', 'y just past 1');
   assert.equal(S.pageShape(svgAnchor(0)), null);
   assert.equal(S.pageLabel({ kind: 'page' }), null);
   const el = (tag, attrs = []) => ({ v: 1, kind: 'element', mount: 'p1', at: { path: [0], sib: 0 }, fp: { tag, id: '', cls: [], head: '', attrs, parent: 'div' }, rows: [] });
