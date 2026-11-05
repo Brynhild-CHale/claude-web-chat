@@ -47,7 +47,9 @@
 //     fixed hint, the page meta and a data-wc-chrome subtree are refused with
 //     FRAME_HINT; strokesOn's page arm (a drawn #el-layer box marker → a
 //     frozen {...row, box}; under a pane frame only boxes meeting its rect);
-//     the arrow's derive input carries both endpoints' items; no allocation
+//     the arrow's derive input carries both endpoints' items; MARGIN@nearest-
+//     item's ties (in x among spans, in y) go to the earlier item; a
+//     data-wc-chrome subtree inside a markdown block is refused; no allocation
 //     per sample on a page frame; each posted payload passes the element
 //     log's plug-in check (the daemon's admission, U613);
 //   - the real create ctx a strokes type's create receives carries frameAt and
@@ -1072,6 +1074,22 @@ test('no point outside [0, 1] after the commit\'s clamp, over each frame kind', 
   assert.equal(posts().length, 0, 'nothing is posted');
 });
 
+test('MARGIN@nearest-item\'s ties go to the earlier item in page order: in the run\'s gap equidistant from pane A and pane B, and between md-a and the run equidistant in y', async () => {
+  // (792, 300): in tfa's and tfb's vertical span, 4 px from each in x (tfb
+  // moved to start at 796 for this case; 792 = 0.5 of the 1,584 px page box,
+  // so the rounded point keeps the tie exact).
+  boxed(itemOf('tfb'), { ...ITEM_BOXES.tfb, left: 796 });
+  let gap;
+  try {
+    gap = await strokeOf(itemOf('tfa').closest('.run-grid'), [792, 300], [[792, 302]]);
+  } finally { boxed(itemOf('tfb'), ITEM_BOXES.tfb); }
+  assert.equal(gap.body.anchor.from.item, 'tfa', 'the earlier of two spans equally near in x');
+  // (300, 128): 12 px under md-a (76–116) and 12 px over the run (140–440).
+  const between = await strokeOf(mainEl(), [300, 128], [[300, 129]]);
+  assert.equal(between.body.anchor.from.item, 'md-a', 'the earlier of two items equally near in y');
+  assert.ok(admitted(gap.body) && admitted(between.body));
+});
+
 test('a page frame reads #main once per animation frame per handle on the sample path, the well only at begin and after a resize; at commit each item at most once, none per sample', async () => {
   const F = fakeFrames();
   TF.initTargetFrame({ raf: F.raf });
@@ -1155,6 +1173,12 @@ test('the chrome in the well is refused with FRAME_HINT for a type declaring \'p
   const chromeStrip = mainEl().appendChild(W.document.createElement('div'));
   chromeStrip.setAttribute('data-wc-chrome', '');
   chromeStrip.innerHTML = '<span class="cs">a strip</span>';
+  // A data-wc-chrome subtree inside a markdown item's block: the md arm of the
+  // positive list must not admit it (the strip above is refused by the list
+  // alone, so it cannot tell the data-wc-chrome check is there).
+  const mdChrome = itemOf('md-a').appendChild(W.document.createElement('span'));
+  mdChrome.setAttribute('data-wc-chrome', '');
+  mdChrome.innerHTML = '<span class="mc">chrome in a block</span>';
   try {
     const stacks = run.querySelector('.run-stacks');
     assert.ok(stacks, 'the run of two panes draws its stacks button');
@@ -1163,7 +1187,8 @@ test('the chrome in the well is refused with FRAME_HINT for a type declaring \'p
       ['.pane-resize-rb', wrap.querySelector('.pane-resize-rb')], ['.run-head', run.querySelector('.run-head')],
       ['the stacks button', stacks], ['.min-chip', chip], ['the chip\'s .restore', chip.querySelector('.restore')],
       ['.run-fixed-hint', run.querySelector('.run-fixed-hint')], ['.page-meta', mainEl().querySelector('.page-meta')],
-      ['a data-wc-chrome subtree', chromeStrip.querySelector('.cs')]];
+      ['a data-wc-chrome subtree', chromeStrip.querySelector('.cs')],
+      ['a data-wc-chrome subtree inside a markdown block', mdChrome.querySelector('.mc')]];
     for (const [what, el] of cases) {
       assert.ok(el, `${what} exists`);
       const e = press(el, 300, 130);
@@ -1182,7 +1207,7 @@ test('the chrome in the well is refused with FRAME_HINT for a type declaring \'p
     assert.equal(TF.PAGE_SURFACES, '.md-block, .page-run, .run-grid, .page-tail, .pane, #main, .well-wrap');
     await shell.tick();
     assert.equal(posts().length, 0, 'nothing is posted');
-  } finally { chip.remove(); chromeStrip.remove(); }
+  } finally { chip.remove(); chromeStrip.remove(); mdChrome.remove(); }
 });
 
 test('strokesOn\'s page arm: a page row\'s frozen view with its drawn marker\'s box under a page frame; under a pane frame only page rows whose box meets the frame\'s rect; element rows unchanged', async () => {
