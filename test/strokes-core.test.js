@@ -320,7 +320,7 @@ const near = (a, b, eps, what) => assert.ok(Math.abs(a - b) <= eps, `${what}: ${
 const nearPt = (p, q, eps, what) => { near(p[0], q[0], eps, `${what} x`); near(p[1], q[1], eps, `${what} y`); };
 const current = (r, e) => [r.left + e.x * r.w, r.top + e.y * r.h];
 
-test('pageRecord round-trips through JSON and isPageRecord; bounds and rounds; refuses what cannot make one', () => {
+test('pageRecord round-trips through JSON and isPageRecord; rounds; refuses what cannot make one, an endpoint past PAGE_END_MAX among them', () => {
   const rec = arrow();
   assert.deepStrictEqual(rec, {
     v: 1, kind: 'page', item: 'A', frame: { w: 1000, h: 2000 },
@@ -329,8 +329,11 @@ test('pageRecord round-trips through JSON and isPageRecord; bounds and rounds; r
   const back = JSON.parse(JSON.stringify(rec));
   assert.deepStrictEqual(back, rec);
   assert.equal(S.isPageRecord(back), true);
-  // Rounded to 1e-4, bounded to PAGE_END_MAX, sizes to integers (at least 1).
-  const r = S.pageRecord({ frame: { w: 999.6, h: 0.2 }, from: { item: 'A', x: 0.123456, y: -12, w: 300.4, h: 0.4 }, to: { item: 'A', x: 9, y: 1 / 3, w: 1, h: 1 } });
+  // Rounded to 1e-4, sizes to integers (at least 1); an endpoint past
+  // PAGE_END_MAX is refused (null), never clamped.
+  assert.equal(S.pageRecord({ frame: { w: 999.6, h: 0.2 }, from: { item: 'A', x: 0.123456, y: -12, w: 300.4, h: 0.4 }, to: { item: 'A', x: 9, y: 1 / 3, w: 1, h: 1 } }), null, 'x: 9 / y: -12 → null');
+  assert.equal(S.pageRecord({ frame: FRAME, from: { item: 'A', x: 0.5, y: S.PAGE_END_MAX + 0.001, w: 300, h: 20 }, to: { item: 'A', x: 0.5, y: 0.5, w: 300, h: 20 } }), null, 'a y just past PAGE_END_MAX → null');
+  const r = S.pageRecord({ frame: { w: 999.6, h: 0.2 }, from: { item: 'A', x: 0.123456, y: -S.PAGE_END_MAX, w: 300.4, h: 0.4 }, to: { item: 'A', x: S.PAGE_END_MAX, y: 1 / 3, w: 1, h: 1 } });
   assert.deepStrictEqual(r.frame, { w: 1000, h: 1 });
   assert.deepStrictEqual(r.from, { item: 'A', x: 0.1235, y: -S.PAGE_END_MAX, w: 300, h: 1 });
   assert.deepStrictEqual(r.to, { item: 'A', x: S.PAGE_END_MAX, y: 0.3333, w: 1, h: 1 });
@@ -340,6 +343,39 @@ test('pageRecord round-trips through JSON and isPageRecord; bounds and rounds; r
   assert.equal(S.pageRecord({ frame: { w: 0, h: 10 }, from: endOf('A', RA, [250, 200]), to: endOf('A', RA, [250, 200]) }), null, 'a zero frame');
   assert.equal(S.pageRecord({ frame: FRAME, from: { ...endOf('A', RA, [250, 200]), item: '' }, to: endOf('A', RA, [250, 200]) }), null, 'an empty item');
   assert.equal(S.pageRecord({ frame: FRAME, from: { ...endOf('A', RA, [250, 200]), w: 0 }, to: endOf('A', RA, [250, 200]) }), null, 'a 0 × 0 item box');
+});
+
+test('mapPage at the recorded rects is the identity for every record pageRecord returns (arrow, margin, inside, an endpoint at ±PAGE_END_MAX)', () => {
+  // Each case: the items' recorded boxes and a stroke in px; pageRecord builds
+  // the record from the stroke's first and last sample, and mapPage handed the
+  // same boxes must put every sample back where it was drawn, within 1e-6 px.
+  // A `far` case has an endpoint more than PAGE_END_MAX item-units from its
+  // item: pageRecord makes no record of it (a clamped one would map elsewhere).
+  const M = S.PAGE_END_MAX;
+  const H = { left: 100, top: 400, w: 400, h: 25 };   // a heading-sized item
+  const C = { left: 600, top: 700, w: 50, h: 25 };
+  const B2 = { left: 600, top: 500, w: 40, h: 20 };
+  const cases = [
+    { what: 'an arrow', ra: RA, rb: RB, px: ARROW_PX },
+    { what: 'a margin stroke', ra: RA, px: MARGIN_PX },
+    { what: 'an inside stroke', ra: RA, px: [[160, 150], [250, 200], [340, 250]] },
+    { what: 'an endpoint at exactly +PAGE_END_MAX', ra: H, px: [[300, 450], [310, 525], [300, 400 + M * 25]] },
+    { what: 'an endpoint at exactly −PAGE_END_MAX', ra: C, px: [[600 - M * 50, 700 - M * 25], [610, 705], [620, 710]] },
+    { what: 'an arrow to an end at −PAGE_END_MAX of its item', ra: RA, rb: B2, px: [[250, 200], [400, 300], [600 - M * 40, 500 - M * 20]] },
+    { what: 'a margin stroke 10 units below a heading', ra: H, px: [[300, 400 + 10 * 25], [320, 400 + 11 * 25], [340, 400 + 12 * 25]], far: true },
+    { what: 'an arrow whose end lies 12.5 units below a 24 px item', ra: RA, rb: { left: 100, top: 400, w: 400, h: 24 }, px: [[250, 200], [300, 700]], far: true },
+  ];
+  for (const { what, ra, rb, px, far } of cases) {
+    const rec = S.pageRecord({ frame: FRAME, from: endOf('A', ra, px[0]), to: endOf(rb ? 'B' : 'A', rb || ra, px[px.length - 1]) });
+    if (!far) assert.ok(rec, `${what}: a record`);
+    if (rec) {
+      const m = S.mapPage(rec, { points: pagePoints(px), stride: 4, width: 0.002 }, ra, rb || null);
+      assert.ok(m, `${what}: mapped`);
+      assert.equal(m.guess, false, `${what}: no guess`);
+      pxOf(m).forEach((p, k) => nearPt(p, px[k], 1e-6, `${what}: sample ${k}`));
+    }
+    if (far) assert.equal(rec, null, `${what}: no record`);
+  }
 });
 
 test('isPageRecord refuses an extra key, a missing endpoint, a non-finite x, |x| > PAGE_END_MAX, item ≠ from.item and a box grab\'s page anchor', () => {
