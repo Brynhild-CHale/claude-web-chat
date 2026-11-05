@@ -674,6 +674,321 @@ test('a box marker is clipped to its pane\'s host, and never drawn over a displa
   } finally { delete BOXES['iframe.emb']; }
 });
 
+// ── page strokes (U621; REQ@ink-scope-v2 b+, REQ@arrow-endpoints a) ────────
+// A page stroke is an item whose anchor is a strokes type's page record
+// (lib/core/strokes pageRecord): placed by its items through U613's mapPage,
+// spliced into the page cut as the ordered DOC_SPLICE set (J1 a).
+
+const strokes = require('../lib/core/strokes');
+const PAGE_FRAME = { w: 800, h: 1200 };
+// A box of BOXES as mapPage reads a rect, at the window's x scale.
+const rectAt = (key, s = 1) => {
+  const [l, tp, w, h] = BOXES[key];
+  return { left: l * s, top: tp, width: w * s, height: h };
+};
+// A straight stroke from p0 to p1 (page px), n samples in the page frame's
+// 0..1 units.
+function lineOf(p0, p1, n = 5) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push((p0[0] + (p1[0] - p0[0]) * i / (n - 1)) / PAGE_FRAME.w, (p0[1] + (p1[1] - p0[1]) * i / (n - 1)) / PAGE_FRAME.h, 0.5, i * 10);
+  }
+  return out;
+}
+// An endpoint's record: the page point p in item `key`'s box units.
+const endOf = (item, key, p) => {
+  const [l, tp, w, h] = BOXES[key] || [0, 0, 100, 40];
+  return { item, x: (p[0] - l) / w, y: (p[1] - tp) / h, w, h };
+};
+// An f-box item (place 'box') drawn as a page stroke from p0 in `from` to p1
+// in `to` (each [item id, BOXES key]).
+function pageItem(id, from, to, p0, p1) {
+  const anchor = strokes.pageRecord({ from: endOf(from[0], from[1], p0), to: endOf(to[0], to[1], p1), frame: PAGE_FRAME });
+  assert.ok(strokes.isPageRecord(anchor), `${id}: a page record`);
+  return {
+    id, v: 1, type: 'f-box', schema: 'f-box@1', seq: 9, anchor, shared: true, answer: null,
+    payload: { label: id, tool: 'pen', colour: 'ink', width: 0.004, points: lineOf(p0, p1), stride: 4, aspect: PAGE_FRAME.w / PAGE_FRAME.h },
+  };
+}
+function withItems(p, ...items) {
+  p.items.push(...items);
+  p.items.sort((a, b) => (a.id < b.id ? -1 : 1));
+  assert.equal(E.validatePayload(p), null, E.validatePayload(p) || '');
+  return p;
+}
+const ARROW = (id, dx = 0) => pageItem(id, ['fx-a', 'fx-a'], ['fx-b', 'fx-b'], [400 + dx, 540], [400 + dx, 740]);
+const boxOfMarker = (m) => [px(m.style.left), px(m.style.top), px(m.style.width), px(m.style.height)];
+const near = (a, b, what, tol = 1) => {
+  assert.equal(a.length, b.length, what);
+  a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) <= tol, `${what}: [${a}] vs [${b}]`));
+};
+// mapPage's union box over items, at the rects of `rects` ({id: rect}).
+function unionOf(items, rects) {
+  let u = null;
+  for (const it of items) {
+    const m = strokes.mapPage(it.anchor, it.payload, rects[it.anchor.from.item] || null, rects[it.anchor.to.item] || null);
+    if (!m) continue;
+    const b = m.box;
+    u = u ? { l: Math.min(u.l, b.left), t: Math.min(u.t, b.top), r: Math.max(u.r, b.left + b.w), b: Math.max(u.b, b.top + b.h) }
+      : { l: b.left, t: b.top, r: b.left + b.w, b: b.top + b.h };
+  }
+  return u ? { left: u.l, top: u.t, w: u.r - u.l, h: u.b - u.t } : null;
+}
+function openPage(p, node) {
+  const { win, net } = open(documentOf(p, node));
+  const errors = [];
+  win.console.error = (...a) => errors.push(a.join(' '));
+  const box = fBoxDraw(win);
+  win.__wcMount.elements.define('f-box', box.draw, p.types[0].assets);
+  return { win, net, errors, box };
+}
+
+test('a page stroke between two items is one box marker at mapPage\'s union box (data-el-ids, data-place box); re-mapped when an item moves; no ReferenceError, no network', async (t) => {
+  const p = withItems(fixturePayload(), ARROW('p1'), ARROW('p2', 30));
+  assert.equal(E.keyOf(p), 'comment+highlight+box+page', 'the page cut');
+  const { win, net, errors, box } = openPage(p);
+  await settled(win);
+  const m = markerOf(win, 'p1');
+  assert.ok(m, 'the page stroke is drawn');
+  assert.equal(m.getAttribute('data-el-ids'), 'p1 p2', 'one group: (type, from.item, to.item)');
+  assert.equal(m.getAttribute('data-place'), 'box');
+  assert.equal(m.getAttribute('data-type'), 'f-box');
+  assert.ok(classes(m).includes('el-hit') && !classes(m).includes('el-generic'), 'drawn by its type, as a hit');
+  const rects = { 'fx-a': rectAt('fx-a'), 'fx-b': rectAt('fx-b') };
+  const u = unionOf([p.items.find((x) => x.id === 'p1'), p.items.find((x) => x.id === 'p2')], rects);
+  near(boxOfMarker(m), [u.left, u.top, u.w, u.h], 'the union box, within 1 px');
+  assert.equal(m.getAttribute('data-f-box-label'), 'p1', 'the draw read its record');
+  assert.notEqual(m.style.display, 'none');
+  const calls = box.calls;
+  assert.deepEqual(stats(win), { drawn: 6, generic: 1, parked: 0, unplaced: 0, clipped: 0 });
+
+  // The document's column 1.5× as wide: each arrow re-mapped between its
+  // items, so the two drift apart and the group's box widens: its draw re-run
+  // (a re-mapped stroke is no rescale of the old box).
+  win.__scale = 1.5;
+  win.dispatchEvent(new win.Event('resize'));
+  const u2 = unionOf(p.items.filter((x) => x.id[0] === 'p'), { 'fx-a': rectAt('fx-a', 1.5), 'fx-b': rectAt('fx-b', 1.5) });
+  near(boxOfMarker(m), [u2.left, u2.top, u2.w, u2.h], 'at 1.5×: re-mapped between its items');
+  assert.equal(box.calls, calls + 1, 'a new box size: the draw re-run');
+  win.__scale = 1;
+  win.dispatchEvent(new win.Event('resize'));
+  assert.equal(box.calls, calls + 2, 'and back');
+  // fx-b moved down: the arrow is stretched between its items, its draw re-run.
+  const saved = BOXES['fx-b'];
+  BOXES['fx-b'] = [0, 900, 800, 400];
+  try {
+    win.dispatchEvent(new win.Event('resize'));
+    const u3 = unionOf(p.items.filter((x) => x.id[0] === 'p'), { 'fx-a': rectAt('fx-a'), 'fx-b': rectAt('fx-b') });
+    near(boxOfMarker(m), [u3.left, u3.top, u3.w, u3.h], 'an item moved: re-mapped');
+    assert.ok(u3.h > u.h + 150, 'the arrow follows both ends');
+    assert.equal(box.calls, calls + 3, 'a new box size: the draw re-run');
+    assert.equal(m.querySelectorAll('svg').length, 1, 'drawn again, once');
+  } finally { BOXES['fx-b'] = saved; }
+  assert.deepEqual(errors.filter((e) => /ReferenceError|failed|could not/.test(e)), [], 'no ReferenceError, no failed pass');
+  assert.equal(net.calls, 0, 'no network call');
+  t.diagnostic(`page marker ${JSON.stringify(boxOfMarker(m))}; stats ${JSON.stringify(stats(win))}`);
+});
+
+test('page strokes group by (type, from.item, to.item): one from the same item to another item is its own marker', async () => {
+  const other = pageItem('p6', ['fx-a', 'fx-a'], ['md-notes', 'div.md-block'], [400, 540], [400, 650]);
+  const p = withItems(fixturePayload(), ARROW('p1'), other);
+  const { win, errors } = openPage(p);
+  await settled(win);
+  const a = markerOf(win, 'p1');
+  const b = markerOf(win, 'p6');
+  assert.ok(a && b, 'both drawn');
+  assert.notStrictEqual(a, b, 'two groups: the to items differ');
+  assert.equal(a.getAttribute('data-el-ids'), 'p1');
+  assert.equal(b.getAttribute('data-el-ids'), 'p6');
+  assert.deepEqual(errors, []);
+});
+
+test('a margin (\'beside\') stroke is drawn beside its item and follows it when the item moves', async () => {
+  const it = pageItem('p3', ['fx-a', 'fx-a'], ['fx-a', 'fx-a'], [80, 606], [320, 612]);
+  assert.equal(strokes.pageShape(it.anchor), 'beside');
+  const p = withItems(fixturePayload(), it);
+  const { win, errors, box } = openPage(p);
+  await settled(win);
+  const m = markerOf(win, 'p3');
+  const calls = box.calls;
+  assert.ok(m && m.getAttribute('data-place') === 'box', 'a box marker');
+  const at = (rects) => { const u = unionOf([it], rects); return [u.left, u.top, u.w, u.h]; };
+  const before = at({ 'fx-a': rectAt('fx-a') });
+  near(boxOfMarker(m), before, 'beside fx-a');
+  assert.ok(before[1] > BOXES['fx-a'][1] + BOXES['fx-a'][3], 'below the item: in its margin');
+  const saved = BOXES['fx-a'];
+  BOXES['fx-a'] = [0, 50, 800, 600];
+  try {
+    win.dispatchEvent(new win.Event('resize'));
+    near(boxOfMarker(m), [before[0], before[1] + 50, before[2], before[3]], 'moved 50 px down with its item');
+    assert.equal(box.calls, calls, 'a translation: the same box, no redraw');
+    win.__scale = 1.5;
+    win.dispatchEvent(new win.Event('resize'));
+    const wide = at({ 'fx-a': rectAt('fx-a', 1.5) });
+    near(boxOfMarker(m), wide, 'a wider column: translated with its item');
+    near([wide[2], wide[3]], [before[2], before[3]], 'never stretched (the drift is beside, not a state)', 0.01);
+  } finally { BOXES['fx-a'] = saved; win.__scale = 1; }
+  assert.deepEqual(errors, []);
+});
+
+test('a page stroke with one endpoint item missing is drawn as a guess; with both missing it is not drawn and counted unplaced', async () => {
+  // Recorded over fx-a's and fx-b's boxes, under item ids the document lacks.
+  const half = pageItem('p4', ['fx-a', 'fx-a'], ['gone-b', 'fx-b'], [400, 540], [400, 740]);
+  const none = pageItem('p5', ['gone-a', 'fx-a'], ['gone-b', 'fx-b'], [400, 540], [400, 740]);
+  const p = withItems(fixturePayload(), half, none);
+  const { win, box } = openPage(p);
+  await settled(win);
+  const m = markerOf(win, 'p4');
+  assert.ok(m, 'drawn');
+  assert.ok(classes(m).includes('el-guess'), 'as a guess (el-guess)');
+  const g = box.groups.find((x) => x.items.some((i) => i.id === 'p4'));
+  assert.equal(g.kind, 'guess', 'the group\'s kind: its type\'s draw fades it');
+  const u = unionOf([half], { 'fx-a': rectAt('fx-a') });
+  near(boxOfMarker(m), [u.left, u.top, u.w, u.h], 'at mapPage\'s guess');
+  assert.equal(markerOf(win, 'p5'), undefined, 'both items gone: not drawn');
+  assert.equal(stats(win).unplaced, 1, 'and counted unplaced');
+  assert.ok(!box.groups.some((x) => x.items.some((i) => i.id === 'p5')), 'its draw never saw it');
+});
+
+test('a page stroke of a type that defines nothing by load draws the generic mark at its from item', async () => {
+  const p = withItems(fixturePayload(), ARROW('p1'));
+  const { win } = open(documentOf(p));
+  await settled(win);
+  const m = markerOf(win, 'p1');
+  for (const c of ['el-marker', 'el-generic', 'el-standin']) assert.ok(classes(m).includes(c), c);
+  assert.equal(m.getAttribute('data-place'), null, 'a glyph, not a box');
+  assert.deepEqual([px(m.style.left), px(m.style.top)], BOXES['fx-a'].slice(0, 2), 'at its from item\'s top-left');
+  assert.deepEqual(stats(win), { drawn: 3, generic: 3, parked: 0, unplaced: 0, clipped: 0 });
+});
+
+test('record(id) of a page stroke: the flat record, its points in [0, 1] of its marker\'s box (the spliced reboxPoints over its mapPage points), width and aspect mapped', async () => {
+  const p = withItems(fixturePayload(), ARROW('p1'), ARROW('p2', 30));
+  const { win, box } = openPage(p);
+  await settled(win);
+  const rects = { 'fx-a': rectAt('fx-a'), 'fx-b': rectAt('fx-b') };
+  const items = p.items.filter((x) => x.id[0] === 'p');
+  const u = unionOf(items, rects);
+  near(boxOfMarker(markerOf(win, 'p1')), [u.left, u.top, u.w, u.h], 'the marker\'s box');
+  for (const it of items) {
+    const rec = box.ctx.record(it.id);
+    assert.ok(Object.isFrozen(rec) && Object.isFrozen(rec.points), 'frozen');
+    assert.ok(!('payload' in rec), 'flat');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(rec.anchor)), it.anchor, 'its page record');
+    assert.equal(rec.label, it.id);
+    const mp = strokes.mapPage(it.anchor, it.payload, rects['fx-a'], rects['fx-b']);
+    const want = strokes.reboxPoints(mp.points, mp.box, u);
+    assert.equal(rec.points.length, it.payload.points.length);
+    rec.points.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < 1e-9, `${it.id} points[${i}]: ${v} vs ${want[i]}`));
+    for (let i = 0; i < rec.points.length; i += 4) {
+      assert.ok(rec.points[i] >= 0 && rec.points[i] <= 1 && rec.points[i + 1] >= 0 && rec.points[i + 1] <= 1, `${it.id}: sample ${i / 4} in the box`);
+    }
+    assert.ok(Math.abs(rec.width - mp.width * mp.box.w / u.w) < 1e-9, 'width: the recorded px width over the box');
+    assert.ok(Math.abs(rec.aspect - u.w / u.h) < 1e-9, 'aspect: the box\'s');
+  }
+  assert.equal(box.ctx.record('b1').points, undefined, 'a pane-framed item\'s record is unchanged');
+});
+
+// PAGE@mask-frames (PLAN-T5 §2.3, confirmed B2): a page stroke is never
+// clipped to a pane, so any pane it crosses may hold a frame — the census is
+// the document's frames and every pane's own — and it is masked around each
+// displayed frame it meets (clip-path: path(), disjoint boxes in the marker's
+// own px), never hidden whole: 0 px over a frame, the rest drawn.
+const maskBoxes = (m) => {
+  const q = /^path\("(.*)"\)$/.exec(m.style.clipPath);
+  assert.ok(q, `a path() mask: ${m.style.clipPath}`);
+  const out = [];
+  const re = /M(-?[\d.]+) (-?[\d.]+)H(-?[\d.]+)V(-?[\d.]+)H(-?[\d.]+)Z/g;
+  let r;
+  while ((r = re.exec(q[1]))) {
+    const [l, t, rt, b] = [r[1], r[2], r[3], r[4]].map(Number);
+    out.push({ left: px(m.style.left) + l, top: px(m.style.top) + t, right: px(m.style.left) + rt, bottom: px(m.style.top) + b });
+  }
+  assert.equal(q[1].replace(re, ''), '', 'nothing but boxes');
+  return out;
+};
+const meetsBox = (a, b) => a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+const areaOf = (bs) => bs.reduce((n, b) => n + (b.right - b.left) * (b.bottom - b.top), 0);
+function framedNode(pane, frame) {
+  const node = fixture().node;
+  if (pane === 'fx-c') {
+    node.mounts.push({ id: 'fx-c', html: '<div class="c"><iframe class="emb"></iframe></div>', params: {}, pane_state: {} });
+    node.order = ['fx-a', 'md-notes', 'fx-c', 'fx-b'];
+  } else {
+    node.mounts[0].html = node.mounts[0].html.replace('</div>', '<iframe class="emb"></iframe></div>');
+  }
+  BOXES['iframe.emb'] = frame;
+  return node;
+}
+async function maskedArrow(pane, frame) {
+  const saved = BOXES['fx-c'];
+  BOXES['fx-c'] = [0, 610, 800, 80];
+  try {
+    const node = framedNode(pane, frame);
+    const { win, errors } = openPage(withItems(fixturePayload(), ARROW('p1')), node);
+    await settled(win);
+    const m = markerOf(win, 'p1');
+    assert.ok(m, 'drawn');
+    assert.notEqual(m.style.display, 'none', 'never hidden whole');
+    const [l, t, w, h] = boxOfMarker(m);
+    const box = { left: l, top: t, right: l + w, bottom: t + h };
+    const f = { left: frame[0], top: frame[1], right: frame[0] + frame[2], bottom: frame[1] + frame[3] };
+    assert.ok(meetsBox(box, f), 'the frame meets the arrow\'s box');
+    const bs = maskBoxes(m);
+    for (const b of bs) assert.ok(!meetsBox(b, f), `0 px over the frame: ${JSON.stringify(b)}`);
+    const over = (Math.min(box.right, f.right) - Math.max(box.left, f.left)) * (Math.min(box.bottom, f.bottom) - Math.max(box.top, f.top));
+    // Each edge rounded inward to 1e-3 px: at most that much of the rest lost.
+    const tol = bs.length * 2e-3 * (w + h) + 1e-6;
+    assert.ok(areaOf(bs) <= w * h - over + 1e-6 && areaOf(bs) >= w * h - over - tol, `the rest is drawn: ${areaOf(bs)} of ${w * h - over}`);
+    const s = stats(win);
+    assert.equal(s.clipped, 0, 'counted drawn, not clipped');
+    assert.equal(s.drawn, 5, 'the fixture\'s four and the arrow');
+    assert.deepEqual(errors, []);
+    return m;
+  } finally { delete BOXES['iframe.emb']; BOXES['fx-c'] = saved; }
+}
+
+test('a page stroke crossing a third pane\'s displayed frame is masked around it, never painted over it', async () => {
+  await maskedArrow('fx-c', [300, 620, 200, 60]);
+});
+
+test('a page stroke whose own item\'s pane holds a frame meeting its box stays displayed, the frame masked out, none clipped', async () => {
+  await maskedArrow('fx-a', [380, 500, 50, 60]);
+});
+
+test('the page cut carries every DOC_SPLICE function by name, in order, each its own source in lib/core/strokes.js; no other copy of the mapping; no page arm in a cut without a page stroke', () => {
+  const src = E.runtimeSource('comment+highlight+box+page');
+  let at = -1;
+  for (const name of strokes.DOC_SPLICE) {
+    const own = anchorsSrc.compact(strokes[name].toString());
+    assert.ok(own.startsWith(`function ${name}(`), name);
+    const i = src.indexOf(own);
+    assert.ok(i > at, `${name}: present, after the one before it in DOC_SPLICE`);
+    assert.equal(src.indexOf(own, i + 1), -1, `${name}: once`);
+    at = i;
+  }
+  for (const name of strokes.DOC_SPLICE) assert.equal(src.split(`function ${name}(`).length - 1, 1, `one ${name}`);
+  // The factory's own text holds no step of the mapping: only calls.
+  const own = elementsRuntimeOwn();
+  for (const step of ['qr * dx', 'fromBox.left +', 'Math.atan2', 'DEGENERATE_PX', 'STRIDE']) assert.ok(!own.includes(step), `no copy: ${step}`);
+  for (const name of strokes.DOC_SPLICE) assert.ok(!own.includes(`function ${name}(`), `the factory declares no ${name}`);
+  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
+    const cut = E.runtimeSource(key);
+    assert.ok(!cut.includes('function mapPage(') && !cut.includes('function pageAdd('), `${key || '(core)'}: no page arm`);
+  }
+  assert.equal(E.keyOf(fixturePayload()), 'comment+highlight+box', 'a pane-framed stroke\'s document: no page cut');
+});
+
+test('validatePayload admits a page stroke\'s record and refuses a box grab\'s page anchor', () => {
+  assert.equal(E.validatePayload(withItems(fixturePayload(), ARROW('p1'))), null);
+  const grab = { v: 1, kind: 'page', item: 'fx-a', mount: 'fx-a', rect: { x: 1, y: 2, w: 3, h: 4 }, box: { w: 800, h: 600 }, scroll: { x: 0, y: 0 }, viewport: { w: 1200, h: 800 } };
+  const p = fixturePayload();
+  p.items[1].anchor = grab;
+  assert.match(String(E.validatePayload(p)), /items\[1\]: a page anchor that is no stroke's page record is never drawn/);
+  const q = withItems(fixturePayload(), ARROW('p1'));
+  q.items.find((x) => x.id === 'p1').anchor.extra = 1;
+  assert.match(String(E.validatePayload(q)), /page anchor that is no stroke's page record/, 'the closed shape: one key more is refused');
+});
+
 // ── the splice ─────────────────────────────────────────────────────────────
 
 test('typeElement(row): the module\'s exact bytes, a newline, the one define line', () => {
@@ -827,8 +1142,25 @@ test('validatePayload refuses each malformed variant', () => {
 
 // ── the runtime's source ───────────────────────────────────────────────────
 
+// The factory's own text: the whole runtime less the DOC_SPLICE functions
+// spliced into its page cut (lib/core/strokes.js's own source, held to its
+// own rules by test/strokes-core.test.js: no module binding, Math alone).
+function elementsRuntimeOwn() {
+  let raw = E.runtimeText(E.SECTIONS);
+  for (const name of strokes.DOC_SPLICE) {
+    const own = `${strokes[name].toString()}\n`;
+    assert.ok(raw.includes(own), `${name} spliced by its own source`);
+    raw = raw.replace(own, () => '');
+  }
+  return raw;
+}
+
+// Re-stated at U621: the rules hold for the factory's own text; the spliced
+// DOC_SPLICE functions are strokes.js's source byte for byte (J1 a), so they
+// are left out of this scan (they are not ES5: const, arrows, a trailing
+// comment naming each inlined literal's CONSTANTS entry).
 test('the runtime\'s authoring rules: ES5, whole-line comments only, no block comment', () => {
-  const raw = E.runtimeText(E.SECTIONS);
+  const raw = elementsRuntimeOwn();
   for (const line of raw.split('\n')) {
     const code = line.trim();
     if (code.startsWith('//')) continue;
@@ -838,7 +1170,7 @@ test('the runtime\'s authoring rules: ES5, whole-line comments only, no block co
 });
 
 test('the compacted runtime: no script end tag, comment opener, network, eval, dynamic import, blob:, chat words or element id', () => {
-  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box', 'box']) {
+  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box', 'box', 'comment+highlight+box+page', 'page']) {
     const src = E.runtimeSource(key);
     for (const line of src.split('\n')) {
       assert.notEqual(line, '', 'no blank line');
@@ -868,7 +1200,7 @@ test('the runtime is compacted by anchors-src\'s exported compact: elements-doc-
   const text = fs.readFileSync(require.resolve('../lib/server/runtime/elements-doc-src'), 'utf8');
   assert.doesNotMatch(text, /function compact\(|compact\s*=\s*(function|\()/, 'no second compaction rule');
   assert.equal(typeof anchorsSrc.compact, 'function');
-  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
+  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box', 'comment+highlight+box+page']) {
     const sections = key ? key.split('+') : [];
     assert.strictEqual(E.runtimeSource(key), anchorsSrc.compact(E.runtimeText(sections)), key || '(core)');
   }
@@ -904,16 +1236,42 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // sourceGlyph through the define line), on the same contract: → 21,107;
 // and at U512c (a plug-in ctx's settings(), the element.json defaults: the
 // U566 builder's contract), on the main session's engineering contract of
-// 2026-11-03 that asks for that member: 21,176 at ae/int cd348616 → 21,365.
-const RUNTIME_WHOLE_BYTES = 21365;
-test('the byte tripwire: the whole runtime under its measured size + 128 B; each cut reported', (t) => {
+// 2026-11-03 that asks for that member: 21,176 at ae/int cd348616 → 21,365;
+// and at U621 (the page arm: DOC_SPLICE spliced — isPageRecord, pageShape,
+// reboxPoints, mapPage —, in its own 'page' cut, so the whole runtime is
+// every section's and counts every spliced function), on PLAN-T5's
+// RUNTIME@restate, 2026-11-05: 21,365 at ae/int 3d86c497 → 29,175 (the four
+// spliced functions 5,111 B of it, compacted; 'comment+highlight+box', the
+// cut with no page stroke, 21,596); and at U621's fix round 1 (PAGE@mask-
+// frames: the page census of every pane's frames, and a page group masked
+// around each frame it meets by clip-path: path(), never hidden whole), on
+// the same RUNTIME@restate, 2026-11-05: 29,175 at ae/documents-page-strokes
+// aa5e2c3f → 30,578 (the four spliced functions still 5,111 B of it;
+// 'comment+highlight+box' 21,758).
+const RUNTIME_WHOLE_BYTES = 30578;
+// The documents' share beside (C-17-share; RULED B3@documents-share-line a:
+// the 12 % line, read by the gate, never a status here): the gate's
+// gate-t4-exit reading at 627c5f53 — resolver 27,038 B (the element cut) +
+// runtime 18,354 B (the comment cut, its script element) over a 414,422 B
+// median export — with this build's runtime cut swapped in.
+const SHARE_T4 = { resolver: 27038, runtime: 18354, median: 414422 };
+test('the byte tripwire: the whole runtime under its measured size + 128 B; each cut reported; the documents\' share beside', (t) => {
   const sizes = {};
-  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box']) {
+  for (const key of ['', 'comment', 'comment+highlight', 'comment+highlight+box', E.SECTIONS.join('+')]) {
     sizes[key || '(core)'] = Buffer.byteLength(E.runtimeSource(key));
   }
   t.diagnostic(`compacted runtime bytes: ${JSON.stringify(sizes)}`);
   t.diagnostic(`fixture splice bytes: ${Buffer.byteLength(E.scripts(fixturePayload()))}`);
-  const whole = sizes['comment+highlight+box'];
+  const spliced = strokes.DOC_SPLICE.reduce((n, name) => n + Buffer.byteLength(`${anchorsSrc.compact(strokes[name].toString())}\n`), 0);
+  t.diagnostic(`the DOC_SPLICE functions in the page cut: ${spliced} B`);
+  const share = (key) => {
+    const rt = Buffer.byteLength(E.runtimeElement(key));
+    return `${(100 * (SHARE_T4.resolver + rt) / (SHARE_T4.median - SHARE_T4.runtime + rt)).toFixed(2)} %`;
+  };
+  t.diagnostic(`C-17-share beside (the gate reads it against 12 %): the typical export (the comment cut) ${share('comment')}; `
+    + `one carrying a pane-framed stroke ('comment+highlight+box') ${share('comment+highlight+box')}; `
+    + `one carrying a page stroke (every section) ${share(E.SECTIONS.join('+'))}`);
+  const whole = sizes[E.SECTIONS.join('+')];
   assert.ok(whole <= RUNTIME_WHOLE_BYTES + 128, `the runtime is ${whole} B; the tripwire is ${RUNTIME_WHOLE_BYTES} + 128`);
 });
 
