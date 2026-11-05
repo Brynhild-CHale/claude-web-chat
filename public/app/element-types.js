@@ -665,11 +665,17 @@ function relayRows(type, recs) {
   if (gone.length) ov.removeElements('live', gone);
   if (fresh.length) ov.upsertElements('live', fresh);
 }
-// record(id) for a plug-in type's draw: the record, or null.
-export function recordOf(type, id) {
+// record(id) for a plug-in type's draw: the record, or null. A page stroke's
+// (U614, MAP@engine) is the overlay's pageRecordView of it: the flat record
+// with points, width and aspect mapped into its group's current box (null
+// while unplaced), so a draw stays frame-agnostic; every other record as it
+// is. {raw: true}: the record as stored (the overlay's own read).
+export function recordOf(type, id, opts) {
   const p = plugins.get(type);
   if (!p || id == null) return null;
-  return p.records.get(String(id)) || null;
+  const rec = p.records.get(String(id)) || null;
+  if (!rec || (opts && opts.raw) || typeof ov.pageRecordView !== 'function') return rec;
+  return ov.pageRecordView(type, rec);
 }
 
 // asset(rel) for a plug-in type's draw: the same-origin URL, or null.

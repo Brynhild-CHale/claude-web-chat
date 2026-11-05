@@ -12,7 +12,12 @@
 //     section of the same rows in the graph inspector for the node on screen
 //     only (the active node live, the previewed node while previewing), capped
 //     with capRows. Each row: the element's type, its last-known place by
-//     mount, 'guess' when the resolver carried one, and 'Re-anchor…'.
+//     mount, 'guess' when the resolver carried one, and 'Re-anchor…'. A page
+//     stroke's orphan (kind 'page', U614: its items gone, or one of an
+//     arrow's, or a margin stroke on the phone) is listed by its items
+//     (pageLabel) with 'guess' when it is drawn faded at its guess, and with
+//     no 'Re-anchor…': it follows its items, and the pick flow is the
+//     element's and the point's.
 //   * The carried guess (a converted pin whose text no longer matches; the
 //     overlay draws it at the guess): a click on its marker (bus
 //     'overlay:guess') opens the re-anchor card, a STAND-IN popover — 'Re-anchor
@@ -52,6 +57,7 @@ import { request } from './http.js';
 import { READONLY_HINT } from './topbar.js';
 import { page } from './page.js';
 import { sourceMap } from './markdown.js';
+import { pageLabel } from './strokes.js';
 
 export const PALETTE_SOURCE = 'orphans';
 export const PICK_HINTS = Object.freeze({
@@ -81,16 +87,20 @@ function kindOf(row) {
   const k = row && isObj(row.anchor) ? row.anchor.kind : null;
   return k === 'element' || k === 'range' || k === 'source' || k === 'point' ? k : null;
 }
-// The element's last-known place, by mount (a pane, or a markdown item).
+// The element's last-known place, by mount (a pane, or a markdown item); a
+// page stroke's by its items (strokes.js pageLabel: ids only).
 function placeOf(o, row) {
   const a = row && isObj(row.anchor) ? row.anchor : null;
+  if (o.kind === 'page') return (a && pageLabel(a)) || (o.mount != null ? `beside ${o.mount}` : 'no place');
   if (a && a.kind === 'source') return o.mount != null ? `markdown ${o.mount}` : (a.md != null ? `markdown ${a.md}` : 'no place');
   const m = o.mount != null ? o.mount : (a && a.mount != null ? a.mount : null);
   return m != null ? `pane ${m}` : 'no place';
 }
+// A page stroke's orphan (the overlay's kind 'page', U614) keeps `page`: it
+// has no anchor kind to pick and no Re-anchor… (its place is its items').
 function describe(o) {
   const row = rowOf(o.id, o.scope);
-  return { ...o, row, kind: kindOf(row), place: placeOf(o, row) };
+  return { ...o, row, kind: kindOf(row), page: o.kind === 'page', place: placeOf(o, row) };
 }
 // The node the surface shows: the previewed one, else the active one.
 export function nodeOnScreen() {
@@ -109,6 +119,8 @@ function rowEl(o, { from } = {}) {
   li.appendChild(el('span', 'wc-orphan-type', o.type || 'element'));
   li.appendChild(el('span', 'wc-orphan-place', o.place));
   if (o.guess) li.appendChild(el('span', 'wc-orphan-guess', 'guess'));
+  // A page stroke follows its items: listed, never re-anchored by a pick.
+  if (o.page) { li.dataset.page = '1'; return li; }
   const b = el('button', 'wc-orphan-act', 'Re-anchor…');
   b.type = 'button';
   b.title = o.guess ? 'Re-anchor it at the guess, or leave it' : 'Pick a new place on the page for it';
@@ -446,7 +458,7 @@ export function initOrphans() {
         if (rowOf(d.id, d.scope)) openGuessCard({ id: d.id, v: d.v, type: d.type, mount: d.mount, scope: d.scope, how: 'section' });
         return;
       }
-      const o = orphans().find((x) => x.id === d.id && x.guess);
+      const o = orphans().find((x) => x.id === d.id && x.guess && x.kind !== 'page');
       if (o) openGuessCard(o);
     }),
     bus.on('view', onView),
