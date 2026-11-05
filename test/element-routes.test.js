@@ -1083,3 +1083,129 @@ test('a plug-in type: unlisted → 400 unknown element type; listed without a pa
   assert.match(w.json.hint, /element\.json \("payload"/);
   assert.deepEqual(d.srv.elementTypes.stats().unwritable.map((x) => x.type), ['tq-bare']);
 });
+
+// ── page strokes and the declared-kind check (tranche 5, U623) ──────────────
+// RULED KIND@declared-check (a) (DECISIONS.md C5: a type declares the anchor
+// kinds it accepts): POST's schema-row path refuses an anchor whose kind the
+// type's element.json does not list — 400 anchor-kind-undeclared — and every
+// built-in write passes as before. WIPE@either-end: a stroke's page record
+// (lib/core/strokes pageRecord) is dropped by a Wipe only when none of its
+// items is left.
+const strokes = require('../lib/core/strokes');
+const { anchorKindRefusal, ANCHOR_KIND_ERROR, ANCHOR_KIND_HINT } = require('../lib/server/routes/elements');
+const PAGE_ARROW = (a, b) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 0.5, y: 0.5, w: 600, h: 200 },
+  to: { item: b, x: 0.25, y: 0.5, w: 600, h: 200 },
+});
+const PAGE_MARGIN = (a) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 1.1, y: 0.2, w: 600, h: 200 },
+  to: { item: a, x: 1.2, y: 0.8, w: 600, h: 200 },
+});
+const POINT = (mount) => ({ ...ELEMENT(mount), kind: 'point', x: 0.25, y: 0.5, aspect: 2 });
+
+test('KIND@declared-check (U623): a page anchor on a type declaring only element → 400 anchor-kind-undeclared {type, kind, declared, hint}, nothing written; an element anchor accepted; no anchor, a null anchor and an anchor with no kind pass the check', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  approvePlugin(d, { name: 'tq-elonly-pack', type: 'tq-elonly', json: { anchors: ['element'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  await render(api, 'm1');
+  await render(api, 'm2');
+  const arrow = PAGE_ARROW('m1', 'm2');
+  assert.equal(strokes.isPageRecord(arrow), true);
+  const ids = () => [...srv.elements.log.ids()];
+  const before = { ids: ids(), refs: srv.state.elements ? srv.state.elements.slice() : [], bytes: logBytes(d.root) };
+
+  const r = await api.post('/api/elements', { type: 'tq-elonly', anchor: arrow, payload: { note: 'an arrow' } });
+  assert.equal(r.status, 400, r.text);
+  const { hint, ...rest } = r.json;
+  assert.deepStrictEqual(rest, { error: 'anchor-kind-undeclared', type: 'tq-elonly', kind: 'page', declared: ['element'] });
+  assert.equal(r.json.error, ANCHOR_KIND_ERROR);
+  assert.equal(hint, ANCHOR_KIND_HINT('tq-elonly', ['element']));
+  assert.match(hint, /element\.json declares \(element\)/, 'the hint names the declared kinds');
+  // The anchor may ride the payload instead: the same refusal.
+  const inPayload = await api.post('/api/elements', { type: 'tq-elonly', payload: { anchor: RANGE('m1'), note: 'x' } });
+  assert.equal(inPayload.status, 400, inPayload.text);
+  assert.deepStrictEqual([inPayload.json.error, inPayload.json.kind, inPayload.json.declared], [ANCHOR_KIND_ERROR, 'range', ['element']]);
+  assert.deepStrictEqual(ids(), before.ids, 'a refused write mints nothing');
+  assert.deepStrictEqual(srv.state.elements || [], before.refs, 'and puts no reference');
+  assert.equal(logBytes(d.root), before.bytes, 'and appends nothing');
+
+  const el = await ok(api.post('/api/elements', { type: 'tq-elonly', anchor: ELEMENT('m1'), payload: { note: 'on m1' } }), 'an element anchor');
+  assert.equal(el.element.anchor.kind, 'element');
+  await ok(api.post('/api/elements', { type: 'tq-elonly', payload: { note: 'no anchor' } }), 'no anchor');
+  await ok(api.post('/api/elements', { type: 'tq-elonly', anchor: null, payload: { note: 'a null anchor' } }), 'a null anchor');
+  // An anchor with no kind passes the kind check: the log's own bound answers
+  // it (a legacy locator is no plug-in anchor), never the kind check.
+  const kindless = await api.post('/api/elements', { type: 'tq-elonly', anchor: LOCATOR, payload: { note: 'kindless' } });
+  assert.notEqual(kindless.json && kindless.json.error, ANCHOR_KIND_ERROR, kindless.text);
+
+  // A type that declares the page kind takes the stroke's page record.
+  approvePlugin(d, { name: 'tq-pageink-pack', type: 'tq-pageink', json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  const ok1 = await ok(api.post('/api/elements', { type: 'tq-pageink', anchor: arrow, payload: { note: 'an arrow' } }), 'a page record on a page type');
+  assert.deepStrictEqual(ok1.element.anchor, arrow, 'kept as given');
+
+  // The one helper (exported for a later path's reuse).
+  assert.equal(anchorKindRefusal('x', ['element'], null), null);
+  assert.equal(anchorKindRefusal('x', ['element'], undefined), null);
+  assert.equal(anchorKindRefusal('x', ['element'], { mount: 'm1' }), null, 'no kind');
+  assert.equal(anchorKindRefusal('x', ['element'], { kind: 7 }), null, 'a kind that is no string');
+  assert.equal(anchorKindRefusal('x', null, { kind: 'page' }), null, 'no declaration to read: passes');
+  assert.equal(anchorKindRefusal('x', ['element', 'page'], { kind: 'page' }), null);
+  assert.deepStrictEqual(anchorKindRefusal('x', ['element'], { kind: 'page' }),
+    { error: ANCHOR_KIND_ERROR, type: 'x', kind: 'page', declared: ['element'], hint: ANCHOR_KIND_HINT('x', ['element']) });
+});
+
+test('KIND@declared-check (U623): the built-ins at 627c5f53 still pass — a highlight\'s range and source, the box grab\'s page anchor through its admit, a comment\'s element, range, source and point through the comment path; the check reads the built-in pack\'s declarations', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  assert.deepStrictEqual(srv.elementTypes.descriptor('highlight').anchors, ['range', 'source'], 'the check is live for the built-ins');
+  assert.deepStrictEqual(srv.elementTypes.descriptor('box-grab').anchors, ['page']);
+  await ok(api.post('/api/markdown', { id: 'md-k', text: '## Kinds' }), 'markdown');
+  await render(api, 'm1');
+  const SOURCE = { v: 1, kind: 'source', md: 'md-k', slug: 'kinds', quote: { exact: 'Kinds', prefix: '', suffix: '' } };
+  await ok(api.post('/api/elements', { type: 'highlight', anchor: RANGE('m1'), payload: { note: 'range' } }), 'a highlight on a range');
+  await ok(api.post('/api/elements', { type: 'highlight', anchor: SOURCE, payload: { note: 'source' } }), 'a highlight on a source');
+  const grab = await ok(api.post('/api/elements', {
+    type: 'box-grab', anchor: { v: 1, kind: 'page', item: 'm1', mount: 'm1', rect: RECT('m1'), viewport: { w: 1200, h: 800 } },
+    payload: { rect: RECT('m1'), meta: { tag: 'p' } },
+  }), 'a box grab\'s page anchor');
+  assert.match(grab.element.id, /^g\d+$/);
+  for (const [what, anchor] of [['element', ELEMENT('m1')], ['range', RANGE('m1')], ['source', SOURCE], ['point', POINT('m1')]]) {
+    const c = await ok(api.post('/api/elements', { type: 'comment', anchor, payload: { text: `on a ${what}`, shared: true } }), `a comment on a ${what}`);
+    assert.equal(c.element.type, 'comment');
+  }
+  // The comment path is not the kind check's: a page record on a comment is
+  // answered as it was before (whatever the comment path makes of it).
+  const onComment = await api.post('/api/elements', { type: 'comment', anchor: PAGE_ARROW('m1', 'md-k'), payload: { text: 'arrow', shared: true } });
+  assert.notEqual(onComment.json && onComment.json.error, ANCHOR_KIND_ERROR, onComment.text);
+  // A built-in's schema-row path does read its declaration.
+  const hlElement = await api.post('/api/elements', { type: 'highlight', anchor: ELEMENT('m1'), payload: { note: 'x' } });
+  assert.equal(hlElement.status, 400, hlElement.text);
+  assert.deepStrictEqual([hlElement.json.error, hlElement.json.kind, hlElement.json.declared], [ANCHOR_KIND_ERROR, 'element', ['range', 'source']]);
+});
+
+test('WIPE@either-end (U623): a Wipe that removes A keeps an arrow from A to B while B stays (pinned), and drops a margin stroke beside A; a Wipe that removes A and B drops the arrow', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  approvePlugin(d, { name: 'tq-wipe-ink-pack', type: 'tq-wipe-ink', json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  await render(api, 'wa');
+  await render(api, 'wb');
+  await pinPane(d, 'wb');
+  const post = async (anchor, note) => (await ok(api.post('/api/elements', { type: 'tq-wipe-ink', anchor, payload: { note } }), note)).element;
+  const arrow = await post(PAGE_ARROW('wa', 'wb'), 'arrow');
+  const margin = await post(PAGE_MARGIN('wa'), 'margin');
+  await ok(api.post('/api/graph/wipe', {}), 'wipe A');
+  const live = () => (srv.state.elements || []).map((r) => parsePin(r).id);
+  assert.deepStrictEqual(live(), [arrow.id], 'the arrow stays while B does; the margin stroke beside A goes');
+
+  // The second surface: neither item pinned — both removed, the arrow dropped.
+  const e = await withServer(t);
+  approvePlugin(e, { name: 'tq-wipe-ink-pack', type: 'tq-wipe-ink', json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  await render(e.api, 'wa');
+  await render(e.api, 'wb');
+  const arrow2 = (await ok(e.api.post('/api/elements', { type: 'tq-wipe-ink', anchor: PAGE_ARROW('wa', 'wb'), payload: { note: 'arrow' } }), 'arrow')).element;
+  assert.deepStrictEqual((e.srv.state.elements || []).map((r) => parsePin(r).id), [arrow2.id]);
+  await ok(e.api.post('/api/graph/wipe', {}), 'wipe A and B');
+  assert.deepStrictEqual(e.srv.state.elements || [], [], 'none of its items is left: dropped');
+});

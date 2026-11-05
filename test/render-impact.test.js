@@ -339,3 +339,55 @@ test('annotationsOn (the engine): a version the log cannot place is skipped; a l
   assert.equal(byState([], ids, 1), null);
   assert.equal(byState([{ id: 'z', v: 1, state: 'exact', gen: 1 }], ids, 1), null);
 });
+
+// ── a stroke's page record: counted on both items (tranche 5, U623) ─────────
+// IMPACT@both-items: an arrow from A to B is an annotation on A and on B
+// (element-refs anchorItems); a write over either answers it, and a bulk
+// clear of both lists it under both and counts it ONCE in the total.
+const strokes = require('../lib/core/strokes');
+const { approveElementPack } = require('../test-support/element-type-fixture');
+const PAGE_ARROW = (a, b) => strokes.pageRecord({
+  frame: { w: 1200, h: 2400 },
+  from: { item: a, x: 0.5, y: 0.5, w: 600, h: 200 },
+  to: { item: b, x: 0.25, y: 0.5, w: 600, h: 200 },
+});
+const INK = 'tq-impact-ink';
+const arrowOn = async (d, a, b, shared = true) => (await ok(d.anonApi.post('/api/elements', {
+  type: INK, anchor: PAGE_ARROW(a, b), payload: { tool: 'pen', shared },
+}), `arrow ${a} → ${b}`)).element;
+
+test('IMPACT@both-items (U623): render over pane B answers the arrow from A to B on B; list_mounts counts it on A and on B; a bulk clear of A and B lists it under both and counts it once in the total', async (t) => {
+  const d = await boot(t);
+  approveElementPack(d, { name: 'tq-impact-ink-pack', type: INK, json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'tool'] } } });
+  await render(d, 'pa');
+  await render(d, 'pb');
+  await render(d, 'pc');
+  const arrow = await arrowOn(d, 'pa', 'pb');
+  const h = await highlight(d, 'pa');
+
+  const rb = await ok(d.call('POST', '/api/render', { id: 'pb', html: '<p>Hello B</p>' }), 're-render pb');
+  assert.deepStrictEqual(rb.annotations, { item: 'pb', total: 1, by_type: { [INK]: 1 }, shared: 1, private: 0 }, 'the arrow, on its end item');
+  noLeak(rb, [arrow]);
+  const ra = await ok(d.call('POST', '/api/render', { id: 'pa', html: '<p>Hello A</p>' }), 're-render pa');
+  assert.deepStrictEqual(ra.annotations, { item: 'pa', total: 2, by_type: { highlight: 1, [INK]: 1 }, shared: 2, private: 0 });
+  const rc = await ok(d.call('POST', '/api/render', { id: 'pc', html: '<p>Hello C</p>' }), 're-render pc');
+  assert.ok(!('annotations' in rc), 'an item the arrow does not touch');
+
+  const mounts = await ok(d.call('GET', '/api/mounts'), 'mounts');
+  const row = (id) => mounts.mounts.find((m) => m.id === id);
+  assert.deepStrictEqual(row('pa').annotations, { total: 2, by_type: { highlight: 1, [INK]: 1 }, shared: 2, private: 0 });
+  assert.deepStrictEqual(row('pb').annotations, { total: 1, by_type: { [INK]: 1 }, shared: 1, private: 0 });
+
+  // A private arrow from pc to pb: counted for Claude's tools as `private` only, never for a remote read.
+  await arrowOn(d, 'pc', 'pb', false);
+  const engine = annotationsOn(d.srv.state, d.srv.elements, ['pa', 'pb', 'pc']);
+  assert.deepStrictEqual(engine, { items: ['pa', 'pb', 'pc'], total: 3, by_type: { highlight: 1, [INK]: 2 }, shared: 2, private: 1 },
+    'listed under every item it touches, counted once each');
+  assert.deepStrictEqual(annotationsOn(d.srv.state, d.srv.elements, ['pa', 'pb', 'pc'], { remote: true }),
+    { items: ['pa', 'pb'], total: 2, by_type: { highlight: 1, [INK]: 1 }, shared: 2 }, 'a remote reading leaves the private arrow out, and its item pc');
+
+  const cleared = await ok(d.call('POST', '/api/clear', {}), 'bulk clear');
+  assert.deepStrictEqual(cleared.annotations, { items: ['pa', 'pb', 'pc'], total: 3, by_type: { highlight: 1, [INK]: 2 }, shared: 2, private: 1 },
+    'the arrow from pa to pb listed under both, counted once');
+  noLeak(cleared, [arrow, h]);
+});
