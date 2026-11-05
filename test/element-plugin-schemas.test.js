@@ -375,3 +375,44 @@ test('the store\'s record() of a version whose schema has no row here serves its
   assert.deepEqual(r.points, [[1, 2, 0.5, 10]]);
   assert.equal(r.color, '#c03');
 });
+
+// ── a stroke's page record on a plug-in row (tranche 5, U613; RULED
+// U613@log-admission H1 (a)) ─────────────────────────────────────────────────
+
+test('a plug-in payload whose anchor is a stroke\'s page record is appended and reads back as given; a malformed one, a box grab\'s page anchor and a chat anchor stay refused', (t) => {
+  const strokes = require('../lib/core/strokes');
+  registerSchema('tq-page-stroke@1', { type: 'tq-page-stroke', keys: [...strokes.STROKE_KEYS] });
+  const dir = tmpDir(t);
+  const log = openIn(t, dir);
+  const id = log.mintId('tq-page-stroke');
+  log.ensureElement({ id, kind: 'tq-page-stroke', created_at: 1 });
+  const anchor = strokes.pageRecord({
+    frame: { w: 1000, h: 2000 },
+    from: { item: 'pane-a', x: 0.5, y: 0.5, w: 300, h: 200 },
+    to: { item: 'pane-b', x: -0.25, y: 1.5, w: 400, h: 100 },
+  });
+  assert.equal(strokes.isPageRecord(anchor), true);
+  const payload = (a) => ({ anchor: a, shared: false, tool: 'pen', width: 0.004, colour: 'ink', points: [0.25, 0.1, 0.5, 0, 0.5, 0.1, 0.5, 16], stride: 4, aspect: 0.5 });
+  const rec = log.appendVersion({ id, schema: 'tq-page-stroke@1', payload: payload(anchor), at: 1 });
+  assert.equal(rec.v, 1);
+  assert.deepStrictEqual(rec.payload.anchor, anchor, 'kept as given (never converted)');
+  // A reopened log reads it back the same.
+  log.close();
+  const again = openIn(t, dir);
+  assert.deepStrictEqual(again.versionsOf(id).at(-1).payload.anchor, anchor);
+
+  const refused = (a, what) => assert.throws(() => again.appendVersion({ id, schema: 'tq-page-stroke@1', payload: payload(a), at: 2 }),
+    (e) => e instanceof TypeError && e.reason === 'payload' && /anchor is an engine anchor record of a page kind, a stroke's page record, or null/.test(e.message), what);
+  refused({ ...anchor, mount: 'pane-a' }, 'a page record with an extra key');
+  refused({ ...anchor, to: { ...anchor.to, x: Infinity } }, 'a non-finite endpoint');
+  refused({ ...anchor, item: 'pane-b' }, 'item ≠ from.item');
+  const { to, ...noTo } = anchor;
+  assert.ok(to);
+  refused(noTo, 'a missing endpoint');
+  refused({ v: 1, kind: 'page', item: 'pane-a', mount: 'pane-a', rect: { x: 4, y: 6, w: 32, h: 20 }, box: { w: 600, h: 80 }, scroll: { top: 0, left: 0 }, viewport: { w: 1024, h: 700 } },
+    'a box grab\'s page anchor on a plug-in row');
+  refused(TURN_ANCHOR, 'a chat anchor, still');
+  assert.equal(again.versionsOf(id).length, 1, 'a refused write lands nothing');
+  // The engine's own kinds are untouched: a page record is no engine record.
+  assert.equal(el.isEngineRecord(anchor), false);
+});
