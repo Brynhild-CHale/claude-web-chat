@@ -601,18 +601,31 @@ const timers = require('timers');
 const { encodePng, solid } = require('../test-support/png-encode');
 const chrome = require('../lib/replay/chrome');
 
-// A page whose elements (by id) have the given boxes, in document coordinates
-// (the page never scrolls: scrollX/Y stay 0).
+// A page whose elements (by id) have the given boxes, in document coordinates.
+// scrollIntoView scrolls the page (the element near the top-left of the
+// viewport) and getBoundingClientRect answers in viewport coordinates, as a
+// browser's do, so a box read without the scroll offset lands in the wrong place.
 function fakePage(boxes, docSize = { w: 1280, h: 6000 }) {
   const body = Object.keys(boxes).map((id) => `<div id="${id}">${id}</div>`).join('');
   const dom = new JSDOM(`<!doctype html><html><head></head><body>${body}</body></html>`, { pretendToBeVisual: true, runScripts: 'outside-only' });
   const { window } = dom;
   const zero = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+  const at = { x: 0, y: 0 };
+  for (const [k, a] of [['scrollX', 'x'], ['pageXOffset', 'x'], ['scrollY', 'y'], ['pageYOffset', 'y']]) {
+    Object.defineProperty(window, k, { configurable: true, get: () => at[a] });
+  }
   window.Element.prototype.getBoundingClientRect = function () {
     const b = boxes[this.id];
-    return b ? { ...b, right: b.left + b.width, bottom: b.top + b.height } : zero;
+    if (!b) return zero;
+    const left = b.left - at.x;
+    const top = b.top - at.y;
+    return { left, top, width: b.width, height: b.height, right: left + b.width, bottom: top + b.height };
   };
-  window.Element.prototype.scrollIntoView = function () { window.__scrolled = (window.__scrolled || []).concat(this.id); };
+  window.Element.prototype.scrollIntoView = function () {
+    window.__scrolled = (window.__scrolled || []).concat(this.id);
+    const b = boxes[this.id];
+    if (b) { at.x = Math.max(0, b.left - 20); at.y = Math.max(0, b.top - 40); }
+  };
   for (const k of ['scrollWidth', 'scrollHeight']) {
     Object.defineProperty(window.document.documentElement, k, { value: k === 'scrollWidth' ? docSize.w : docSize.h });
   }
