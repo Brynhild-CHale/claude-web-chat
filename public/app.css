@@ -3222,24 +3222,28 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
 
 /* input mode (U334) — the input-mode policy's surface (public/app/input-mode.js;
    DECISIONS.md I.6 addendum 3). touch-action cannot be set per pointer type, so
-   the page well keeps the browser's finger gestures (pan, pinch) and the policy
-   cancels only a drawing pointer's default in its handler; the chrome's own
-   touch-action: none handles inside it (pane grips) are chrome gestures and
-   keep winning, since a touch takes the intersection of its ancestors' values.
-   While finger-draws is on and a strokes tool is armed the finger IS the drawing
-   pointer: the well gives up every finger gesture, or the browser would claim
-   a finger stroke as a scroll and cancel it; pinch-zoom is off while it is
-   armed, and the page scrolls by two fingers, panned by input-mode.js
-   (U334a; DECISIONS.md K.4 I1 = b). */
+   with no strokes tool armed the page well keeps the browser's finger gestures
+   (pan, pinch) and the policy cancels only a drawing pointer's default in its
+   handler; the chrome's own touch-action: none handles inside it (pane grips)
+   are chrome gestures and keep winning, since a touch takes the intersection of
+   its ancestors' values. While finger-draws is on and a strokes tool is armed
+   the finger IS the drawing pointer (html.finger-strokes; U334a; DECISIONS.md
+   K.4 I1 = b). */
 #main { touch-action: manipulation; }
 html.finger-strokes #main { touch-action: none; }
-/* the strokes input policy on a target (U515; annotation engine 4A.2): while
-   any strokes tool is armed, whatever finger-draws says, a light-DOM
-   fixed-aspect sheet gives up the finger's gestures, selection and the callout,
-   so a pen stroke on it is never a scroll; pane content takes the same rule
-   from input-mode.js's adopted sheet (STROKES_SHEET), which app.css cannot
-   reach. */
-html.strokes-armed #main [data-fixed-aspect] { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* the strokes input policy (U515, U616; annotation engine 4A.2, 5A.3;
+   REQ@margins = a, FINGER@page-limit): while any strokes tool is armed, whatever
+   finger-draws says, the whole well — .well-wrap (the column's padding and the
+   gutters beside it) and every element in it — gives up the finger's gestures,
+   so a pen stroke anywhere on the page is never a scroll: pinch-zoom is off,
+   one finger pans nothing, and two fingers pan the well, panned by
+   input-mode.js. Every element, not #main alone: the intersection over
+   ancestors stops at the nearest scroll container, and each .mount-host is one.
+   Pane content takes the same from input-mode.js's adopted sheet
+   (STROKES_SHEET), which app.css cannot reach; a light-DOM fixed-aspect sheet
+   also gives up selection and the callout. A tap still reaches a control. */
+html.strokes-armed #main, html.strokes-armed .well-wrap, html.strokes-armed .well-wrap * { touch-action: none; }
+html.strokes-armed #main [data-fixed-aspect] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
 /* ── U306 · orphans visible and the re-anchor card (public/app/orphans.js;
    annotation engine 2A.6) ── STAND-INS until the design studio's mock-up
