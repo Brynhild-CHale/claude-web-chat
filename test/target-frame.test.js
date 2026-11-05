@@ -356,6 +356,17 @@ test('a press inside a nested shadow root takes the pane frame on the pane\'s ou
   assert.deepStrictEqual(f.record, anchors.record(rootOf('tf3'), q('section.doc', 'tf3'), { mount: 'tf3' }));
 });
 
+test('the pane frame\'s aspect is w ÷ h to 4 decimals, as targetFrame rounds it', () => {
+  const aside = q('aside.side', 'tf3');
+  const own = aside.getBoundingClientRect;
+  boxed(aside, { left: 500, top: 320, width: 300, height: 70 });
+  try {
+    const f = TF.frameAt(press(aside, 600, 330));
+    assert.equal(f.kind, 'pane');
+    assert.equal(f.aspect, 4.2857, '300 ÷ 70 rounded to 4 decimals');
+  } finally { aside.getBoundingClientRect = own; }
+});
+
 test('the derive input\'s frame carries its kind: \'pane\' for prose, \'target\' for an svg', async () => {
   const seen = [];
   const off = TF.registerStrokeDerive('kind-probe', (a) => { seen.push([a.frame.kind, a.target]); return {}; });
