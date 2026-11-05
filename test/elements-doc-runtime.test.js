@@ -789,6 +789,20 @@ test('a page stroke between two items is one box marker at mapPage\'s union box 
   t.diagnostic(`page marker ${JSON.stringify(boxOfMarker(m))}; stats ${JSON.stringify(stats(win))}`);
 });
 
+test('page strokes group by (type, from.item, to.item): one from the same item to another item is its own marker', async () => {
+  const other = pageItem('p6', ['fx-a', 'fx-a'], ['md-notes', 'div.md-block'], [400, 540], [400, 650]);
+  const p = withItems(fixturePayload(), ARROW('p1'), other);
+  const { win, errors } = openPage(p);
+  await settled(win);
+  const a = markerOf(win, 'p1');
+  const b = markerOf(win, 'p6');
+  assert.ok(a && b, 'both drawn');
+  assert.notStrictEqual(a, b, 'two groups: the to items differ');
+  assert.equal(a.getAttribute('data-el-ids'), 'p1');
+  assert.equal(b.getAttribute('data-el-ids'), 'p6');
+  assert.deepEqual(errors, []);
+});
+
 test('a margin (\'beside\') stroke is drawn beside its item and follows it when the item moves', async () => {
   const it = pageItem('p3', ['fx-a', 'fx-a'], ['fx-a', 'fx-a'], [80, 606], [320, 612]);
   assert.equal(strokes.pageShape(it.anchor), 'beside');
