@@ -25,9 +25,9 @@
 //                                                         the two-finger pan
 //   fingerStrokes() · touchesForTests()                   is the finger drawing; the touches tracked
 //   strokesArmed()                                        is a strokes tool armed (finger-draws aside)
-//   STROKES_TARGETS · STROKES_ATTR · STROKES_SHEET        the strokes input policy on a target (4A.2):
-//                                                         the fixed-aspect set, the host mark, the
-//                                                         rule each pane root takes
+//   STROKES_TARGETS · STROKES_ATTR · STROKES_SHEET        the strokes input policy (4A.2, 5A.3): the
+//                                                         fixed-aspect set, the host mark, the rule
+//                                                         each pane root takes
 //
 // The table (s = {armed, input, fingerDraws, penDown, gesture?}):
 //   nothing armed (the pointer tool too) → 'page' for every pointer: the
@@ -58,41 +58,56 @@
 // through setFingerDrawsDefault (main.js feeds it from the toolbar state).
 //
 // The three facts that bound it (addendum 3): touch-action cannot be set per
-// pointer type, so the page well keeps the browser's finger gestures
-// (`#main { touch-action: manipulation }`, app.css's input-mode block) and only
-// a pen's default is cancelled in a handler — except while finger-draws is on
-// and a strokes tool is armed, when the finger IS the drawing pointer and the
-// well takes `touch-action: none` (html.finger-strokes) so a finger stroke is
-// not claimed as a pan, pinch-zoom off while it is armed (K.4 I1 = b), and the
-// page scrolls by TWO fingers, panned here (the two-finger pan, below: one
-// finger draws, a second finger turns the gesture into a scroll of the well,
-// with no disarm step, H1 = a); the chrome's own `touch-action: none` handles
-// (graph canvas, pane grips, the sheet's grip tab) are chrome gestures and
-// stay; the Pencil's double-tap and squeeze never reach a page, so switching is
-// the toolbar's, the hotkeys' and the pointer tool's. The two older pointerType
-// reads (shell.js, the rail's hover ignores touch; sheet-drag.js, the grip
-// tab's mouse-button filter) are theirs and stay as they are.
+// pointer type, so with no strokes tool armed the page well keeps the browser's
+// finger gestures (`#main { touch-action: manipulation }`, app.css's input-mode
+// block) and only a pen's default is cancelled in a handler; while a strokes
+// tool is armed (below) the well gives up every finger gesture instead, and the
+// page scrolls by TWO fingers, panned here (the two-finger pan, below: a second
+// finger turns the gesture into a scroll of the well, with no disarm step,
+// H1 = a), pinch-zoom off (K.4 I1 = b); with finger-draws on as well the
+// finger IS the drawing pointer (html.finger-strokes). The chrome's own
+// `touch-action: none` handles (graph canvas, pane grips, the sheet's grip
+// tab) are chrome gestures and stay; the Pencil's double-tap and squeeze never
+// reach a page, so switching is the toolbar's, the hotkeys' and the pointer
+// tool's. The two older pointerType reads (shell.js, the rail's hover ignores
+// touch; sheet-drag.js, the grip tab's mouse-button filter) are theirs and stay
+// as they are.
 //
-// The strokes input policy on a target (annotation engine 4A.2; AD1, AD4, K.4
-// I1 = b, AJ5): while ANY strokes tool is armed (the box grab included),
-// whatever finger-draws says, every fixed-aspect target (STROKES_TARGETS: an
-// svg, an img, a canvas, an element marked data-fixed-aspect — the set C5 and
-// lib/core/anchors.js targetFrame name) takes `touch-action: none` with
-// selection and the callout off, so a pen stroke on it is never claimed as a
-// pan or a long-press: a cancelled pointerdown alone does not stop a pan, and
-// once a pen is seen auto finger-draws is off and the well stays
-// `manipulation`. A pane's content sits in its open shadow root, where app.css
-// cannot reach, so the rule is ONE constructable sheet (STROKES_SHEET) each pane
-// root takes once, keyed by an attribute on its .mount-host (STROKES_ATTR) —
-// mounts.js adoptReadonlySheet's pattern: the pane's own DOM is untouched.
-// html.strokes-armed carries the light-DOM rule (app.css, `[data-fixed-aspect]`
-// under #main). A new host while armed (a re-render makes one) is marked by a
+// The strokes input policy (annotation engine 4A.2, 5A.3; AD1, AD4, K.4 I1 = b,
+// AJ5; REQ@ink-scope-v2 b+, REQ@margins a, FINGER@page-limit, U515@strokes-all-
+// tools a): while ANY strokes tool is armed (the box grab included), whatever
+// finger-draws says, the whole well — .well-wrap (the column's padding and, on
+// a wide window, the gutters beside it) and everything in it — takes
+// `touch-action: none` (html.strokes-armed, app.css), because any element in
+// the well is a stroke's frame (the pane and page frames) and a pen drag on a
+// `manipulation` element is claimed as a scroll (a pointercancel): a cancelled
+// pointerdown alone does not stop a pan, and once a pen is seen auto
+// finger-draws is off. Pinch-zoom is off while it is armed. The rule reaches
+// every element, not only #main, because a touch's allowed behaviours are the
+// intersection over the hit element and its ancestors only up to the nearest
+// scroll container, inclusive (Pointer Events, "determining supported touch
+// behavior"): each pane's .mount-host is one (overflow auto), and so may be a
+// pane's own content. A pane's content sits in its open shadow root, where
+// app.css cannot reach, so its part is ONE constructable sheet (STROKES_SHEET)
+// each pane root takes once, keyed by an attribute on its .mount-host
+// (STROKES_ATTR) — mounts.js adoptReadonlySheet's pattern: the pane's own DOM is
+// untouched; the sheet gives every element in the root `touch-action: none`,
+// and the fixed-aspect targets (STROKES_TARGETS: an svg, an img, a canvas, an
+// element marked data-fixed-aspect — the set C5 and lib/core/anchors.js
+// targetFrame name) selection and the callout off, so a stroke on one is never
+// a long-press either (app.css gives a light-DOM [data-fixed-aspect] the same).
+// A new host while armed (a re-render makes one) is marked by a
 // MutationObserver on #main, disconnected on disarm, when every mark and the
 // class go. A browser without constructable sheets marks the hosts and styles
-// nothing. Two fingers whose first landed on a marked target pan the well here
-// (the two-finger pan, below), as with finger-draws on; ONE finger on a target
-// with finger-draws off is still the page's, and the browser cannot pan from it
-// there (the named limit). The device behaviour is E3's to prove.
+// nothing in a pane's own inner scrollers. Two fingers anywhere in the well pan
+// it here (the two-finger pan, below), finger-draws on or off; ONE finger with
+// finger-draws off is still the page's (route()'s strokes row), and the browser
+// pans nothing from it anywhere in the well (FINGER@page-limit, the named
+// limit) — a tap still reaches a control, since touch-action never blocks a
+// tap. The pan scrolls the well's scroller only: a pane's own scroller (a
+// rows-capped pane's .mount-host) does not scroll while a strokes tool is
+// armed. No strokes tool armed (a selection tool is none): nothing here acts
+// and the well is `manipulation`. The device behaviour is E3's to prove.
 //
 // No DOM is touched at import.
 import { armed, cancelGesture, inputKindOf, isHostRoot, onArmedChange, setPointerPolicy, INPUT_KINDS } from './overlay.js';
@@ -334,9 +349,9 @@ let touch = null;     // {id, x0, y0, dx, dy, done}: the last primary touch gest
 let uninstall = null;
 
 // ── the two-finger pan (K.4: H1 = a, I1 = b) ─────────────────────────────────
-// While finger-draws is on and a strokes tool is armed (fingerStrokes(): the
-// well's touch-action is none, so the browser pans nothing), one finger draws
-// and two fingers scroll. Every finger down in the well is tracked by its
+// While a strokes tool is armed (strokesArmed(): the well's touch-action is
+// none, so the browser pans nothing), two fingers scroll, and with finger-draws
+// on one finger draws. Every finger down in the well is tracked by its
 // pointerId; a finger landing while another is down (two landing together
 // are the same, one pointerdown after the other) turns the gesture into a
 // PAN: the stroke under way is cancelled toward the tool through the
@@ -349,11 +364,11 @@ let uninstall = null;
 // cancelable), so neither the overlay nor a pane under them hears them, and
 // their clicks are stopped too. A lone finger still draws; a pen is never a
 // pan's (a resting palm under a pen stays the policy's 'ignore', and no pan
-// starts while a pen is down); with no strokes tool armed nothing here acts,
-// and with finger-draws off only a gesture whose FIRST finger landed on a
-// marked fixed-aspect target pans here (onStrokesTarget: that target is
-// `touch-action: none`, so the browser could not scroll from it); elsewhere
-// the well is `manipulation` and the browser pans.
+// starts while a pen is down); with no strokes tool armed nothing here acts
+// (the well is `manipulation` and the browser pans); with one armed a gesture
+// anywhere in the well — a pane's prose, a control, the column's padding or
+// the gutters beside it (inWell: the .well-wrap) — pans here, finger-draws on
+// or off.
 // Two rules bound a pan under way (K.2-98, K.2-99):
 //   - it moves nothing while a pen is down: two resting contacts that came
 //     down before the pen (a palm) keep their pan — their events still
@@ -405,8 +420,14 @@ function scrollerOf() {
   const well = wellOf();
   return (well && well.closest('.well-wrap')) || document.scrollingElement || null;
 }
-function inWell(e) {
+// The well a finger is tracked in: the .well-wrap that holds #main (REQ@margins
+// = a: the column's padding and the gutters beside it), else #main itself.
+function zoneOf() {
   const well = wellOf();
+  return well ? (well.closest('.well-wrap') || well) : null;
+}
+function inWell(e) {
+  const well = zoneOf();
   if (!well) return false;
   const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
   if (path.length) return path.includes(well);
@@ -473,9 +494,9 @@ function onPan(e) {
       const r = routeAtDown(e);
       // heard: the press goes on to the page; a finger landing during a pan
       // is stopped below, so no pane hears its press (and none hears its lift).
-      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0, route: r, heard: !pan && r === 'page', target: strokesArmed() && onStrokesTarget(e) });
+      touches.set(id, { x: e.clientX || 0, y: e.clientY || 0, route: r, heard: !pan && r === 'page' });
       if (pan) { pan.ids.add(id); rebase(); stop(e); return true; }
-      if (touches.size < 2 || penIds.size > 0 || !(fingerStrokes() || firstOnTarget())) return false;
+      if (touches.size < 2 || penIds.size > 0 || !strokesArmed()) return false;
       touches.get(id).heard = false;   // the finger that starts the pan: its press is stopped
       // The second finger: the stroke under way is the tool's no more.
       for (const other of touches.keys()) if (other !== id) cancelGesture(other);
@@ -520,27 +541,6 @@ function onPan(e) {
       return false;
   }
 }
-// The first finger of the gesture landed on a marked target while a strokes
-// tool was (and still is) armed.
-function firstOnTarget() {
-  const first = touches.values().next().value;
-  return !!(first && first.target) && strokesArmed();
-}
-// The event landed on a fixed-aspect target the policy made `touch-action:
-// none`: inside a pane root that took the strokes sheet, or a light-DOM
-// [data-fixed-aspect] under the well (app.css). The walk stops at the well.
-function onStrokesTarget(e) {
-  const well = wellOf();
-  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
-  for (const n of path) {
-    if (!n || n.nodeType !== 1) continue;
-    if (n === well) return false;
-    if (typeof n.matches !== 'function' || !n.matches(STROKES_TARGETS)) continue;
-    const root = n.getRootNode();
-    if (root === n.ownerDocument ? n.matches('[data-fixed-aspect]') : sheetRoots.has(root) && root.host.hasAttribute(STROKES_ATTR)) return true;
-  }
-  return false;
-}
 function dropPan() {
   touches.clear();
   pan = null;
@@ -560,11 +560,18 @@ function stateFor(a) {
 function policy(e, ctx) {
   return route(e, stateFor(ctx && ctx.armed !== undefined ? ctx.armed : armed()));
 }
-// ── the strokes input policy on a target (4A.2) ──────────────────────────────
+// ── the strokes input policy (4A.2, 5A.3) ────────────────────────────────────
+// STROKES_TARGETS is the second spelling of targetFrame's set (U515), held
+// equal to it by test/input-mode.test.js and test/elements-e2e-t4-chrome.test.js.
+// STROKES_SHEET, two rules: every element in a marked pane root gives up the
+// finger's gestures (a pane's own scroll container stops the intersection over
+// ancestors, so #main's and the host's none would not reach below it), and the
+// fixed-aspect targets also give up selection and the callout.
 export const STROKES_TARGETS = 'svg, img, canvas, [data-fixed-aspect]';
 export const STROKES_ATTR = 'data-wc-strokes';
-export const STROKES_SHEET = `:host([${STROKES_ATTR}]) :is(${STROKES_TARGETS})`
-  + ' { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
+export const STROKES_SHEET = `:host([${STROKES_ATTR}]) * { touch-action: none; }`
+  + ` :host([${STROKES_ATTR}]) :is(${STROKES_TARGETS})`
+  + ' { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
 let strokesSheet;              // the one sheet; null where constructable sheets are absent
 const sheetRoots = new WeakSet();   // the pane roots that took it
 let marked = null;             // the well whose hosts are marked (null: none)

@@ -28,19 +28,24 @@
 //   - the two older pointerType reads stay: a touch pointerenter on
 //     #queue-rail does not open it (a mouse one does), and sheet-drag's mouse
 //     button filter is the line it was;
-//   - the stylesheet: the well's touch-action is manipulation (none under
-//     html.finger-strokes: pinch-zoom off while a drawing tool is armed and
-//     fingers draw, K.4 I1 = b), and every touch-action rule the chrome had
-//     before is unchanged;
+//   - the stylesheet: with no strokes tool armed the well's touch-action is
+//     manipulation; while one is armed (U616, 5A.3; the pen tool's stand-in
+//     and the box grab alike) #main's and .well-wrap's winning touch-action is
+//     none, finger-draws on or off (pinch-zoom off, K.4 I1 = b); every
+//     touch-action rule the chrome had before is unchanged;
 //   - the two-finger pan (U334a; DECISIONS.md K.4 H1 = a, I1 = b), with the
 //     box grab armed (the drawing tool) and finger-draws on: one finger
 //     draws a grab; two fingers moving together scroll the well (.well-wrap)
 //     by the midpoint's travel and create nothing; a second finger landing
 //     mid-stroke cancels the stroke (the band dropped, no POST) and scrolls;
 //     the pan's fingers are never heard by the pane under them, their clicks
-//     included; with finger-draws off the two-finger case is the browser's (no
-//     scrollBy, touch-action manipulation); a pen stroke with resting fingers
-//     (a palm) still draws;
+//     included; with finger-draws off (U616) two fingers pan the well all the
+//     same, over prose in a pane and in a margin (.well-wrap), and a second
+//     finger in the margin cancels a finger stroke under way; with no strokes
+//     tool armed the two-finger case is the browser's (no scrollBy,
+//     touch-action manipulation); a tap on a pane's button with a strokes tool
+//     armed reaches the button; a pen stroke with resting fingers (a palm)
+//     still draws;
 //   - a pan under way (U334b; K.2-98, K.2-99): it moves nothing while a pen is
 //     down (a palm down before the pen keeps its pan, scrolls nothing, and the
 //     pen's grab is created), and the next move after the pen lifts scrolls by
@@ -54,11 +59,14 @@
 //     sets html.strokes-armed, marks every .mount-host data-wc-strokes and
 //     has its shadow root take the strokes sheet once (adoptedStyleSheets
 //     stubbed: jsdom has none); a pane rendered while armed is marked; disarm
-//     clears every mark; a taps tool arms none; the sheet's rule gives an svg,
-//     an img, a canvas and a [data-fixed-aspect] in a pane touch-action none
-//     with selection and the callout off, a paragraph none of it, and app.css
-//     a light-DOM [data-fixed-aspect] the same; with the box grab armed and
-//     finger-draws off, two fingers from an svg in a pane scroll the well.
+//     clears every mark; a taps tool arms none; the sheet's rules give every
+//     element in a marked pane root touch-action none (a pane's own scroller
+//     stops the intersection over ancestors) and an svg, an img, a canvas and
+//     a [data-fixed-aspect] selection and the callout off, a paragraph not
+//     those, and app.css a light-DOM [data-fixed-aspect] the same; with the
+//     box grab armed and finger-draws off, two fingers from an svg or a
+//     paragraph in a pane scroll the well, and one finger there is the
+//     page's.
 const test = require('node:test');
 const { before, after } = test;
 const assert = require('node:assert');
@@ -352,19 +360,59 @@ test('the two older pointerType reads stay: the rail\'s hover ignores touch; the
   }
 });
 
-test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and every older touch-action rule is unchanged', () => {
+test('the stylesheet (U616): with no strokes tool armed the well keeps the finger\'s gestures (manipulation); with the pen tool\'s stand-in or the box grab armed #main and .well-wrap take none, finger-draws on or off; every older touch-action rule is unchanged', () => {
   const css = createCascade(CSS, { win: () => W });
   const main = shell.$('main');
+  const wrap = main.closest('.well-wrap');
   const html = W.document.documentElement;
-  html.classList.remove('finger-strokes');
-  assert.equal(css.value(main, 'touch-action'), 'manipulation');
-  html.classList.add('finger-strokes');
+  const both = () => [css.value(main, 'touch-action'), css.value(wrap, 'touch-action')];
+  // A locked pane's header under #main: .pane.locked .pane-header's auto is
+  // (0,3,0), which the well's armed rule (0,2,1) loses to, so the armed
+  // #main rule (1,1,1) must beat it (FINGER@page-limit: no finger gesture is the
+  // browser's anywhere in the well while a strokes tool is armed).
+  const lockedPane = W.document.createElement('div');
+  lockedPane.className = 'pane locked';
+  const lockedHeader = W.document.createElement('div');
+  lockedHeader.className = 'pane-header';
+  lockedPane.appendChild(lockedHeader);
+  main.appendChild(lockedPane);
+  const locked = () => css.value(lockedHeader, 'touch-action');
+  ov.setArmed(null);
+  IM.setFingerDraws('off');
   try {
-    assert.equal(css.value(main, 'touch-action'), 'none', 'pinch-zoom off while a drawing tool is armed and fingers draw (K.4 I1 = b)');
-  } finally { html.classList.remove('finger-strokes'); }
+    assert.deepEqual(both(), ['manipulation', null], 'disarmed: the browser pans and pinches');
+    assert.equal(locked(), 'auto', 'disarmed: a locked pane\'s header keeps auto');
+    // The pen tool's stand-in (a strokes type: the ink pack's pen is a
+    // plugin) and the box grab, finger-draws off and on.
+    for (const t of ['im-strokes', 'box-grab']) {
+      for (const fd of ['off', 'on']) {
+        IM.setFingerDraws(fd);
+        ov.setArmed(t);
+        assert.equal(html.classList.contains('strokes-armed'), true, `${t} ${fd}`);
+        assert.deepEqual(both(), ['none', 'none'], `${t}, finger-draws ${fd}: the well gives up every finger gesture (pinch-zoom off)`);
+        assert.equal(locked(), 'none', `${t}, finger-draws ${fd}: a locked pane's header gives them up too`);
+        ov.setArmed(null);
+        assert.deepEqual(both(), ['manipulation', null], `${t} disarmed: back to the browser's`);
+        assert.equal(locked(), 'auto', `${t} disarmed: a locked pane's header back to auto`);
+      }
+    }
+    // No strokes tool armed (a taps tool, a selection tool): unchanged.
+    for (const t of ['im-taps', 'im-selection']) {
+      ov.setArmed(t);
+      assert.deepEqual(both(), ['manipulation', null], t);
+      ov.setArmed(null);
+    }
+    // html.finger-strokes alone still reads none (U334a).
+    html.classList.add('finger-strokes');
+    try { assert.equal(css.value(main, 'touch-action'), 'none'); } finally { html.classList.remove('finger-strokes'); }
+  } finally {
+    ov.setArmed(null);
+    IM.setFingerDraws('off');
+    lockedPane.remove();
+  }
   // Every touch-action rule, by selector: the chrome's handles as they were
   // (graph canvas, pane grips, the dock's grips, the sheet's scrim and tab, the
-  // phone header's auto) and the well's two.
+  // phone header's auto) and the well's three.
   const bare = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [];
   for (const r of bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
@@ -382,7 +430,8 @@ test('the stylesheet: the well keeps the finger\'s gestures (manipulation), and 
     '.chat-tab => none',
     '#main => manipulation',
     'html.finger-strokes #main => none',
-    'html.strokes-armed #main [data-fixed-aspect] => none',
+    'html.strokes-armed #main, html.strokes-armed .well-wrap, html.strokes-armed .well-wrap * => none',
+    'html.strokes-armed #main * => none',
   ]);
 });
 
@@ -534,28 +583,118 @@ test('the pan: a second finger landing on the pane\'s button is the pan\'s; the 
   } finally { await settle(); }
 });
 
-test('finger-draws off: two fingers are the browser\'s (no scrollBy, touch-action manipulation) and create nothing', async () => {
+test('no strokes tool armed: two fingers are the browser\'s (no scrollBy, touch-action manipulation) and create nothing', async () => {
+  for (const t of [null, 'im-taps']) {
+    for (const fd of ['off', 'on']) {
+      ov.setArmed(null);
+      IM.setFingerDraws(fd);
+      ov.setArmed(t);
+      layOut();
+      reset();
+      try {
+        const css = createCascade(CSS, { win: () => W });
+        assert.equal(W.document.documentElement.classList.contains('strokes-armed'), false);
+        assert.equal(css.value(shell.$('main'), 'touch-action'), 'manipulation', 'the browser pans and pinches');
+        const d1 = finger(lead(), 'pointerdown', 41, 100, 200, { isPrimary: true });
+        const d2 = finger(lead(), 'pointerdown', 42, 200, 200);
+        assert.equal(d1.defaultPrevented || d2.defaultPrevented, false, 'no default cancelled');
+        for (const y of [180, 160]) {
+          finger(lead(), 'pointermove', 41, 100, y);
+          finger(lead(), 'pointermove', 42, 200, y);
+        }
+        finger(lead(), 'pointercancel', 41, 100, 160);
+        finger(lead(), 'pointercancel', 42, 200, 160);
+        await shell.tick();
+        assert.deepEqual(scrollCalls, [], `${t || 'nothing'} ${fd}: no scrollBy: the scroll is the browser's`);
+        assert.equal(scroller().scrollTop, 0);
+        assert.deepEqual(created, []);
+        if (!t) assert.ok(W.__log.includes('down:touch'), 'nothing armed: the page had the fingers');
+        assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+      } finally { await settle(); }
+    }
+  }
+});
+
+test('the box grab armed, finger-draws off (U616): two fingers pan the well over prose in a pane and in a margin, and create nothing; one finger pans nothing', async () => {
   await grabArmed('off');
   try {
     const css = createCascade(CSS, { win: () => W });
     assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false);
-    assert.equal(css.value(shell.$('main'), 'touch-action'), 'manipulation', 'the browser pans and pinches');
-    const d1 = finger(lead(), 'pointerdown', 41, 100, 200, { isPrimary: true });
-    const d2 = finger(lead(), 'pointerdown', 42, 200, 200);
-    assert.equal(d1.defaultPrevented || d2.defaultPrevented, false, 'no default cancelled');
-    for (const y of [180, 160]) {
-      finger(lead(), 'pointermove', 41, 100, y);
-      finger(lead(), 'pointermove', 42, 200, y);
-    }
-    finger(lead(), 'pointercancel', 41, 100, 160);
-    finger(lead(), 'pointercancel', 42, 200, 160);
+    assert.equal(css.value(shell.$('main'), 'touch-action'), 'none', 'the browser pans nothing in the well');
+    const margin = scroller();
+    // One finger on the prose: the page's, and no pan (FINGER@page-limit).
+    finger(lead(), 'pointerdown', 40, 100, 200, { isPrimary: true });
+    finger(lead(), 'pointermove', 40, 100, 150);
+    finger(lead(), 'pointerup', 40, 100, 150);
     await shell.tick();
-    assert.deepEqual(scrollCalls, [], 'no scrollBy: the scroll is the browser\'s');
-    assert.equal(scroller().scrollTop, 0);
-    assert.equal(grabPosts().length, 0);
-    assert.ok(W.__log.includes('down:touch'), 'the page had the fingers');
+    assert.deepEqual(scrollCalls, [], 'one finger: no scrollBy');
+    assert.equal(grabPosts().length, 0, 'and no grab');
+    let top = 0;
+    for (const [name, el] of [['prose in a pane', lead], ['the margin', () => margin]]) {
+      reset();
+      const d1 = finger(el(), 'pointerdown', 41, 100, 200, { isPrimary: true });
+      const d2 = finger(el(), 'pointerdown', 42, 200, 200);
+      assert.equal(d1.defaultPrevented, false, `${name}: the first finger's press went to the page`);
+      assert.equal(d2.defaultPrevented, true, `${name}: the second finger is the pan's`);
+      for (const y of [190, 180]) {
+        finger(el(), 'pointermove', 41, 100, y);
+        finger(el(), 'pointermove', 42, 200, y);
+      }
+      top += 20;
+      assert.equal(scroller().scrollTop, top, `${name}: the well scrolled by the fingers' travel`);
+      finger(el(), 'pointerup', 41, 100, 180);
+      finger(el(), 'pointerup', 42, 200, 180);
+      tapClick(el(), 41);
+      tapClick(el(), 42);
+      await shell.tick();
+      assert.equal(grabPosts().length, 0, `${name}: the pan created nothing`);
+      assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+    }
+    assert.ok(scrollCalls.length > 0, 'scrollBy called');
+  } finally { await settle(); }
+});
+
+test('the box grab armed, finger-draws on (U616): a second finger landing in the margin cancels the stroke under way (cancelGesture: the band dropped, no POST) and pans', async () => {
+  await grabArmed('on');
+  try {
+    const margin = scroller();
+    finger(lead(), 'pointerdown', 43, 10, 10, { isPrimary: true });
+    finger(lead(), 'pointermove', 43, 80, 60);
+    assert.ok(band(), 'the stroke is under way');
+    finger(margin, 'pointerdown', 44, 120, 60);
+    assert.equal(band(), null, 'cancelled toward the tool: the band is gone');
+    finger(lead(), 'pointermove', 43, 80, 40);
+    finger(margin, 'pointermove', 44, 120, 40);
+    assert.equal(scroller().scrollTop, 20, 'the well scrolled');
+    finger(lead(), 'pointerup', 43, 80, 40);
+    finger(margin, 'pointerup', 44, 120, 40);
+    tapClick(lead(), 43);
+    tapClick(margin, 44);
+    await shell.tick();
+    assert.equal(grabPosts().length, 0, 'no element, no POST');
     assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
   } finally { await settle(); }
+});
+
+test('a strokes tool armed (U616): a finger tap on the pane\'s button reaches the button, finger-draws off and on; the tool stays armed', async () => {
+  for (const t of ['box-grab', 'im-strokes']) {
+    for (const fd of ['off', 'on']) {
+      ov.setArmed(null);
+      IM.setFingerDraws(fd);
+      ov.setArmed(t);
+      reset();
+      shell.calls.length = 0;
+      try {
+        gesture(goBtn(), 'touch', { pointerId: 45 });
+        await shell.tick();
+        assert.ok(W.__log.includes('click:go'), `${t} ${fd}: the button acted`);
+        assert.deepEqual(created, [], `${t} ${fd}: not the tool`);
+        assert.equal(grabPosts().length, 0);
+        assert.equal(ov.armed().type, t, 'the tool stays armed');
+        assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
+      } finally { ov.setArmed(null); IM.setFingerDraws('off'); }
+    }
+  }
 });
 
 test('a pen stroke with resting fingers (a palm) still draws; no pan starts while a pen is down', async () => {
@@ -848,7 +987,7 @@ test('a strokes tool armed, finger-draws off: html.strokes-armed, every mount ho
   }
 });
 
-test('the strokes sheet: an svg, an img, a canvas and a [data-fixed-aspect] in a pane take touch-action none with selection and the callout off; a paragraph none of it; app.css gives a light-DOM sheet the same', async () => {
+test('the strokes sheet (U616): every element in a marked pane root takes touch-action none; an svg, an img, a canvas and a [data-fixed-aspect] also selection and the callout off, a paragraph not those; app.css gives a light-DOM sheet the same', async () => {
   const css = createCascade(IM.STROKES_SHEET, { win: () => W });
   installAdopted();
   try {
@@ -858,9 +997,11 @@ test('the strokes sheet: an svg, an img, a canvas and a [data-fixed-aspect] in a
     const r = host.shadowRoot;
     const row = (sel) => ['touch-action', 'user-select', '-webkit-user-select', '-webkit-touch-callout'].map((p) => css.value(r.querySelector(sel), p));
     for (const sel of ['.t-svg', '.t-img', '.t-canvas', '.t-sheet']) assert.deepEqual(row(sel), ['none', 'none', 'none', 'none'], sel);
-    assert.deepEqual(row('.t-p'), [null, null, null, null], 'a paragraph: none of it');
+    assert.deepEqual(row('.t-p'), ['none', null, null, null], 'a paragraph: touch-action none (a pane\'s own scroller stops the intersection), selection kept');
+    assert.deepEqual(row('.t-in'), ['none', null, null, null], 'inside a sheet: touch-action none');
     host.removeAttribute('data-wc-strokes');
     assert.deepEqual(row('.t-svg'), [null, null, null, null], 'keyed by the host\'s mark');
+    assert.deepEqual(row('.t-p'), [null, null, null, null], 'keyed by the host\'s mark');
     host.toggleAttribute('data-wc-strokes', true);
     // The light-DOM rule: a [data-fixed-aspect] under #main, while armed.
     const app = createCascade(CSS, { win: () => W });
@@ -879,7 +1020,7 @@ test('the strokes sheet: an svg, an img, a canvas and a [data-fixed-aspect] in a
   }
 });
 
-test('the box grab armed, finger-draws off: two fingers from an svg in a pane scroll the well and create nothing; one finger there is the page\'s', async () => {
+test('the box grab armed, finger-draws off: two fingers from an svg or a paragraph in a pane scroll the well and create nothing; one finger there is the page\'s', async () => {
   installAdopted();
   try {
     const r = (await targetsPane()).shadowRoot;
@@ -907,7 +1048,8 @@ test('the box grab armed, finger-draws off: two fingers from an svg in a pane sc
     await shell.tick();
     assert.equal(grabPosts().length, 0, 'the pan created nothing');
     assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
-    // Two fingers from the pane's paragraph: the browser's, as before.
+    // Two fingers from the pane's paragraph: the pan too (U616: anywhere in
+    // the well, not only from a target).
     scrollCalls.length = 0;
     finger(r.querySelector('.t-p'), 'pointerdown', 124, 100, 300, { isPrimary: true });
     finger(r.querySelector('.t-p'), 'pointerdown', 125, 200, 300);
@@ -915,7 +1057,9 @@ test('the box grab armed, finger-draws off: two fingers from an svg in a pane sc
     finger(r.querySelector('.t-p'), 'pointermove', 125, 200, 280);
     finger(r.querySelector('.t-p'), 'pointercancel', 124, 100, 280);
     finger(r.querySelector('.t-p'), 'pointercancel', 125, 200, 280);
-    assert.deepEqual(scrollCalls, [], 'off a target: no scrollBy');
+    assert.ok(scrollCalls.length > 0, 'off a target: scrollBy all the same');
+    assert.equal(grabPosts().length, 0);
+    assert.deepEqual(IM.touchesForTests(), { touches: [], pan: null, clicks: [] });
   } finally {
     removeAdopted();
     await settle();
