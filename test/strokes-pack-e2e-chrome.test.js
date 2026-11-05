@@ -34,7 +34,9 @@
 //     /api/elements?type=scribble and the element:scribble frame carry —
 //     never from the overlay's row, which carries no points (strokesOn's row);
 //     a record edited by the frame redraws the path from the new points;
-//   - the same press on a paragraph is refused with FRAME_HINT and posts
+//   - the same stroke on a paragraph takes the pane frame (U611) and posts
+//     one element anchored to the element record of the pane's outermost
+//     block; a press on a button is refused with FRAME_HINT and posts
 //     nothing; Mod+Z outside a field sends POST /api/elements/undo (U518's
 //     action, whatever tool is armed); a node preview creates nothing.
 //
@@ -325,16 +327,34 @@ test('the dry stroke: a box marker equal to the svg\'s rect, one path with data-
   }, { timeout: 4000, what: 'the path redrawn from the edited record' });
 });
 
-test('the same press on a paragraph is refused with FRAME_HINT and posts nothing', async () => {
+test('the same stroke on a paragraph posts one element anchored to the outermost block\'s record (the pane frame); a press on a button is refused with FRAME_HINT and posts nothing', async () => {
   tools.arm(TYPE);
-  const n0 = posts().length;
-  const s0 = wet.stats();
-  await strokeOn(q('p.prose'));
-  await shell.tick(3);
-  assert.equal(posts().length, n0, 'nothing posted');
-  assert.equal(wet.stats().samples, s0.samples, 'nothing reached the wet layer');
-  assert.equal(reaimText(), TF.FRAME_HINT);
-  assert.equal(wetCanvases().filter((cv) => cv.isConnected).length, 0, 'no wet ink');
+  const wrap = boxed(q('div.wrap'), { left: 90, top: 190, width: 400, height: 200 });
+  const btn = q('div.wrap').appendChild(W.document.createElement('button'));
+  btn.textContent = 'Go';
+  try {
+    const n0 = posts().length;
+    await strokeOn(q('p.prose'));
+    await waitUntil(() => posts().length === n0 + 1, { timeout: 3000, what: 'the paragraph stroke\'s POST' });
+    await shell.tick(3);
+    assert.equal(posts().length, n0 + 1, 'exactly one element');
+    const { body } = posts()[n0];
+    assert.equal(body.anchor.kind, 'element');
+    assert.equal(body.anchor.mount, 'sk1');
+    assert.deepStrictEqual(body.anchor, (await shell.importApp('anchors.js')).default.record(rootOf(), wrap, { mount: 'sk1' }),
+      'the element record of the pane\'s outermost block');
+    assert.ok(xyOf(body.payload.points).every((v) => v >= 0 && v <= 1));
+    await waitUntil(() => wetCanvases().every((cv) => !cv.isConnected), { timeout: 3000, what: 'the wet canvas dropped' });
+    // A button: refused.
+    const n1 = posts().length;
+    const s1 = wet.stats();
+    await strokeOn(btn);
+    await shell.tick(3);
+    assert.equal(posts().length, n1, 'nothing posted');
+    assert.equal(wet.stats().samples, s1.samples, 'nothing reached the wet layer');
+    assert.equal(reaimText(), TF.FRAME_HINT);
+    assert.equal(wetCanvases().filter((cv) => cv.isConnected).length, 0, 'no wet ink');
+  } finally { btn.remove(); delete wrap.getBoundingClientRect; }
 });
 
 test('Mod+Z outside a field sends POST /api/elements/undo (the engine\'s undo, the type ships none)', async () => {
