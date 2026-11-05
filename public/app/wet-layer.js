@@ -80,8 +80,9 @@
 //
 // THE TRAIL. Laid over the layout viewport when it takes its first held
 // stroke, re-sized only then; while it holds a stroke it follows a scroll at
-// each frame a scroll asks for, by ONE rect read: its newest held stroke's
-// target (the active stroke's rect already read when that is the same target).
+// every frame that runs (a scroll's, a resize's or a paint's), by ONE rect
+// read: its newest held stroke's target (the active stroke's rect already
+// read when that is the same target).
 // Strokes held from other targets move with that one. Its 2D context is asked
 // for at its first hold (no context for a viewer that never holds one).
 //

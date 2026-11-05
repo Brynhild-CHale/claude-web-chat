@@ -782,3 +782,72 @@ test('10,000 samples with a hold every 1,000: stats().allocs unchanged after the
     W.document.createElement = realCreate;
   }
 });
+
+// Review absorptions (U615 round 1): the viewport bound holds where the well
+// does not bound the clip; a cancel of one held token drops every held
+// stroke; the predicted slot moves with the target as the kept samples do.
+test('the viewport bounds the canvas where the well does not: a well past the viewport, and a target outside any well (WET@clip-viewport)', () => {
+  const main = W.document.getElementById('main');
+  const wellEl = W.document.querySelector('.well-wrap');
+  const loose = W.document.createElement('div');
+  W.document.body.appendChild(loose);
+  rects.set(main, { left: -200, top: -5000, width: 4000, height: 20000 });
+  rects.set(wellEl, { left: -300, top: -100, width: 5000, height: 30000 });
+  rects.set(loose, { left: -100, top: -100, width: 5000, height: 9000 });
+  setDpr(2);
+  try {
+    for (const el of [main, loose]) {
+      assert.ok(wet.begin(el, { pointerId: 70 }) > 0);
+      const [c] = wetCanvases();
+      assert.deepStrictEqual([c.style.left, c.style.top, c.style.width, c.style.height],
+        ['0px', '0px', `${VIEW.width}px`, `${VIEW.height}px`], `${el === main ? '#main' : 'a loose target'}: clipped to the layout viewport`);
+      assert.deepStrictEqual([c.width, c.height], [VIEW.width * 2, VIEW.height * 2], 'the viewport × dpr, never more');
+      wet.cancel();
+    }
+  } finally {
+    rects.delete(main);
+    rects.set(wellEl, WELL);
+    rects.delete(loose);
+    loose.remove();
+  }
+});
+
+test('cancel(N) of one held stroke clears the whole trail, every held token with it', () => {
+  const a = wet.begin(sheet(), { pointerId: 71 });
+  wet.push([sample(50, 110, 1)]);
+  wet.paint(() => {});
+  flush();
+  const b = wet.begin(sheet(), { pointerId: 72 });
+  wet.push([sample(60, 120, 2)]);
+  wet.paint(() => {});
+  flush();
+  const c = wet.begin(sheet(), { pointerId: 73 });
+  assert.ok(a > 0 && b > a && c > b);
+  assert.equal(wet.stats().held, 2, 'a and b on the trail');
+  const t = trailCanvas();
+  assert.equal(wet.cancel(a), true);
+  assert.equal(wet.stats().held, 0, 'b went with a');
+  assert.equal(t.parentNode, null, 'the trail cleared at once');
+  assert.equal(wet.end(b), false, 'b is no longer held');
+  assert.equal(wet.active(), true, 'stroke c is untouched');
+});
+
+test('a clip move shifts the predicted samples with the target, as it shifts the kept ones', () => {
+  const main = W.document.getElementById('main');
+  rects.set(main, { left: 90, top: -5000, width: 1100, height: 20000 });
+  try {
+    assert.ok(wet.begin(main, { pointerId: 74 }));
+    wet.push([sample(300, 300, 1)], { predicted: [sample(310, 320, 2)] });
+    let seen = null;
+    wet.paint((x, view) => { seen = [view.predictedCount, view.predictedX(0), view.predictedY(0)]; });
+    flush();
+    assert.deepStrictEqual(seen, [1, 310, 320 - WELL.top]);
+    rects.set(main, { left: 90, top: -5150, width: 1100, height: 20000 });
+    W.dispatchEvent(new W.Event('scroll'));
+    wet.paint((x, view) => { seen = [view.predictedCount, view.predictedX(0), view.predictedY(0), view.y(0)]; });
+    flush();
+    assert.deepStrictEqual(seen, [1, 310, 170 - WELL.top, 150 - WELL.top], 'the predicted and the kept sample both moved up 150');
+  } finally {
+    rects.delete(main);
+  }
+});
