@@ -822,3 +822,387 @@ test('a real picture: the shared group drawn in headless Chrome and clipped to i
   assert.ok(r.body.image.width > 2 * PICTURE_MARGIN_PX && r.body.image.width < 400 + 2 * PICTURE_MARGIN_PX, JSON.stringify(r.body.image));
   assert.ok(r.body.image.height > 2 * PICTURE_MARGIN_PX && r.body.image.height < 200 + 2 * PICTURE_MARGIN_PX, JSON.stringify(r.body.image));
 });
+
+// ── the picture with and without the line (tranche 5, U618) ──────────────────
+// RULED REQ@ink-scope-v2 (b+) (3): what Claude receives for a stroke group is
+// a pair of screenshots, with and without the ink — TWO PNGs of one clip from
+// ONE browser session (captureClip's `second`, U617), the second after
+// hideStyle(this group's members) (REQ@picture-without (a): other groups and
+// other types stay; H4 b: group.container and group.blend alike), both from
+// the one shared-only document (J2: no private stroke in either). The record
+// keeps `image` and gains the sibling `image_without` over
+// captures/<capture>.without.png (U618@without-file-name H5 a); both are
+// withdrawn, swept and served together (GET …/picture?which=without,
+// ?as=json's image_without and data_without). A Send renders at the viewer's
+// viewport (PICTURE@viewer-viewport); a request of Claude's at VIEWPORT.
+
+const {
+  hideStyle, itemSelector, imageBlock, RENDER_QUEUE_MAX, VIEWPORT, WITHOUT_FAILED_ERROR,
+} = require('../lib/server/box-grab');
+const { approveElementPack } = require('../test-support/element-type-fixture');
+
+// A stub of captureClip that takes both shots: the first 40×30 blue, the
+// second (without the line) 44×32 grey — a different size only so each
+// image's record provably reads its own file (a real pair shares the clip).
+function pairCapture() {
+  const calls = [];
+  const fn = async (opts) => {
+    calls.push(opts);
+    const png = encodePng(solid(40, 30, [20, 120, 200]), 40, 30, { alpha: false });
+    return opts.second ? { png, png_without: encodePng(solid(44, 32, [200, 200, 200]), 44, 32, { alpha: false }) } : { png };
+  };
+  fn.calls = calls;
+  return fn;
+}
+const capturesDir = (d) => path.join(d.root, '.web-chat', 'captures');
+const hiddenIds = (style) => [...style.matchAll(/\[data-el-id="([^"]+)"\](?! \*)/g)].map((m) => m[1]).sort();
+
+test('U618: a picture job hands captureImpl ONE call with second.style hiding exactly the group\'s members — never a private sibling or another group — from a source document with 0 private strokes; both files written, image and image_without ready with their own digests and sizes, the queue item\'s block carrying `without`', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv, calls } = b;
+  await ok(d.api.post('/api/render', { id: 'ip2', html: PANE_HTML }), 'a second pane');
+  const other = (await ok(d.anonApi.post('/api/elements', strokeBody({ ...b.anchor, mount: 'ip2' })), 'another group\'s stroke')).element;
+  const priv = await b.post({ shared: false, under: PRIV_UNDER, dx: 0.3 });
+  const a = await b.post({ dx: 0 });
+  const bb = await b.post({ dx: 0.05 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  const image = await settled(srv, cap.id);
+  await settle(10);
+  assert.equal(calls.length, 1, 'ONE render call: one browser session for both shots');
+  assert.equal(image.state, 'ready');
+
+  // The second shot's style: this group's members, CSS-escaped, nothing else.
+  const { second, html } = calls[0];
+  assert.ok(second && typeof second.style === 'string', 'captureImpl receives `second`');
+  assert.equal(second.style, hideStyle([a.id, bb.id]), 'hideStyle over the members, in group order');
+  assert.deepEqual(hiddenIds(second.style), [a.id, bb.id].sort(), 'exactly the members');
+  assert.ok(!second.style.includes(`"${priv.id}"`), 'never the private sibling');
+  assert.ok(!second.style.includes(`"${other.id}"`), 'never another group');
+  assert.match(second.style, /visibility: hidden !important/);
+  assert.ok(!/display\s*:/.test(second.style), 'visibility, never display: every box keeps its place');
+  assert.ok(!html.includes('visibility: hidden'), 'the hide style is never in the first shot\'s document');
+
+  // J2: the one source document carries 0 private strokes.
+  const data = dataOf(html);
+  assert.ok(!data.items.some((it) => it.id === priv.id), 'no private stroke in the payload');
+  assert.ok(data.items.every((it) => it.shared !== false));
+  assert.ok(!names(html, priv.id) && !html.includes(PRIV_UNDER), 'no private stroke id or text anywhere in the source');
+  assert.ok(data.items.some((it) => it.id === other.id), 'another group stays on the page');
+
+  // Both files, each read by its own record.
+  const dir = capturesDir(d);
+  const first = fs.readFileSync(path.join(dir, `${cap.id}.png`));
+  const without = fs.readFileSync(path.join(dir, `${cap.id}.without.png`));
+  const rec = captureOf(srv, cap.id);
+  assert.deepEqual(rec.image, { state: 'ready', width: 40, height: 30, bytes: first.length, sha256: sha(first) });
+  assert.deepEqual(rec.image_without, { state: 'ready', width: 44, height: 32, bytes: without.length, sha256: sha(without) });
+  assert.notEqual(rec.image.sha256, rec.image_without.sha256);
+  assert.ok(!fs.existsSync(path.join(dir, `${cap.id}-without.png`)), 'never the row\'s cap<n>-without.png spelling');
+  assert.match(`${cap.id}.without.png`, /^cap(\d+)\./, 'graph.js\'s sidecar id guard covers the second file');
+
+  // The queue item's block: every first-image field unchanged, `without` beside.
+  const items = elementItems(srv).filter((it) => it.type === TYPE && it.element_ids.includes(a.id));
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].image, {
+    state: 'ready', capture: cap.id, path: `captures/${cap.id}.png`, sha256: sha(first), width: 40, height: 30, bytes: first.length,
+    without: { path: `captures/${cap.id}.without.png`, sha256: sha(without), width: 44, height: 32, bytes: without.length },
+  });
+  assert.deepEqual(items[0].image, imageBlock(cap.id, rec.image, rec.image_without));
+});
+
+test('U618: hideStyle\'s selector, applied to a composite group\'s markup in jsdom, hides the member\'s ink in group.container and in group.blend alike and nothing of another group; the marker boxes stay', () => {
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="el-layer">
+      <div class="el-marker" data-el-ids="p3 p4" id="m1"><div class="el-container" id="c1">
+        <svg><path data-el-id="p3" id="p3c"/><path data-el-id="p4" id="p4c"/></svg></div></div>
+      <div class="el-marker" data-el-ids="p9" id="m2"><div class="el-container" id="c2"><svg><path data-el-id="p9" id="p9c"/></svg></div></div>
+    </div>
+    <div class="el-blend-layer">
+      <div class="el-blend" id="b1"><svg><g data-el-id="p3" id="p3b"><path id="p3bp"/></g><path data-el-id="p4" id="p4b"/></svg></div>
+      <div class="el-blend" id="b2"><svg><path data-el-id="p9" id="p9b"/></svg></div>
+    </div></body>`);
+  try {
+    const { document } = dom.window;
+    const style = document.createElement('style');
+    style.textContent = hideStyle(['p3', 'p4']);
+    document.head.appendChild(style);
+    const vis = (id) => dom.window.getComputedStyle(document.getElementById(id)).visibility;
+    for (const id of ['p3c', 'p4c', 'p3b', 'p3bp', 'p4b']) assert.equal(vis(id), 'hidden', `${id}: the member's ink is hidden (container and blend)`);
+    for (const id of ['p9c', 'p9b']) assert.equal(vis(id), 'visible', `${id}: another group's ink stays`);
+    for (const id of ['m1', 'm2', 'c1', 'c2', 'b1', 'b2']) assert.equal(vis(id), 'visible', `${id}: the boxes stay (the region never moves)`);
+    const sel = style.sheet.cssRules[0].selectorText;
+    assert.deepEqual([...document.querySelectorAll(sel)].map((e) => e.id).sort(), ['p3b', 'p3bp', 'p3c', 'p4b', 'p4c']);
+  } finally { dom.window.close(); }
+  assert.match(hideStyle(['p:2']), /\[data-el-id="p\\3a 2"\]/, 'an id is a CSS string: it can never close the rule');
+  assert.equal(hideStyle([]), '', 'no member, no style');
+});
+
+test('U618: a change picture carries the grey style in the document (both shots) and the hide style only in `second`, hiding every member — greyed and new', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { srv, calls } = b;
+  const a = await b.post({ dx: 0 });
+  const bb = await b.post({ dx: 0.05 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the first picture' });
+  await settled(srv, pictures(srv)[0].id);
+  const dd = await b.post({ dx: 0.2 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 2, { timeout: 10000, what: 'the change picture' });
+  await settled(srv, pictures(srv)[1].id);
+  assert.equal(calls.length, 2);
+  const { html, second } = calls[1];
+  const grey = /<style data-wc-picture>([\s\S]*?)<\/style>/.exec(html);
+  assert.ok(grey, 'the grey style is in the one document both shots are taken of');
+  assert.match(grey[1], /grayscale/);
+  assert.ok(!html.includes('visibility: hidden'), 'the hide style is not in the document');
+  assert.ok(!/grayscale/.test(second.style), 'the second shot adds only the hide style');
+  assert.deepEqual(hiddenIds(second.style), [a.id, bb.id, dd.id].sort(), 'the whole group hidden: the greyed and the new');
+});
+
+test('U618: un-sharing a member withdraws both files (both deleted) and marks image and image_without withdrawn; GET ?which=without and ?as=json answer 404', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  const mid = await b.post({ dx: 0.05 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  await settled(srv, cap.id);
+  const files = [`${cap.id}.png`, `${cap.id}.without.png`].map((f) => path.join(capturesDir(d), f));
+  assert.ok(files.every((f) => fs.existsSync(f)), 'both files written');
+
+  await ok(d.anonApi.patch(`/api/elements/${mid.id}`, { shared: false }), 'un-share');
+  await settle(10);
+  assert.ok(files.every((f) => !fs.existsSync(f)), 'both files deleted');
+  const rec = captureOf(srv, cap.id);
+  assert.equal(rec.image.state, 'withdrawn');
+  assert.equal(rec.image_without.state, 'withdrawn');
+  for (const q of ['?which=without', '?which=without&as=json', '?as=json', '']) {
+    const r = await client.request(d.port, 'GET', `/api/elements/${a.id}/picture${q}${q ? '&' : '?'}capture=${cap.id}`);
+    assert.equal(r.status, 404, `${q}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.data, undefined);
+    assert.equal(r.body.data_without, undefined);
+  }
+});
+
+test('U618: GET /api/elements/:id/picture?which=without serves the second PNG\'s bytes; ?which=with the first; ?as=json carries image_without and data_without; ?which=bogus → 400 naming it', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  await b.push();
+  const made = await client.request(d.port, 'POST', `/api/elements/${a.id}/picture`, {});
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  const cap = made.body.capture;
+  assert.equal(made.body.image_without.state, 'ready', 'the POST answers both blocks');
+  assert.equal(made.body.data_without, undefined, 'the POST answers no bytes');
+  const first = fs.readFileSync(path.join(capturesDir(d), `${cap}.png`));
+  const without = fs.readFileSync(path.join(capturesDir(d), `${cap}.without.png`));
+  const route = `/api/elements/${a.id}/picture`;
+
+  const w = await d.anonApi.get(`${route}?which=without`);
+  assert.equal(w.status, 200);
+  const raw = (url) => new Promise((resolve, reject) => {
+    require('http').get({ host: '127.0.0.1', port: d.port, path: url, headers: { host: `127.0.0.1:${d.port}` } }, (res) => {
+      const chunks = []; res.on('data', (c) => chunks.push(c)); res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], buf: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+  const wb = await raw(`${route}?which=without`);
+  assert.equal(wb.status, 200);
+  assert.match(wb.type, /image\/png/);
+  assert.equal(sha(wb.buf), sha(without), 'the second PNG\'s bytes');
+  const fb = await raw(`${route}?which=with`);
+  assert.equal(sha(fb.buf), sha(first), 'which=with: the first');
+  const plain = await raw(route);
+  assert.equal(sha(plain.buf), sha(first), 'the default is the first');
+
+  const json = await client.request(d.port, 'GET', `${route}?as=json`);
+  assert.equal(json.status, 200);
+  assert.equal(sha(Buffer.from(json.body.data, 'base64')), sha(first));
+  assert.equal(sha(Buffer.from(json.body.data_without, 'base64')), sha(without));
+  assert.deepEqual(json.body.image_without, {
+    state: 'ready', capture: cap, path: `captures/${cap}.without.png`, sha256: sha(without), width: 44, height: 32, bytes: without.length,
+  });
+  assert.equal(json.body.image.without.sha256, sha(without), 'the image block names the second too');
+  assert.equal(json.body.image.sha256, sha(first), 'the first block unchanged');
+
+  const bogus = await client.request(d.port, 'GET', `${route}?which=bogus`);
+  assert.equal(bogus.status, 400);
+  assert.match(bogus.body.error, /bogus/);
+  assert.ok(bogus.body.hint);
+  const arr = await client.request(d.port, 'GET', `${route}?which=with&which=without`);
+  assert.equal(arr.status, 400, 'a repeated which is no which');
+  assert.ok(captureOf(srv, cap), 'the capture is live');
+});
+
+test('U618: the sweep over a restored pending pair reads both from disk, else fails both', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv } = b;
+  const engine = boxGrabFor({ state: srv.state });
+  const dir = capturesDir(d);
+  const one = encodePng(solid(12, 10, [1, 2, 3]), 12, 10, { alpha: false });
+  const two = encodePng(solid(12, 10, [9, 9, 9]), 12, 10, { alpha: false });
+  fs.writeFileSync(path.join(dir, 'cap901.png'), one);
+  fs.writeFileSync(path.join(dir, 'cap901.without.png'), two);
+  fs.writeFileSync(path.join(dir, 'cap903.png'), one);
+  const rec = (id) => ({ id, seq: Number(id.slice(3)), kind: PICTURE, profile: PICTURE, source: `element:${TYPE}`, url: '', distilled: { kind: PICTURE, type: TYPE, elements: [] }, image: { state: 'pending' }, image_without: { state: 'pending' } });
+  srv.state.captures.push(rec('cap901'), rec('cap902'), rec('cap903'));
+  assert.equal(engine.sweep(), 3);
+  const [r1, r2, r3] = ['cap901', 'cap902', 'cap903'].map((id) => captureOf(srv, id));
+  assert.deepEqual(r1.image, { state: 'ready', width: 12, height: 10, bytes: one.length, sha256: sha(one) }, 'the first from disk');
+  assert.deepEqual(r1.image_without, { state: 'ready', width: 12, height: 10, bytes: two.length, sha256: sha(two) }, 'the second from disk');
+  assert.equal(r2.image.state, 'failed', 'no file: failed');
+  assert.equal(r2.image_without.state, 'failed', 'no file: both failed');
+  assert.equal(r3.image.state, 'ready');
+  assert.equal(r3.image_without.state, 'failed', 'each file read on its own');
+  assert.equal(engine.sweep(), 0, 'nothing pending is left');
+});
+
+test('U618: a Send whose body carries the viewer\'s viewport renders at it; a POST picture request renders at VIEWPORT; a Send without one at VIEWPORT', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv, calls } = b;
+  const a = await b.post({ dx: 0 });
+  await ok(d.anonApi.post(`/api/elements/${a.id}/send`, { viewport: { w: 900, h: 700, mobile: true } }), 'send with a viewport');
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  await settled(srv, pictures(srv)[0].id);
+  await settle(10);
+  assert.equal(calls.length, 1, 'one render (the send event and the route\'s word reuse it)');
+  assert.deepEqual([calls[0].width, calls[0].height, calls[0].mobile], [900, 700, true], 'the viewer\'s viewport');
+
+  // Claude's request: VIEWPORT, whatever a Send handed over before.
+  const e = await b.post({ dx: 0.1 });
+  await ok(d.anonApi.post(`/api/elements/${e.id}/send`, { viewport: { w: 640, h: 480 } }), 'send hands a viewport');
+  await waitUntil(() => calls.length === 2, { timeout: 10000, what: 'the send\'s render' });
+  await settled(srv, pictures(srv)[1].id);
+  assert.deepEqual([calls[1].width, calls[1].height], [640, 480]);
+  const f = await b.post({ dx: 0.15 });
+  boxGrabFor({ state: srv.state }).viewportFor(f.id, { w: 333, h: 444 });
+  const r = await client.request(d.port, 'POST', `/api/elements/${f.id}/picture`, {});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(calls.length, 3);
+  assert.deepEqual([calls[2].width, calls[2].height, calls[2].mobile], [VIEWPORT.w, VIEWPORT.h, false], 'a request renders at VIEWPORT');
+
+  // A Send with no viewport (an older chrome): VIEWPORT; a clamped one clamps.
+  const g = await b.post({ dx: 0.2 });
+  await b.send(g.id);
+  await waitUntil(() => calls.length === 4, { timeout: 10000, what: 'the bare send\'s render' });
+  assert.deepEqual([calls[3].width, calls[3].height], [VIEWPORT.w, VIEWPORT.h]);
+  assert.deepEqual(boxGrabFor({ state: srv.state }).viewportFor('p999', { w: 99999, h: 10 }), { w: VIEWPORT.max, h: VIEWPORT.min }, 'clamped by viewportOf');
+  assert.equal(boxGrabFor({ state: srv.state }).viewportFor('p999', { w: 0, h: 0 }), null, 'no size, no viewport');
+});
+
+// A page-ink type beside the fixture's (U613's page records; U623's declared
+// kind: it declares 'page'), drawn by the fixture's own draw.
+const PAGE_TYPE = 'ip-ink';
+function approvePageInk(d) {
+  approveElementPack(d, {
+    name: 'ip-pageink-pack', type: PAGE_TYPE,
+    json: { anchors: ['element', 'page'], place: 'box', input: 'strokes', wake: true, private: true,
+      payload: { keys: [...strokes.STROKE_KEYS, ...strokes.DESCRIBE_KEYS] } },
+    draw: fs.readFileSync(path.join(PACK_DIR, 'elements', 'scribble', 'draw.js'), 'utf8'),
+  });
+  assert.ok(d.srv.elementTypes.listed(PAGE_TYPE), 'the page-ink type lists');
+}
+function pageAnchor(from, to) {
+  const rec = strokes.pageRecord({
+    from: { item: from, x: 0.5, y: 0.9, w: 800, h: 300 },
+    to: { item: to, x: from === to ? 1.2 : 0.5, y: from === to ? 0.5 : 0.1, w: 800, h: 300 },
+    frame: { w: 800, h: 1200 },
+  });
+  assert.ok(rec, 'a page record');
+  return rec;
+}
+const PAGE_STROKE = { shared: true, tool: 'pen', colour: 'accent', width: 0.004, stride: 4, aspect: 800 / 1200,
+  points: [0.5, 0.45, 0.5, 0, 0.5, 0.53, 0.5, 10, 0.5, 0.6167, 0.5, 20] };
+const postPage = async (d, anchor, extra = {}) => (await ok(d.anonApi.post('/api/elements', { type: PAGE_TYPE, anchor, payload: { ...PAGE_STROKE, ...extra } }), 'a page stroke')).element;
+
+test('U618: an arrow\'s region is its whole page marker plus both items\' export selectors; a margin stroke\'s names its one item; an element group\'s region is unchanged', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv, calls } = b;
+  approvePageInk(d);
+  await ok(d.api.post('/api/render', { id: 'pa', html: '<p>pane A</p>' }), 'pa');
+  await ok(d.api.post('/api/render', { id: 'pb', html: '<p>pane B</p>' }), 'pb');
+  await ok(d.api.post('/api/markdown', { id: 'md-1', text: 'A margin note sits beside this.' }), 'md-1');
+  const arrow = await postPage(d, pageAnchor('pa', 'pb'));
+  const r = await client.request(d.port, 'POST', `/api/elements/${arrow.id}/picture`, {});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(calls[0].region, {
+    selector: markerSelector(arrow.id), rel: { x: 0, y: 0, w: 1, h: 1 }, margin: PICTURE_MARGIN_PX,
+    selectors: [itemSelector('pa'), itemSelector('pb')],
+  });
+  assert.deepEqual(calls[0].region.selectors, ['[data-pane-id="pa"], [data-md-id="pa"]', '[data-pane-id="pb"], [data-md-id="pb"]'],
+    'the export shell\'s item form, CSS-escaped');
+  assert.deepEqual(hiddenIds(calls[0].second.style), [arrow.id]);
+  assert.equal(r.body.image_without.state, 'ready');
+
+  const margin = await postPage(d, pageAnchor('md-1', 'md-1'));
+  const m = await client.request(d.port, 'POST', `/api/elements/${margin.id}/picture`, {});
+  assert.equal(m.status, 200, JSON.stringify(m.body));
+  assert.deepEqual(calls[1].region.selectors, [itemSelector('md-1')], 'a margin stroke: its one item');
+  assert.deepEqual(calls[1].region.rel, { x: 0, y: 0, w: 1, h: 1 });
+
+  const el = await b.post({ dx: 0 });
+  const e = await client.request(d.port, 'POST', `/api/elements/${el.id}/picture`, {});
+  assert.equal(e.status, 200, JSON.stringify(e.body));
+  assert.deepEqual(calls[2].region, { selector: markerSelector(el.id), rel: relOf([srv.elements.record(el.id, 1)]), margin: PICTURE_MARGIN_PX },
+    'an element group: its bbox in its marker, no selectors');
+});
+
+test('U618: RENDER_QUEUE_MAX counts a pair as ONE job; chrome-not-found sets both images with CHROME_HINT and the describe still rides', async (t) => {
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  const inner = pairCapture();
+  const blocking = async (opts) => { await gate; return inner(opts); };
+  const b = await boot(t, { captureImpl: blocking });
+  const { d, srv } = b;
+  approvePageInk(d);
+  const items = ['q1', 'q2', 'q3', 'q4', 'q5'];
+  for (const id of items) await ok(d.api.post('/api/render', { id, html: `<p>${id}</p>` }), id);
+  const made = [];
+  for (const id of items) made.push(await postPage(d, pageAnchor(id, id)));
+  const engine = boxGrabFor({ state: srv.state });
+  const answers = made.map((el) => engine.picture(el.id, { reason: 'request' }));
+  assert.equal(RENDER_QUEUE_MAX, 4);
+  assert.deepEqual(answers.map((a) => a.ok), [true, true, true, true, false], 'four pairs admitted, the fifth refused');
+  assert.equal(answers[4].refused, 'busy');
+  assert.equal(answers[4].status, 429);
+  const s = engine.stats();
+  assert.equal(s.in_flight + s.waiting, RENDER_QUEUE_MAX, 'one job per pair, never two');
+  release();
+  for (const a of answers.slice(0, 4)) {
+    assert.equal((await settled(srv, a.capture)).state, 'ready');
+    assert.equal(captureOf(srv, a.capture).image_without.state, 'ready');
+  }
+  assert.equal(inner.calls.length, 4, 'one capture call per pair');
+  assert.ok(inner.calls.every((c) => c.second && c.second.style), 'each with its second shot');
+
+  // No Chrome: both images say so, with the hint.
+  setSeams(srv.state, { findChrome: () => null });
+  const a = await b.post({ dx: 0 });
+  await b.post({ dx: 0.05 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).some((c) => c.distilled.elements.includes(`${a.id}@1`)), { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv).find((c) => c.distilled.elements.includes(`${a.id}@1`));
+  assert.deepEqual(await settled(srv, cap.id), { state: 'chrome-not-found', hint: CHROME_HINT });
+  assert.deepEqual(captureOf(srv, cap.id).image_without, { state: 'chrome-not-found', hint: CHROME_HINT });
+  const item = elementItems(srv).find((it) => it.element_ids.includes(a.id));
+  assert.equal(item.image.state, 'chrome-not-found');
+  assert.equal(item.image.without, undefined);
+  assert.equal(item.describe.count, 2, 'the text describe still delivered');
+});
+
+test('U618: a render that gives only the first shot leaves image ready and image_without failed; imageBlock then carries no `without`', async (t) => {
+  const b = await boot(t);
+  const { srv, calls } = b;
+  const a = await b.post({ dx: 0 });
+  await b.send(a.id);
+  await waitUntil(() => pictures(srv).length === 1, { timeout: 10000, what: 'the picture' });
+  const cap = pictures(srv)[0];
+  assert.equal((await settled(srv, cap.id)).state, 'ready');
+  assert.ok(calls[0].second, 'the second shot was asked for');
+  assert.deepEqual(captureOf(srv, cap.id).image_without, { state: 'failed', error: WITHOUT_FAILED_ERROR });
+  const item = elementItems(srv)[0];
+  assert.equal(item.image.state, 'ready');
+  assert.equal(item.image.without, undefined);
+});

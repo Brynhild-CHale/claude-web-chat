@@ -238,7 +238,9 @@ test('tray.add, edit, remove, share and send: each exactly one request with the 
     r = await one(() => tray.share('p3', true), { method: 'PATCH', url: '/api/elements/p3', body: { shared: true } });
     assert.equal(r.ok, true);
     await one(() => tray.share('p3', false), { method: 'PATCH', url: '/api/elements/p3', body: { shared: false } });
-    r = await one(() => tray.send('p3'), { method: 'POST', url: '/api/elements/p3/send', body: {} });
+    // Send to Claude carries the viewer's viewport beside the device claim (U618, PICTURE@viewer-viewport).
+    const viewport = { w: Math.round(W.innerWidth || 0), h: Math.round(W.innerHeight || 0), mobile: dev === 'mobile' };
+    r = await one(() => tray.send('p3'), { method: 'POST', url: '/api/elements/p3/send', body: { viewport } });
     assert.equal(r.ok, true);
     assert.deepStrictEqual(r.element, rec(3, { shared: true }), 'sendToClaude\'s answer: its element');
     // A refusal answers its status and hint.
