@@ -52,6 +52,23 @@
 // intersection with clip-path, so no part of a glyph paints over the rail,
 // the minbar or the bottom bar.
 //
+// THE PAGE ARM (U614, plan 5A.2; REQ@ink-scope-v2 b+). A stroke's PAGE
+// RECORD (lib/core/strokes.js) is no resolver row — placeOf answers null for
+// it, so no watch, pass or answer ever names one (C5's honesty) — and is
+// placed beside the resolver paths by its ITEMS: one group per (type,
+// from.item, to.item), its box the union of its members' boxes mapped by THE
+// ONE MAPPING (mapPage) over the endpoint items' current rects, a box marker in
+// #el-layer that never takes a press; its clip starts at the well
+// (.well-wrap), and a displayed frame masks it, never hides it whole
+// (PAGE@mask-frames); orphans() lists it with kind 'page' when its items go,
+// faded at its guess when one of an arrow's goes or, below 760 px, for a margin
+// stroke; a draw's record(id) reads it mapped into the group's box
+// (pageRecordView, through element-types.js recordOf). The page host's
+// listeners sit on the .well-wrap, so a strokes type's press reaches the
+// gutters (REQ@margins a), every other tool keeping #main's reach. A
+// ResizeObserver on box targets (and page groups' items) re-places a stroke
+// whose target resizes alone. The full rules: THE PAGE ARM's section below.
+//
 // The hosts (3C.1, R2 §3 'a host registry: one overlay layer per host at its
 // rung'). registerHost(name, {root, well, rung, kinds, place, hidden?,
 // settle?, animates?, glyph?}) → unregister. A row whose anchor kind a host lists in
@@ -131,6 +148,10 @@ import { dispatchMode, pointerTypeOf } from './input-mode.js';
 import { isTap } from './sheet-model.js';
 import { request } from './http.js';
 import { settingsSnapshot } from './toolbar-state.js';
+// The page arm (U614): the one page stroke record and its one mapping
+// (lib/core/strokes.js, served at /app/strokes.js), and the narrow answer.
+import { isPageRecord, pageShape, mapPage, reboxPoints, isStrokePayload, frameKindOf } from './strokes.js';
+import { isNarrow } from './viewport.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -190,9 +211,19 @@ export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
 // 'turns'.
 export const HOST_NAMES = Object.freeze(['page', 'chat', 'turns']);
 // The anchor kinds the page host holds (plus the kind-less and 'page' rows it
-// keeps and never draws): no other host may list one. A point row (4C.1,
-// U532) is placed in its pane as an element row is, at its x/y (pointAt).
+// keeps — a box grab's page anchor never drawn, a stroke's page record drawn
+// by THE PAGE ARM, never by the resolver): no other host may list one. A point
+// row (4C.1, U532) is placed in its pane as an element row is, at its x/y
+// (pointAt).
 export const PAGE_KINDS = Object.freeze(['element', 'range', 'source', 'point']);
+// THE PAGE ARM's names (U614): the attribute a drawn page group's marker and a
+// pane-framed box group's marker carry their measured drift on (3 decimals;
+// DRIFT@beside, U531@aspect-drift (a): read by F4's rows, never a class, a
+// state or anything shown), and the most rectangles a page marker's mask may
+// keep around the displayed frames that meet it (past it the marker is kept
+// off the frames whole, as 'framed').
+export const DRIFT_ATTR = 'data-el-drift';
+export const MASK_RECTS_MAX = 64;
 // THE DETACHABLE GLYPH's numbers (U587, H.7; the header's paragraph). The
 // leaders are lib/packs/elements.js GLYPH_LEADERS', the corners and the bound
 // lib/server/domain/elements.js GLYPH_CORNERS / GLYPH_OFFSET_MAX — each held
@@ -339,6 +370,18 @@ const hoverable = new Set();
 const tapShown = new Set();
 let trayGuard = null;
 const SVG_NS = 'http://www.w3.org/2000/svg';
+// THE PAGE ARM's state (U614): the page orphans of the last page-host build
+// (id → orphans()'s entry), the mapped record views of the last measure (id →
+// {type, src, points, width, aspect}: pageRecordView's cache), the drawn
+// scope's page rows counted at that build (the layout observer's guard), and
+// element-types.js, loaded lazily for its stored records (it imports this
+// module; recordOf(type, id, RAW_READ) is the record as stored).
+const pageOrphans = new Map();
+const pageViews = new Map();
+let pageRowCount = 0;
+let typesApi = null;
+let typesLoading = false;
+const RAW_READ = Object.freeze({ raw: true });
 
 const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0 };
 const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
@@ -733,6 +776,11 @@ function reprobe() {
 }
 
 // ── orphans ─────────────────────────────────────────────────────────────────
+// The resolver's orphans, and THE PAGE ARM's (U614): a page stroke whose items
+// are all gone (how 'page-gone', never drawn), an arrow with one item gone
+// (how 'page-guess', drawn faded at its guess) and, below 760 px, a margin
+// stroke (how 'page-narrow', drawn faded at its guess) — each with kind
+// 'page' and its record's item as `mount` (only a page orphan carries kind).
 export function orphans() {
   const out = [];
   for (const e of answers.values()) {
@@ -740,6 +788,7 @@ export function orphans() {
     out.push({ id: e.row.id, v: e.row.v, type: e.row.type, mount: e.mount, scope: e.scope,
       how: e.raw.how == null ? null : e.raw.how, guess: !!e.raw.guess });
   }
+  for (const o of pageOrphans.values()) if (o.scope === drawnScope) out.push({ ...o });
   return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 function orphansChanged() {
@@ -758,6 +807,8 @@ function syncScope() {
   unwatchAll();
   answers.clear();
   failed.clear();
+  pageOrphans.clear();
+  pageViews.clear();
   if (want === 'live') { scopes.preview.rows = new Map(); scopes.preview.node = null; }
   // The page's rows only: a host's rows are drawn in either scope (C1), so a
   // preview neither clears nor re-places them.
@@ -830,6 +881,8 @@ function refreshKept(h, gs) {
     g.items = f.items;
     g.mount = f.mount;
     g.mdItem = f.mdItem;
+    // A page group (U614) takes the pass's members and endpoint items.
+    if (f.page) { g.members = f.members; g.endEls = f.endEls; }
   }
 }
 function glyphOf(type, h) {
@@ -961,6 +1014,151 @@ function onHoverMove(e) {
     if (on !== !!g.hovered) { g.hovered = on; syncLeaderOn(g); }
   }
 }
+// ── THE PAGE ARM (U614, plan 5A.2; REQ@ink-scope-v2 b+, REQ@arrow-endpoints
+// a, REQ@margins a, REQ@page-stroke-phone a, PAGE@mask-frames, DRIFT@beside,
+// ARROW@tolerance, MAP@engine) ───────────────────────────────────────────────
+// A stroke's PAGE RECORD (lib/core/strokes.js isPageRecord) is never the
+// resolver's (placeOf answers null for it: C5's honesty) — it is placed by its
+// ITEMS. At each page-host build, the drawn scope's rows whose anchor is a page
+// record, whose type registered place 'box' and whose stored record
+// (element-types.js recordOf, read as stored) carries a stroke (isStrokePayload)
+// are grouped ONE GROUP PER (type, from.item, to.item) — sameTarget's page arm
+// — against ONE item map of the pass (one querySelectorAll over #main's
+// .mount-host and [data-md-id] blocks, keyed as mount-runtime's itemEl keys
+// them; never itemEl per row). A box grab's page anchor is no page record: it
+// stays undrawn. The measure reads each endpoint item's rect once per frame
+// (counted with the frame's reads) and maps each member by THE ONE MAPPING
+// (mapPage); the group's box is the union of its members' mapped boxes, its
+// marker a box marker (data-place 'box', data-el-ids, pointer-events none:
+// no stroke ever takes a control's press) in #el-layer, and the type's draw
+// reads each member's record mapped into that box (pageRecordView), so a
+// pack's draw stays frame-agnostic. The draw runs again when the mapped shape
+// changes (an arrow's ends moved apart, or it turned), never per sample.
+// THE CLIP starts at the well (.well-wrap's visible box), never inside a pane,
+// so a gutter stroke shows (REQ@margins a). PAGE@mask-frames: the chrome
+// covers a page stroke by z-order (#el-layer at --z-pins, under the dock's
+// --z-chat and every panel's --z-panel); a displayed frame of the census (the
+// document's iframes and every pane's own) never hides it whole — the marker
+// is MASKED around each meeting frame (clip-path: path() over the painted box
+// less every meeting frame's rect, cut into disjoint rectangles), so 0 px are
+// painted over a frame. ORPHANS: every needed item gone → listed, never drawn
+// at a stale position; an arrow with one item gone → drawn faded at its guess
+// (group.kind 'guess') and listed; below 760 px (viewport.js isNarrow) an
+// arrow maps between its stacked items as anywhere (it turns vertical), a
+// margin ('beside') stroke is drawn faded at its guess and listed, and an
+// 'inside' stroke draws as on the desktop. DRIFT@beside: each drawn page
+// group's marker carries DRIFT_ATTR (mapPage's drift, the members' largest).
+function boxType(type) {
+  const t = types.get(type);
+  return !!(t && t.place === 'box');
+}
+// The pass's item map: id → the item's element (a pane's .mount-host, a
+// markdown item's [data-md-id] block), a pane before a markdown item of the
+// same id and the first of each in document order, as itemEl answers.
+function itemMapOf(main) {
+  const out = new Map();
+  if (!main) return out;
+  const md = new Map();
+  for (const el of main.querySelectorAll('.mount-host, [data-md-id]')) {
+    if (el.classList.contains('mount-host')) {
+      const k = (el.dataset && el.dataset.mountId) || el.id;
+      if (k && !out.has(k)) out.set(k, el);
+    } else {
+      const k = el.getAttribute('data-md-id');
+      if (k && !md.has(k)) md.set(k, el);
+    }
+  }
+  for (const [k, el] of md) if (!out.has(k)) out.set(k, el);
+  return out;
+}
+// element-types.js, once (a relative lazy import: it imports this module):
+// the stored records, and the tray action guard (U587's drag). A draw is
+// asked for when it lands.
+function loadTypes() {
+  if (typesApi || typesLoading) return;
+  typesLoading = true;
+  import('./element-types.js').then((m) => {
+    typesApi = m;
+    if (typeof m.trayAction === 'function') trayGuard = m.trayAction;
+    requestDraw();
+  }, (err) => {
+    typesLoading = false;
+    console.error('[web-chat] overlay: the element types module did not load', err);
+  });
+}
+// A plug-in type's stored record (never the page arm's mapped view), or null.
+function rawRecordOf(type, id) {
+  if (!typesApi || typeof typesApi.recordOf !== 'function') return null;
+  try { return typesApi.recordOf(type, id, RAW_READ) || null; } catch { return null; }
+}
+// The page host's page groups, into byKey (buildGroups' map), and the page
+// orphans of this build. DOM queries only: no box read.
+function buildPageArm(byKey) {
+  const rows = [];
+  for (const r of scopes[drawnScope].rows.values()) {
+    if (!r.pending && r.anchor && isPageRecord(r.anchor) && boxType(r.type)) rows.push(r);
+  }
+  pageRowCount = rows.length;
+  pageOrphans.clear();
+  // Only a row grouped in this build keeps its mapped view (its measure
+  // renews it): a gone, unloaded or orphaned-whole row's record(id) is null.
+  const grouped = new Set();
+  if (rows.length && !typesApi) loadTypes();
+  if (rows.length && typesApi) {
+    const items = itemMapOf($('main'));
+    const narrow = isNarrow();
+    for (const row of rows) {
+      // Its record not loaded yet (or no stroke): unplaced, never listed.
+      const rec = rawRecordOf(row.type, row.id);
+      if (!rec || !isStrokePayload(rec) || !isPageRecord(rec.anchor)) continue;
+      const a = row.anchor;
+      const shape = pageShape(a);
+      const fromEl = items.get(a.from.item) || null;
+      const toEl = shape === 'between' ? items.get(a.to.item) || null : fromEl;
+      let how = null;
+      if (!fromEl && !toEl) how = 'page-gone';
+      else if (shape === 'between' && (!fromEl || !toEl)) how = 'page-guess';
+      else if (shape === 'beside' && narrow) how = 'page-narrow';
+      if (how) {
+        pageOrphans.set(row.id, { id: row.id, v: row.v, type: row.type, mount: a.item, scope: drawnScope, how,
+          guess: how !== 'page-gone', kind: 'page' });
+      }
+      if (how === 'page-gone') continue;
+      const guess = !!how;
+      const type = row.type;
+      const key = `${type}|page|${JSON.stringify([a.from.item, a.to.item])}${guess ? '|guess' : ''}`;
+      let g = byKey.get(key);
+      if (!g) {
+        g = { key, type, kind: guess ? 'guess' : 'hit', cls: guess ? 'el-guess' : 'el-hit', el: null, range: null,
+          mount: a.item, scope: drawnScope, host: 'page', items: [], container: null, glyph: glyphOf(type), mdItem: null,
+          failed: false, place: 'box', page: true, forceGuess: guess, drawn: false, boxW: 0, boxH: 0, members: [], endEls: [] };
+        g.box = Object.freeze({ get w() { return g.boxW; }, get h() { return g.boxH; } });
+        byKey.set(key, g);
+      }
+      g.members.push({ id: row.id, rec, fromEl, toEl });
+      grouped.add(row.id);
+      for (const el of [fromEl, toEl]) if (el && !g.endEls.includes(el)) g.endEls.push(el);
+      const state = guess ? ORPHANED : EXACT;
+      g.items.push({ id: row.id, v: row.v, type, row, state, how: how || 'page', answer: { state, how: how || 'page', guess } });
+    }
+  }
+  for (const id of [...pageViews.keys()]) if (!grouped.has(id)) pageViews.delete(id);
+  orphansChanged();
+}
+// pageRecordView(type, rec) → what a draw's record(id) answers for rec
+// (element-types.js recordOf hands every plug-in record through here): a page
+// stroke's flat record (U522b) with points, width and aspect replaced by its
+// mapping into its group's CURRENT box (the last measure's: reboxPoints from
+// its own mapped box to the group's, J2 (a)), a fresh frozen object per call;
+// null while it is unplaced (orphaned, its items unmeasured); any other record
+// as it is.
+export function pageRecordView(type, rec) {
+  if (!rec || typeof rec !== 'object' || !isPageRecord(rec.anchor)) return rec;
+  const v = pageViews.get(String(rec.id));
+  if (!v || v.src !== rec || v.type !== type) return null;
+  return Object.freeze({ ...rec, points: v.points, width: v.width, aspect: v.aspect });
+}
+
 // A host's drawn set as marker groups: per type, the elements grouped by the
 // DOM element they resolve to (a range or a section, one group each). The
 // page's are the drawn scope's answers; another host's, its own answers (the
@@ -1001,6 +1199,9 @@ function buildGroups(h) {
     // A box group (boxRow) is keyed apart from any glyph group on the same
     // element, so a type re-registered with another place rebuilds it.
     const box = own && boxRow(type, e.row);
+    // A pane-framed box row (U614) reports its aspect's drift against its
+    // stored record's: the records' module is loaded at the first one.
+    if (box && !typesApi && frameKindOf(e.row.anchor) === 'pane') loadTypes();
     // A point answer (4C.1, U532) is keyed by its element AND its point, so
     // two points on one svg are two markers; the group keeps pt for pointAt.
     const pt = own && el && e.row.anchor && e.row.anchor.kind === 'point' ? pointOfAnswer(raw) : null;
@@ -1031,6 +1232,7 @@ function buildGroups(h) {
     g.items.push({ id: e.row.id, v: e.row.v, type, row: e.row, state: e.state, how: raw.how == null ? null : raw.how,
       answer: raw });
   }
+  if (h.page) buildPageArm(byKey);
   const out = [...byKey.values()];
   for (const g of out) g.items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -1114,6 +1316,7 @@ function rebuild(h, gs) {
       // rect), then again only when the signature changes. It never takes a
       // press: the target under it stays the page's and the armed tool's.
       c.dataset.place = 'box';
+      if (g.page) c.dataset.elFrame = 'page';   // THE PAGE ARM's marker (U614): F4's own row
       c.style.pointerEvents = 'none';
       c.style.display = 'none';
       c._group = g;
@@ -1216,9 +1419,18 @@ function clipFrom(start, fr, read, well) {
   return clip;
 }
 // One frame's reading state: its read count and the clip caches (per well).
+// THE PAGE ARM's (U614): pageWrap the well a page group is clipped to (the
+// .well-wrap holding #main, else #main), itemRects each endpoint item's rect
+// read once, pageCensus the page census.
 function frameOf() {
-  return { reads: 0, clipCache: new Map(), wellCache: new Map(), startCache: new Map(), pageWell: $('main'),
-    census: null, shadowCensus: new Map() };
+  const main = $('main');
+  return { reads: 0, clipCache: new Map(), wellCache: new Map(), startCache: new Map(), pageWell: main,
+    census: null, shadowCensus: new Map(), pageWrap: wellWrapOf(main), itemRects: new Map(), pageCensus: null };
+}
+// The page's well: the .well-wrap that holds #main (its column's padding and,
+// on a wide window, the gutters beside it: REQ@margins (a)), else #main.
+function wellWrapOf(main) {
+  return main ? (typeof main.closest === 'function' && main.closest('.well-wrap')) || main : null;
 }
 // The well a group is clipped to: the page's #main, or its host's well (an
 // element, or fn(group) → element). A well that is a frame, or lies in another
@@ -1322,6 +1534,7 @@ function anyRectIn(range, clip, fr) {
 // (the glyph, then wholly outside, is inset away entirely).
 function measureGroup(g, fr, read) {
   if (!g.container) return { res: 'unplaced' };
+  if (g.page) return measurePage(g, fr, read);
   const well = wellOf(g, fr);
   if (well === undefined) return { res: 'unplaced' };
   if (well && g.host && g.host !== 'page') observeWell(well, g.host);
@@ -1341,7 +1554,11 @@ function measureGroup(g, fr, read) {
   }
   const r = read(g.range || g.el);
   if (!r || (r.width === 0 && r.height === 0 && r.left === 0 && r.top === 0)) return { res: 'unplaced' };
-  if (g.place === 'box') return measureBox(g, r, startEl, fr, read, well);
+  if (g.place === 'box') {
+    const mb = measureBox(g, r, startEl, fr, read, well);
+    mb.drift = paneDrift(g, r);
+    return mb;
+  }
   let x = r.left;
   let y = r.top;
   // A point group (4C.1, U532): the glyph's anchor point at the stored point
@@ -1470,6 +1687,169 @@ function measureBox(g, r, startEl, fr, read, well) {
   const inset = [painted.top - target.top, target.right - painted.right, target.bottom - painted.bottom, painted.left - target.left];
   return { res: 'drawn', box: true, x: r.left, y: r.top, w: r.width, h: r.height, clip, inset };
 }
+const round3 = (v) => Math.round(v * 1e3) / 1e3;
+// A pane-framed box group's drift (U614, DRIFT@beside; strokes.js frameKindOf
+// 'pane'): the relative change of its target's w ÷ h now against the stored
+// record's aspect, the members' largest, rounded to 1e-3; null for a group
+// with no pane-framed member whose record carries an aspect.
+function paneDrift(g, r) {
+  if (!r || !(r.width > 0) || !(r.height > 0)) return null;
+  let d = null;
+  for (const it of g.items) {
+    if (frameKindOf(it.row && it.row.anchor) !== 'pane') continue;
+    const rec = rawRecordOf(g.type, it.id);
+    if (!rec || !(typeof rec.aspect === 'number' && rec.aspect > 0)) continue;
+    const v = Math.abs(r.width / r.height / rec.aspect - 1);
+    if (d == null || v > d) d = v;
+  }
+  return d == null ? null : round3(d);
+}
+// The page census (U614): the document's displayed frames and every pane's
+// own (each .mount-host's shadow root under #main), taken once per frame.
+function pageCensus(fr, read) {
+  if (fr.pageCensus) return fr.pageCensus;
+  if (!fr.census) fr.census = frameBoxes([...document.querySelectorAll('iframe, frame')], read);
+  let all = fr.census;
+  const main = fr.pageWell;
+  if (main) {
+    for (const host of main.querySelectorAll('.mount-host')) {
+      const root = host.shadowRoot;
+      if (!root) continue;
+      let own = fr.shadowCensus.get(root);
+      if (!own) {
+        own = frameBoxes([...root.querySelectorAll('iframe, frame')], read);
+        fr.shadowCensus.set(root, own);
+      }
+      if (own.length) all = all.concat(own);
+    }
+  }
+  fr.pageCensus = all;
+  return all;
+}
+// The part of each box in `boxes` outside box f, as disjoint boxes (at most
+// four per box f meets).
+function subtractBox(boxes, f) {
+  const out = [];
+  for (const b of boxes) {
+    if (!meets(b, f)) { out.push(b); continue; }
+    if (f.top > b.top) out.push({ left: b.left, top: b.top, right: b.right, bottom: f.top });
+    if (f.bottom < b.bottom) out.push({ left: b.left, top: f.bottom, right: b.right, bottom: b.bottom });
+    const top = Math.max(b.top, f.top);
+    const bottom = Math.min(b.bottom, f.bottom);
+    if (f.left > b.left) out.push({ left: b.left, top, right: f.left, bottom });
+    if (f.right < b.right) out.push({ left: f.right, top, right: b.right, bottom });
+  }
+  return out;
+}
+// THE MASK (PAGE@mask-frames): disjoint client boxes as one clip-path path()
+// in the marker's own px (its border box from x, y), each edge rounded INWARD
+// to 1e-3 px so no rounding paints over a frame.
+function maskPath(boxes, x, y) {
+  const inLo = (v) => Math.ceil(v * 1e3) / 1e3;
+  const inHi = (v) => Math.floor(v * 1e3) / 1e3;
+  let d = '';
+  for (const b of boxes) {
+    const l = inLo(b.left - x);
+    const t = inLo(b.top - y);
+    const r = inHi(b.right - x);
+    const bt = inHi(b.bottom - y);
+    if (r > l && bt > t) d += `M${l} ${t}H${r}V${bt}H${l}Z`;
+  }
+  return d ? `path("${d}")` : null;
+}
+// Measure a page group (THE PAGE ARM, U614) — READS ONLY: each member's
+// endpoint items' rects (once per frame per item, through the frame's reader),
+// each member mapped by mapPage, the group's box their union; the clip is the
+// well's (.well-wrap's visible box ∩ the viewport ∩ each clipping ancestor of
+// the well), never a pane's; a displayed frame of the page census meeting the
+// painted box masks it (`mask`, the painted box less every meeting frame, as
+// disjoint boxes) — 'framed' only when nothing of it is left or the mask would
+// pass MASK_RECTS_MAX. Every answer that mapped carries `views` (the members'
+// records mapped into the group's box), `kind` ('guess' when a member's
+// mapping answered guess, or the build said so), `shape` (the mapped shape's
+// key: the draw runs again when it changes) and `drift`.
+function measurePage(g, fr, read) {
+  const wrap = fr.pageWrap;
+  if (!wrap || !wrap.isConnected) return { res: 'unplaced' };
+  const rectOfItem = (el) => {
+    if (!el || !el.isConnected) return null;
+    if (fr.itemRects.has(el)) return fr.itemRects.get(el);
+    const r = read(el) || null;
+    fr.itemRects.set(el, r);
+    return r;
+  };
+  const maps = [];
+  let guess = !!g.forceGuess;
+  let drift = 0;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const mb of g.members || []) {
+    const mp = mapPage(mb.rec.anchor, mb.rec, rectOfItem(mb.fromEl), rectOfItem(mb.toEl));
+    if (!mp || !mp.points) continue;
+    maps.push([mb, mp]);
+    if (mp.guess) guess = true;
+    if (mp.drift > drift) drift = mp.drift;
+    x0 = Math.min(x0, mp.box.left);
+    y0 = Math.min(y0, mp.box.top);
+    x1 = Math.max(x1, mp.box.left + mp.box.w);
+    y1 = Math.max(y1, mp.box.top + mp.box.h);
+  }
+  if (!maps.length) return { res: 'unplaced' };
+  const box = { left: x0, top: y0, w: x1 - x0, h: y1 - y0 };
+  const views = new Map();
+  const shape = [round3(box.w), round3(box.h)];
+  for (const [mb, mp] of maps) {
+    const points = reboxPoints(mp.points, mp.box, box);
+    if (!points) continue;
+    views.set(mb.id, Object.freeze({ type: g.type, src: mb.rec, points: Object.freeze(points),
+      width: mp.width * mp.box.w / box.w, aspect: box.w / box.h }));
+    shape.push(mb.id, round3(mp.box.left - box.left), round3(mp.box.top - box.top), round3(mp.box.w), round3(mp.box.h),
+      round3(mp.scale), round3(mp.angle));
+  }
+  const out = { views, kind: guess ? 'guess' : 'hit', shape: JSON.stringify(shape), drift: round3(drift) };
+  const target = { left: box.left, top: box.top, right: box.left + box.w, bottom: box.top + box.h };
+  const clip = clipFrom(wrap, fr, read, wrap);
+  const painted = intersect(target, clip);
+  if (!(painted.right > painted.left && painted.bottom > painted.top)) return { ...out, res: 'clipped' };
+  const frames = pageCensus(fr, read).filter((b) => meets(painted, b));
+  let mask = null;
+  if (frames.length) {
+    let left = [painted];
+    for (const f of frames) {
+      left = subtractBox(left, f);
+      if (left.length > MASK_RECTS_MAX) break;
+    }
+    if (!left.length || left.length > MASK_RECTS_MAX) return { ...out, res: 'framed' };
+    mask = left;
+  }
+  const inset = [painted.top - target.top, target.right - painted.right, target.bottom - painted.bottom, painted.left - target.left];
+  return { ...out, res: 'drawn', box: true, x: box.left, y: box.top, w: box.w, h: box.h, clip, inset, mask };
+}
+// A page group's measure written (applyGroup, before anything else): the
+// members' mapped views (pageRecordView's cache; a member that did not map is
+// unplaced: null), the kind its mapping answered (the marker's class follows,
+// and the type draws again), and the shape key (a changed shape draws again).
+function applyPage(g, m) {
+  for (const mb of g.members || []) {
+    const v = m.views && m.views.get(mb.id);
+    if (v) pageViews.set(mb.id, v); else pageViews.delete(mb.id);
+  }
+  if (!m.views) return;
+  const c = g.container;
+  if (m.kind && m.kind !== g.kind) {
+    g.kind = m.kind;
+    g.cls = m.kind === 'guess' ? 'el-guess' : 'el-hit';
+    c.classList.toggle('el-guess', m.kind === 'guess');
+    c.classList.toggle('el-hit', m.kind !== 'guess');
+    g.drawn = false;
+  }
+  if (m.shape !== g.shapeKey) {
+    g.shapeKey = m.shape;
+    g.drawn = false;
+  }
+}
 // Write one measured group: left/top and the glyph's clip-path, or hidden;
 // then the type's move, if any. Runs only after the slice's reads. A box
 // group's marker also takes the target's width and height, and its type's
@@ -1478,6 +1858,7 @@ function measureBox(g, r, startEl, fr, read, well) {
 function applyGroup(g, m) {
   const c = g.container;
   if (!c) return;
+  if (g.page) applyPage(g, m);
   if (m.res !== 'drawn') { hide(g); return; }
   const [top, right, bottom, left] = m.inset;
   c.style.left = m.x + 'px';
@@ -1488,7 +1869,16 @@ function applyGroup(g, m) {
     g.boxW = m.w;
     g.boxH = m.h;
   }
-  c.style.clipPath = top || right || bottom || left ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : '';
+  // A page group meeting a displayed frame is masked around it (its path
+  // holds the clip too); every other marker is inset to its clip.
+  const masked = m.mask ? maskPath(m.mask, m.x, m.y) : null;
+  if (m.mask && !masked) { hide(g); m.res = 'framed'; return; }
+  c.style.clipPath = masked || (top || right || bottom || left ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : '');
+  // DRIFT@beside (U614): a page group's, a pane-framed box group's; never shown.
+  if (m.box) {
+    if (typeof m.drift === 'number') c.setAttribute(DRIFT_ATTR, m.drift.toFixed(3));
+    else if (c.hasAttribute(DRIFT_ATTR)) c.removeAttribute(DRIFT_ATTR);
+  }
   const t = types.get(g.type);
   if (m.box && !g.drawn) {
     if (!t || !runDraw(g, t)) { m.res = 'unplaced'; return; }
@@ -1527,6 +1917,7 @@ function drawFrame() {
         h.groups = gs;
         rebuild(h, gs);
       } else refreshKept(h, gs);
+      if (h.page) syncBoxTargets(h.groups);
       h.passCount = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };
       for (const g of h.groups) list.push([h, g]);
     }
@@ -1901,6 +2292,52 @@ function onWellResize(entries) {
     requestDraw();
   }
 }
+// (3) A box target's box (U614; U516's residual). One more ResizeObserver,
+// made at the first box target, observes each page-host box group's resolved
+// target and each page group's endpoint items — re-observed at every build
+// (syncBoxTargets: the pass's groups, after their rebuild or refresh) and let
+// go once no group names it — so a pane-framed stroke follows its target's
+// resize, and an arrow its item's, with no re-render, scroll, settle or
+// window resize. As the wells': a first observation draws nothing; a changed
+// size asks for one draw (coalesced per frame).
+let boxRO = null;
+const boxTargets = new Set();
+const boxSizes = new WeakMap();
+function syncBoxTargets(groups) {
+  const want = new Set();
+  for (const g of groups) {
+    if (g.place !== 'box' || g.failed) continue;
+    if (g.page) { for (const el of g.endEls || []) want.add(el); } else if (g.el && g.el.nodeType === 1) want.add(g.el);
+  }
+  for (const el of [...boxTargets]) {
+    if (want.has(el)) continue;
+    boxTargets.delete(el);
+    boxSizes.delete(el);
+    try { boxRO.unobserve(el); } catch { /* already gone */ }
+  }
+  if (!want.size) return;
+  if (!boxRO) {
+    if (typeof ResizeObserver !== 'function') return;
+    boxRO = new ResizeObserver(onBoxResize);
+  }
+  for (const el of want) {
+    if (boxTargets.has(el)) continue;
+    try { boxRO.observe(el); boxTargets.add(el); } catch { /* not observable */ }
+  }
+}
+function onBoxResize(entries) {
+  let moved = false;
+  for (const en of entries || []) {
+    if (!boxTargets.has(en.target)) continue;
+    const b = en.borderBoxSize && en.borderBoxSize[0];
+    const r = en.contentRect || {};
+    const size = b ? [b.inlineSize, b.blockSize] : [r.width, r.height];
+    const prev = boxSizes.get(en.target);
+    boxSizes.set(en.target, size);
+    if (prev && (prev[0] !== size[0] || prev[1] !== size[1])) moved = true;
+  }
+  if (moved) requestDraw();
+}
 
 // hosts() → [{name, layer, rung, root, kinds}], the page first: each host's
 // layer id, its rung (a ladder token's name) and root (GT-07's host half).
@@ -2058,11 +2495,16 @@ const POINTER_EVENTS = ['pointerdown', 'pointermove', 'pointerup', 'pointercance
 // The capture listeners sit on the well only while a tool is armed or a pick
 // is pending; on another host's root only while the armed tool has a type
 // registered there that creates (a press there with none passes through).
+// THE WELL LISTENER (U614; REQ@margins (a)): the page's sit on the
+// .well-wrap that holds #main (wellWrapOf), so a strokes type's press in the
+// gutters beside the column reaches its create; pointerIn leaves a press
+// outside #main to the page for every other input kind, and a pick is
+// #main's alone, so every other tool keeps exactly #main's reach.
 function syncListening() {
   const ph = pageHost;
   const want = !!(armedState || pickState);
   if (want && !ph.listeningOn) {
-    const well = $('main');
+    const well = wellWrapOf($('main'));
     if (well) {
       for (const t of POINTER_EVENTS) well.addEventListener(t, onPointer, true);
       ph.listeningOn = well;
@@ -2235,7 +2677,16 @@ function clickStillTool(e, g) {
   };
   return askPolicy(stand) === 'tool';
 }
-// The page well's capture listener (the one #main has always had).
+// Whether a press lies inside #main (its composed path, else its target).
+function inMain(e) {
+  const main = $('main');
+  if (!main) return false;
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  if (path && path.length) return path.includes(main);
+  const t = e.target;
+  return !!(t && t.nodeType === 1 && main.contains(t));
+}
+// The page well's capture listener (on the .well-wrap since U614).
 function onPointer(e) {
   pointerIn(pageHost, e);
 }
@@ -2244,7 +2695,7 @@ function onPointer(e) {
 // and markdown narrowing is the page's alone.
 function pointerIn(h, e) {
   if (view.previewing) return;   // D2: a preview creates and picks nothing, in any host
-  if (h.page && pickState) { onPick(e); return; }
+  if (h.page && pickState) { if (inMain(e)) onPick(e); return; }
   if (!armedState) return;
   const found = typeFor(h, armedState.type);
   if (found === PASS) return;   // the armed tool has no type for this host: the press is the page's
@@ -2262,6 +2713,9 @@ function pointerIn(h, e) {
   // Contents nav, a gap between blocks) to the page, as K.2-78 (c) made it.
   // The highlight ('selection') and the box grab ('strokes') are not narrowed.
   const decide = (ev) => {
+    // THE WELL LISTENER (U614): a press outside #main (the well's gutters) is
+    // the page's for every input kind but 'strokes', with no policy asked.
+    if (h.page && kind !== 'strokes' && !inMain(ev)) return 'page';
     const d = askPolicy(ev);
     if (d !== 'tool' || !t || !h.page) return d;
     const narrowed = t.targets === 'panes' || kind === 'taps';
@@ -2370,12 +2824,11 @@ function capture(el, pointerId, h) {
 // ── the detachable glyph's drag (U587, H.7; the header's paragraph) ────────
 // The tray action guard, loaded once a detached type registers (a relative
 // lazy import: element-types.js imports this module). Until it has loaded no
-// drag starts (fail closed).
+// drag starts (fail closed). The one lazy load is loadTypes (the page arm's
+// stored records come with it).
 function loadGuard() {
   if (trayGuard) return;
-  import('./element-types.js').then((m) => {
-    if (typeof m.trayAction === 'function') trayGuard = m.trayAction;
-  }, (err) => console.error('[web-chat] overlay: the tray action guard did not load', err));
+  loadTypes();
 }
 // The guard's answer for a drag starting now: false (a preview: READONLY_HINT
 // shown, nothing written) or true.
@@ -2750,6 +3203,9 @@ export function initOverlay(opts = {}) {
   onFrame('markdown:remove', scheduleSources);
   bus.on('preview:node', takePreview);
   bus.on('view', syncScope);
+  // The phone's answer flipped (U614, REQ@page-stroke-phone): a margin stroke
+  // is faded and listed below 760 px, so the page arm builds again.
+  bus.on('viewport:narrow', requestDraw);
   // Hidden versus gone, and the store / hidden-state re-resolve (U303,
   // overlay-hidden.js): settles only the mounts watched here.
   setHiddenProbe(hiddenProbe);
@@ -2767,10 +3223,13 @@ export function initOverlay(opts = {}) {
   // A layout change of the well moves a pane with no settle, scroll or resize
   // (mounts.js layoutPage: a drag, a resize handle's drop, a run cut by a
   // markdown item, a remote pane:state): one observer asks for a draw while
-  // any marker is built.
+  // any marker is built — or any page stroke is held (U614: a page whose only
+  // elements are page strokes, every one orphaned, still sees its items come
+  // back; a run re-order is a style or child change here, so the arrow over
+  // it is re-placed with no other subscription).
   const well = $('main');
   if (well && typeof MutationObserver === 'function') {
-    new MutationObserver(() => { if (pageHost.groups.length) requestDraw(); })
+    new MutationObserver(() => { if (pageHost.groups.length || pageRowCount) requestDraw(); })
       .observe(well, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
   }
 }

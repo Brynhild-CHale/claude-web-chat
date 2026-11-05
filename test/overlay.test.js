@@ -289,7 +289,9 @@ test('a preview draws the node\'s lean rows (its refs pending), leaving it draws
 });
 
 test('pointer dispatch: no listener unarmed; the armed tool gets the click, not the page; a \'page\' policy lets it through armed; pick records', async () => {
-  const main = W.document.getElementById('main');
+  // The page host's capture listeners sit on the well that holds #main (U614,
+  // REQ@margins (a): the .well-wrap, its gutters included).
+  const main = W.document.getElementById('main').closest('.well-wrap');
   const added = [];
   const removed = [];
   const ownAdd = main.addEventListener;
