@@ -874,6 +874,73 @@ test('record(id) of a page stroke: the flat record, its points in [0, 1] of its 
   assert.equal(box.ctx.record('b1').points, undefined, 'a pane-framed item\'s record is unchanged');
 });
 
+// PAGE@mask-frames (PLAN-T5 §2.3, confirmed B2): a page stroke is never
+// clipped to a pane, so any pane it crosses may hold a frame — the census is
+// the document's frames and every pane's own — and it is masked around each
+// displayed frame it meets (clip-path: path(), disjoint boxes in the marker's
+// own px), never hidden whole: 0 px over a frame, the rest drawn.
+const maskBoxes = (m) => {
+  const q = /^path\("(.*)"\)$/.exec(m.style.clipPath);
+  assert.ok(q, `a path() mask: ${m.style.clipPath}`);
+  const out = [];
+  const re = /M(-?[\d.]+) (-?[\d.]+)H(-?[\d.]+)V(-?[\d.]+)H(-?[\d.]+)Z/g;
+  let r;
+  while ((r = re.exec(q[1]))) {
+    const [l, t, rt, b] = [r[1], r[2], r[3], r[4]].map(Number);
+    out.push({ left: px(m.style.left) + l, top: px(m.style.top) + t, right: px(m.style.left) + rt, bottom: px(m.style.top) + b });
+  }
+  assert.equal(q[1].replace(re, ''), '', 'nothing but boxes');
+  return out;
+};
+const meetsBox = (a, b) => a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+const areaOf = (bs) => bs.reduce((n, b) => n + (b.right - b.left) * (b.bottom - b.top), 0);
+function framedNode(pane, frame) {
+  const node = fixture().node;
+  if (pane === 'fx-c') {
+    node.mounts.push({ id: 'fx-c', html: '<div class="c"><iframe class="emb"></iframe></div>', params: {}, pane_state: {} });
+    node.order = ['fx-a', 'md-notes', 'fx-c', 'fx-b'];
+  } else {
+    node.mounts[0].html = node.mounts[0].html.replace('</div>', '<iframe class="emb"></iframe></div>');
+  }
+  BOXES['iframe.emb'] = frame;
+  return node;
+}
+async function maskedArrow(pane, frame) {
+  const saved = BOXES['fx-c'];
+  BOXES['fx-c'] = [0, 610, 800, 80];
+  try {
+    const node = framedNode(pane, frame);
+    const { win, errors } = openPage(withItems(fixturePayload(), ARROW('p1')), node);
+    await settled(win);
+    const m = markerOf(win, 'p1');
+    assert.ok(m, 'drawn');
+    assert.notEqual(m.style.display, 'none', 'never hidden whole');
+    const [l, t, w, h] = boxOfMarker(m);
+    const box = { left: l, top: t, right: l + w, bottom: t + h };
+    const f = { left: frame[0], top: frame[1], right: frame[0] + frame[2], bottom: frame[1] + frame[3] };
+    assert.ok(meetsBox(box, f), 'the frame meets the arrow\'s box');
+    const bs = maskBoxes(m);
+    for (const b of bs) assert.ok(!meetsBox(b, f), `0 px over the frame: ${JSON.stringify(b)}`);
+    const over = (Math.min(box.right, f.right) - Math.max(box.left, f.left)) * (Math.min(box.bottom, f.bottom) - Math.max(box.top, f.top));
+    // Each edge rounded inward to 1e-3 px: at most that much of the rest lost.
+    const tol = bs.length * 2e-3 * (w + h) + 1e-6;
+    assert.ok(areaOf(bs) <= w * h - over + 1e-6 && areaOf(bs) >= w * h - over - tol, `the rest is drawn: ${areaOf(bs)} of ${w * h - over}`);
+    const s = stats(win);
+    assert.equal(s.clipped, 0, 'counted drawn, not clipped');
+    assert.equal(s.drawn, 5, 'the fixture\'s four and the arrow');
+    assert.deepEqual(errors, []);
+    return m;
+  } finally { delete BOXES['iframe.emb']; BOXES['fx-c'] = saved; }
+}
+
+test('a page stroke crossing a third pane\'s displayed frame is masked around it, never painted over it', async () => {
+  await maskedArrow('fx-c', [300, 620, 200, 60]);
+});
+
+test('a page stroke whose own item\'s pane holds a frame meeting its box stays displayed, the frame masked out, none clipped', async () => {
+  await maskedArrow('fx-a', [380, 500, 50, 60]);
+});
+
 test('the page cut carries every DOC_SPLICE function by name, in order, each its own source in lib/core/strokes.js; no other copy of the mapping; no page arm in a cut without a page stroke', () => {
   const src = E.runtimeSource('comment+highlight+box+page');
   let at = -1;
@@ -1161,8 +1228,13 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // every section's and counts every spliced function), on PLAN-T5's
 // RUNTIME@restate, 2026-11-05: 21,365 at ae/int 3d86c497 → 29,175 (the four
 // spliced functions 5,111 B of it, compacted; 'comment+highlight+box', the
-// cut with no page stroke, 21,596).
-const RUNTIME_WHOLE_BYTES = 29175;
+// cut with no page stroke, 21,596); and at U621's fix round 1 (PAGE@mask-
+// frames: the page census of every pane's frames, and a page group masked
+// around each frame it meets by clip-path: path(), never hidden whole), on
+// the same RUNTIME@restate, 2026-11-05: 29,175 at ae/documents-page-strokes
+// aa5e2c3f → 30,578 (the four spliced functions still 5,111 B of it;
+// 'comment+highlight+box' 21,758).
+const RUNTIME_WHOLE_BYTES = 30578;
 // The documents' share beside (C-17-share; RULED B3@documents-share-line a:
 // the 12 % line, read by the gate, never a status here): the gate's
 // gate-t4-exit reading at 627c5f53 — resolver 27,038 B (the element cut) +
