@@ -548,3 +548,97 @@ test('a declared key a version never wrote is null in the document payload, as G
   assert.deepStrictEqual(it.payload, { label: 'only the label', note: null }, 'the declared keys, the unwritten one null');
   assert.equal(validatePayload(p), null);
 });
+
+// ── page strokes (U621; REQ@ink-scope-v2 b+) ───────────────────────────────
+// A strokes type's PAGE STROKE — its anchor a page record lib/core/strokes
+// isPageRecord accepts, its payload a stroke — is kept; every other page
+// anchor (the box grab's) is still dropped (re-states the scenario's 'the box
+// grab never one' for page anchors). Privacy is the element row's: no file
+// document carries a private one whoever downloads it (RULED
+// U524-U525@file-documents-private a), and one shared at the commit but
+// private at its latest version is withdrawn (U525b, PQ-4F-1 a).
+
+const strokes = require('../lib/core/strokes');
+const INK_JSON = { payload: { keys: [...strokes.STROKE_KEYS, ...strokes.DESCRIBE_KEYS] }, anchors: ['element', 'page'], place: 'box' };
+const PAGE_ANCHOR = strokes.pageRecord({
+  from: { item: 'pa', x: 0.5, y: 0.9, w: 800, h: 600 },
+  to: { item: 'pb', x: 0.5, y: 0.1, w: 800, h: 400 },
+  frame: { w: 800, h: 1200 },
+});
+const STROKE = (shared) => ({
+  shared, tool: 'pen', colour: 'ink', width: 0.004, stride: 4, aspect: 800 / 1200,
+  points: [0.5, 0.45, 0.5, 0, 0.5, 0.53, 0.5, 10, 0.5, 0.6167, 0.5, 20],
+});
+
+async function pageScenario(t) {
+  const s = await scenario(t);
+  const { d } = s;
+  approveElementPack(d, { name: 'de-strokes-pack', type: 'de-strokes', json: INK_JSON });
+  assert.ok(d.srv.elementTypes.listed('de-strokes'), 'the strokes type lists');
+  assert.ok(strokes.isPageRecord(PAGE_ANCHOR));
+  const arrow = (await post(d.api, { type: 'de-strokes', anchor: PAGE_ANCHOR, payload: STROKE(true) }, 'a shared page stroke')).element;
+  const mine = (await post(d.api, { type: 'de-strokes', anchor: PAGE_ANCHOR, payload: STROKE(false) }, 'a private page stroke')).element;
+  const later = (await post(d.api, { type: 'de-strokes', anchor: PAGE_ANCHOR, payload: STROKE(true) }, 'shared at the commit')).element;
+  const node = await commit(d.api, 'page strokes');
+  // Made private after the commit: the node keeps its pinned shared version.
+  await ok(d.api.patch(`/api/elements/${later.id}`, { payload: { shared: false } }), 'later made private');
+  assert.equal(d.srv.elements.latest(later.id).payload.shared, false);
+  const grabRow = leanElements({ elements: nodeOf(d, node).elements, id: node }, d.srv.elements, { node: true, refs: true })
+    .find((r) => r.id === s.ids.grab);
+  return { ...s, node, arrow: arrow.id, mine: mine.id, later: later.id, grabRow };
+}
+
+test('a strokes type\'s page record is kept with its stroke; the box grab\'s page anchor is still dropped', async (t) => {
+  const { d, node, ids, arrow, mine, later, grabRow } = await pageScenario(t);
+  const aud = audiences(t, d.root);
+  const p = build(d, node, readerOf(aud.none, REQ.browser));
+  assert.equal(validatePayload(p), null, JSON.stringify(p));
+  assert.ok(idsOf(p).includes(arrow) && idsOf(p).includes(mine) && idsOf(p).includes(later), 'every page stroke, for the local browser in place');
+  assert.ok(!idsOf(p).includes(ids.grab), 'the box grab never one');
+  assert.ok(grabRow, 'the node carries the box grab');
+  assert.equal(grabRow.anchor && grabRow.anchor.kind, 'page', 'the grab\'s anchor is a page anchor');
+  assert.equal(strokes.isPageRecord(grabRow.anchor), false, 'and no page record');
+  const it = p.items.find((x) => x.id === arrow);
+  assert.deepStrictEqual(it.anchor, PAGE_ANCHOR, 'the page record rides as written');
+  assert.deepStrictEqual(it.payload.points, STROKE(true).points, 'with its stroke');
+  assert.equal(it.payload.stride, 4);
+  assert.ok(!('shared' in it.payload) && !('anchor' in it.payload), 'never anchor or shared in the payload');
+  assert.deepStrictEqual(p.types.map((r) => [r.type, r.place]).sort(), [['de-mark', 'box'], ['de-strokes', 'box']]);
+  assert.equal(require('../lib/server/runtime/elements-doc-src').keyOf(p), 'comment+highlight+box+page', 'its document carries the page cut');
+
+  // A page anchor whose payload is no stroke is left out.
+  const nostroke = documentElements({ ...documentDeps(ctxOf(d)), elements: new Proxy(d.srv.elements, {
+    get(target, k) {
+      if (k !== 'version') return typeof target[k] === 'function' ? target[k].bind(target) : target[k];
+      return (id, v) => {
+        const rec = target.version(id, v);
+        return id === arrow && rec ? { ...rec, payload: { ...rec.payload, points: [1, 2, 3] } } : rec;
+      };
+    },
+  }) }, nodeOf(d, node), { reader: readerOf(aud.none, REQ.browser), route: PREVIEW });
+  assert.ok(!idsOf(nostroke).includes(arrow), 'not whole samples: no stroke, so no item');
+  assert.ok(idsOf(nostroke).includes(mine), 'the others kept');
+});
+
+test('a private page stroke is in no file document (the export, the replay download) and only in a seesPrivate in-place preview; one made private after the commit is withdrawn', async (t) => {
+  const { d, node, arrow, mine, later } = await pageScenario(t);
+  const aud = audiences(t, d.root);
+  for (const [who, reader, route] of [
+    ['the export file', fileReader('local'), EXPORT],
+    ['the replay download', fileReader('local'), 'GET /api/replay/html'],
+    ['the replay player for lib/client', readerOf(aud.none, REQ.client), 'GET /replay'],
+    ['a preview read without seesPrivate', readerOf(aud.none, REQ.client), PREVIEW],
+    ['a remote read viewer', readerOf(aud.read, REQ.remote), PREVIEW],
+  ]) {
+    const p = build(d, node, reader, { route });
+    assert.equal(validatePayload(p), null, `${who}: ${JSON.stringify(p)}`);
+    assert.ok(idsOf(p).includes(arrow), `${who}: the shared page stroke`);
+    assert.ok(!idsOf(p).includes(mine), `${who}: never the private one`);
+    assert.ok(!idsOf(p).includes(later), `${who}: never the one private at its latest version`);
+  }
+  const local = build(d, node, readerOf(aud.none, REQ.browser));
+  assert.ok(idsOf(local).includes(mine), 'the local browser in place: its private stroke');
+  const pinned = local.items.find((x) => x.id === later);
+  assert.ok(pinned, 'and the withdrawn one, at the version the node pins');
+  assert.equal(pinned.shared, false, 'read private by its latest version');
+});
