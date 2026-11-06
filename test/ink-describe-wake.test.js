@@ -19,10 +19,13 @@
 //     item, its describe nor its excerpt carries the private stroke's text or
 //     extent;
 //   - a stroke on another target starts its own group.
-//   - a member leaving a queued group (its un-share), the newest or not,
-//     takes the group's stale describe with it and the summary reads
-//     `<label> ×N` (lib/server/domain/queue removeByElement); an edit of the
-//     newest member refreshes the describe (refreshElement).
+//   - per entry (U633, lib/channel/policy replaceDescribe): a member leaving
+//     a queued group (its un-share), the newest or not, takes the stale
+//     describe entry of its stroke group with it — a one-group item's whole
+//     describe — and the summary reads `<label> ×N` (lib/server/domain/queue
+//     removeByElement); an edit of any member refreshes only its group's
+//     entry, in place (refreshElement); a re-send drops only the entries of
+//     the members gone or un-shared (resendElement).
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -410,4 +413,94 @@ test('U622: the item re-checks frame and items (a malformed one drops the descri
   mergeElement(g, other);
   assert.deepStrictEqual(g.describe.groups.map((x) => [x.element_ids, x.frame, x.items]), [[['e1'], 'page', ['pa', 'pb']], [['e2'], 'pane', undefined]]);
   assert.equal('frame' in g.describe, false, 'a multi-group fold names frames per group only');
+});
+
+// ── a folded item's describe per group (U633, 5B.3; K.2-251) ────────────────
+// An edit of any member refreshes only its own group's entry (in place, the
+// other groups' guesses kept); a member un-shared after delivery is never
+// raised again by a re-send, and its group's entry goes with it (J2).
+test('U633: two stroke groups folded into one item, the older group\'s stroke moved by PATCH → groups[0] is the refreshed group\'s guess, groups[1] unchanged', async (t) => {
+  const d = await setup(t);
+  const a = await stroke(d, { y: 0.3 });
+  const b = await stroke(d, { y: 0.5 });
+  const o = await stroke(d, { sib: 1, y: 0.3 });
+  const [before] = itemsOf(d);
+  assert.deepStrictEqual(before.describe.groups.map((g) => g.element_ids), [[a.id, b.id], [o.id]]);
+  assert.deepStrictEqual(before.describe.groups[0].bbox, [0.05, 0.3, 0.4, 0.2]);
+  const newer = JSON.stringify(before.describe.groups[1]);
+  await ok(d.api.patch(`/api/elements/${a.id}`, { payload: { points: line(0.05, 0.45, 0.1), bbox: [0.05, 0.1, 0.4, 0] } }), 'move the older group\'s first stroke');
+  const [it] = itemsOf(d);
+  assert.equal(it.element_id, o.id, 'the newest stays the newest');
+  assert.equal(it.describe.groups.length, 2, 'the fold keeps both groups');
+  assert.deepStrictEqual(it.describe.groups[0].element_ids, [a.id, b.id]);
+  assert.deepStrictEqual(it.describe.groups[0].bbox, [0.05, 0.1, 0.4, 0.4], 'the refreshed group\'s extent');
+  assert.equal(it.describe.groups[0].frame, 'target');
+  assert.equal(JSON.stringify(it.describe.groups[1]), newer, 'the other group\'s guess untouched');
+  assert.equal(it.describe.count, 3);
+  // The newest's own edit replaces only its entry: no collapse to one group.
+  await ok(d.api.patch(`/api/elements/${o.id}`, { payload: { points: line(0.05, 0.45, 0.6), bbox: [0.05, 0.6, 0.4, 0] } }), 'move the newest');
+  const [after] = itemsOf(d);
+  assert.equal(after.describe.groups.length, 2);
+  assert.deepStrictEqual(after.describe.groups[0].bbox, [0.05, 0.1, 0.4, 0.4]);
+  assert.deepStrictEqual(after.describe.groups[1].bbox, [0.05, 0.6, 0.4, 0]);
+});
+
+test('U633: an unfolded item\'s refreshed describe carries no element_ids', async (t) => {
+  const d = await setup(t);
+  await stroke(d, { y: 0.3 });
+  const n = await stroke(d, { y: 0.5 });
+  await ok(d.api.patch(`/api/elements/${n.id}`, { payload: { points: line(0.05, 0.45, 0.7), bbox: [0.05, 0.7, 0.4, 0] } }), 'move the newest');
+  const [it] = itemsOf(d);
+  assert.deepStrictEqual(Object.keys(it.describe).sort(), ['bbox', 'confidence', 'count', 'frame', 'shape'], 'the four fields and the frame alone');
+});
+
+test('U633: a member un-shared after delivery is never raised again by a re-send; its group\'s entry goes, the other group\'s stays (J2)', async (t) => {
+  const d = await setup(t);
+  const a = await stroke(d, { y: 0.3, text: 'Revenue fell' });
+  const b = await stroke(d, { y: 0.9, x0: 0, x1: 0.95, text: 'wcu633 unshared words' });
+  const o = await stroke(d, { sib: 1, y: 0.3, text: 'Other' });
+  const [it] = itemsOf(d);
+  assert.deepStrictEqual(it.describe.groups.map((g) => g.element_ids), [[a.id, b.id], [o.id]]);
+  const oGuess = it.describe.groups[1];
+  // Delivered (no channel: parked), then b un-shared, then re-sent.
+  await ok(d.api.post('/api/queue/push', {}), 'push');
+  const pend = (await ok(d.api.get('/api/queue/pending'), 'pending')).pending;
+  await ok(d.api.post('/api/queue/pending/consume', { id: pend.id }), 'consume');
+  assert.equal(itemsOf(d).length, 0, 'delivered');
+  await ok(d.api.patch(`/api/elements/${b.id}`, { payload: { shared: false } }), 'un-share b');
+  const r = await ok(d.api.post(`/api/queue/items/${it.id}/resend`, {}), 're-send');
+  const again = r.item;
+  assert.deepStrictEqual(again.element_ids, [a.id, o.id], 'the un-shared member is never raised again');
+  assert.equal(again.count, 2);
+  assert.deepStrictEqual(again.describe, { shape: oGuess.shape, confidence: oGuess.confidence, count: 1, bbox: oGuess.bbox, frame: 'target' },
+    'the group b was in loses its guess; the other group\'s is kept');
+  const all = JSON.stringify(again);
+  assert.ok(!all.includes(b.id) && !all.includes('wcu633'), 'neither the un-shared stroke\'s id nor its words');
+  assert.ok(!all.includes('0.95'), 'nor the extent it made');
+  const [queued] = itemsOf(d);
+  assert.ok(queued && !holds(queued, b.id), 'the queued re-send holds no b');
+  const { content } = wakeEnvelope([queued], {});
+  assert.ok(!content.includes('wcu633') && !content.includes('0.95'), 'nor the envelope');
+});
+
+test('U633: an arrow group folded beside an element group, the arrow\'s stroke edited → its entry refreshed with its frame and from/to items, the other entry unchanged', async (t) => {
+  const d = await setupPage(t);
+  const ar = await pageStroke(d, ARROW('pa', 'pb'), { y: 0.3 });
+  const onPa = { ...PROSE, mount: 'pa' };
+  const el = await ok(d.api.post('/api/elements', { type: PTYPE, anchor: onPa, payload: { shared: true, tool: 'pen', width: 0.01, colour: 'accent', points: line(0.1, 0.9, 0.5), stride: 4, aspect: 4, bbox: [0.1, 0.5, 0.8, 0] } }), 'a pane stroke on pa').then((b) => b.element);
+  const [before] = pItemsOf(d);
+  assert.ok(before && holds(before, ar.id) && holds(before, el.id), 'one item folds both groups');
+  assert.deepStrictEqual(before.describe.groups.map((g) => [g.element_ids, g.frame, g.items]), [[[ar.id], 'page', ['pa', 'pb']], [[el.id], 'pane', undefined]]);
+  const other = JSON.stringify(before.describe.groups[1]);
+  const box = before.describe.groups[0].bbox.slice();
+  await ok(d.api.patch(`/api/elements/${ar.id}`, { payload: { points: line(0.2, 0.6, 0.7), bbox: [0.2, 0.7, 0.4, 0] } }), 'edit the arrow');
+  const [it] = pItemsOf(d);
+  assert.equal(it.describe.groups.length, 2);
+  const g = it.describe.groups[0];
+  assert.deepStrictEqual(g.element_ids, [ar.id]);
+  assert.equal(g.frame, 'page');
+  assert.deepStrictEqual(g.items, ['pa', 'pb'], 'the arrow\'s from/to item ids survive the refresh');
+  assert.notDeepStrictEqual(g.bbox, box, 'the refreshed extent');
+  assert.equal(JSON.stringify(it.describe.groups[1]), other, 'the element group\'s entry unchanged');
+  assert.equal('items' in it.describe, false, 'a multi-group describe names items per group only');
 });
