@@ -1713,11 +1713,12 @@ const PATTERNS = [
       // property twice. It predates the engine and has nothing to paint.
       'public/app/mounts.js': 2,
       // Not a highlight: input-mode.js adoptStrokes, the strokes input
-      // policy on a target (U515; annotation engine 4A.2): one constructable
-      // sheet (STROKES_SHEET — touch-action none, selection and callout off on
-      // a fixed-aspect target under :host([data-wc-strokes])) each pane root
-      // takes once while a strokes tool is armed, adoptReadonlySheet's
-      // pattern; one read and one append. It paints nothing.
+      // policy in a pane (U515; annotation engine 4A.2; re-pointed by U616,
+      // 5A.3): one constructable sheet (STROKES_SHEET — touch-action none on
+      // every element under :host([data-wc-strokes]), selection and the
+      // callout off on the fixed-aspect targets only) each pane root takes
+      // once while a strokes tool is armed, adoptReadonlySheet's pattern; one
+      // read and one append, so the count stays 2. It paints nothing.
       'public/app/input-mode.js': 2,
     },
   },

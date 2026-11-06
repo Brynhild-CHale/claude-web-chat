@@ -233,8 +233,10 @@ test('a finger drag creates nothing unless finger-draws is on', async () => {
   ov.setArmed('box-grab');
   const card = rootOf().querySelector('.card');
   IM.setFingerDraws('off');
-  // The page keeps the finger: the well's touch-action pans it (no
-  // finger-strokes class) and the press's default is left alone.
+  // The page keeps the finger's press: with the box grab armed the well's
+  // touch-action is none (U616: one finger scrolls nothing while a strokes
+  // tool is armed, two fingers pan), there is no finger-strokes class, and
+  // the press's default is left alone.
   assert.equal(W.document.documentElement.classList.contains('finger-strokes'), false, 'the well pans for a finger');
   const down = new W.PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true, pointerType: 'touch',
     pointerId: 1, isPrimary: true, clientX: 130, clientY: 160, buttons: 1 });

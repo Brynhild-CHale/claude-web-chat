@@ -666,7 +666,7 @@ function makeHandle(type, frame, first) {
     const end = (it, q) => ({ item: it.id, x: (q.x - it.rect.left) / it.rect.w, y: (q.y - it.rect.top) / it.rect.h, w: it.rect.w, h: it.rect.h });
     const anchor = pageRecord({ from: end(a, p0), to: end(b, pn), frame: { w: pb.w, h: pb.h } });
     if (!anchor) {
-      console.error('[web-chat] strokes: no page record for this stroke (an endpoint lies too far from its nearest item)');
+      console.error('[web-chat] strokes: no page record for this stroke (an endpoint lies too far from its nearest item, or the item\'s id is not [A-Za-z0-9_-])');
       return null;
     }
     const aspect = round4(pb.w / pb.h);

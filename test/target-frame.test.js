@@ -1314,3 +1314,53 @@ test('pushing 10,000 samples on a page frame performs O(log n) buffer growths an
   assert.ok(rp, 'readPageRect found');
   assert.doesNotMatch(rp[1], /\bnew\b|\{\s*\w+\s*[:,}]|\.\.\.|\[/, 'readPageRect allocates nothing');
 });
+
+// ── the pageRecord-null line names both causes (HAND FOLD 3, DECISIONS.md
+// K.2-275; U613b@spec:mount-id-grammar (a)) ─────────────────────────────────
+// lib/core/strokes isPageRecord takes an item id only in PAGE_ITEM_RE's
+// grammar ([A-Za-z0-9_-]); mount ids keep today's free grammar, so a stroke
+// whose item is a pane rendered as `tf.dot` or `tf sp` makes no page record:
+// nothing is posted, the stroke is refused with FAILED_HINT, and the console
+// line says either cause.
+test('a page stroke whose item id carries a dot or a space posts nothing and logs the line naming both causes', async () => {
+  const LINE = '[web-chat] strokes: no page record for this stroke (an endpoint lies too far from its nearest item, or the item\'s id is not [A-Za-z0-9_-])';
+  const BAD = [
+    { id: 'tf.dot', box: { left: 238, top: 560, width: 550, height: 200 } },
+    { id: 'tf sp', box: { left: 812, top: 560, width: 550, height: 200 } },
+  ];
+  for (const b of BAD) await shell.frame({ type: 'render', id: b.id, target: 'main', params: {}, gen: 0, html: '<p class="bad">a pane whose id is outside the grammar</p>' });
+  await shell.tick();
+  for (const b of BAD) {
+    boxed(itemOf(b.id), b.box);
+    boxed(q('p.bad', b.id), { left: b.box.left + 12, top: b.box.top + 10, width: b.box.width - 24, height: 60 });
+  }
+  assert.equal(ST.isPageRecord(ST.pageRecord({ frame: { w: 1584, h: 2000 },
+    from: { item: 'tfa', x: 0.5, y: 0.5, w: 550, h: 300 }, to: { item: 'tfb', x: 0.5, y: 0.5, w: 550, h: 300 } })), true,
+  'the same arrow between safe ids makes a record');
+  const errors = [];
+  const realError = console.error;
+  console.error = (...a) => errors.push(a.map(String).join(' '));
+  try {
+    const cases = [
+      ['an arrow from the dotted pane to the spaced one', q('p.bad', 'tf.dot'), [300, 600], [[600, 620], [900, 640]]],
+      ['a margin stroke beside the dotted pane', mainEl(), [220, 650], [[224, 660], [226, 680]]],
+    ];
+    for (const [what, el, at, moves] of cases) {
+      ov.setArmed(PAGE_TYPE);
+      shell.calls.length = 0;
+      errors.length = 0;
+      const h = TF.stroke.begin(inputOf(press(el, at[0], at[1])));
+      assert.ok(h, `${what}: a handle`);
+      h.push(moves.map(([x, y], i) => sample(x, y, 4 * (i + 1))));
+      const r = await h.commit({ tool: 'line', width: 4, colour: 'accent', shared: false });
+      assert.deepStrictEqual({ ...r }, { ok: false, hint: TF.FAILED_HINT }, `${what}: refused with FAILED_HINT`);
+      await shell.tick();
+      assert.equal(posts().length, 0, `${what}: nothing posted`);
+      assert.deepStrictEqual(errors, [LINE], `${what}: the one line, naming both causes`);
+      assert.equal(reaimText(), TF.FAILED_HINT, `${what}: the hint is shown`);
+    }
+  } finally {
+    console.error = realError;
+    for (const b of BAD) await shell.frame({ type: 'clear', id: b.id });
+  }
+});
