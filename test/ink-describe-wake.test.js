@@ -539,3 +539,28 @@ test('U633: an arrow group folded beside an element group, the arrow\'s stroke e
   assert.equal(JSON.stringify(it.describe.groups[1]), other, 'the element group\'s entry unchanged');
   assert.equal('items' in it.describe, false, 'a multi-group describe names items per group only');
 });
+
+// ── a refresh after a partial leave (U633b, 5B.3; RULED QUEUE@refresh-after-drop G6 = a) ──
+test('U633b: two groups folded, one member of the older group un-shared, its group-mate edited → the other group\'s guess still listed beside the refreshed entry', async (t) => {
+  const d = await setup(t);
+  const a = await stroke(d, { y: 0.3 });
+  const b = await stroke(d, { y: 0.5 });
+  const o = await stroke(d, { sib: 1, y: 0.3 });
+  const [before] = itemsOf(d);
+  assert.deepStrictEqual(before.describe.groups.map((g) => g.element_ids), [[a.id, b.id], [o.id]]);
+  const oGuess = before.describe.groups[1];
+  await ok(d.api.patch(`/api/elements/${a.id}`, { payload: { shared: false } }), 'un-share a');
+  const [left] = itemsOf(d);
+  assert.deepStrictEqual(left.element_ids, [b.id, o.id]);
+  assert.equal(left.describe.shape, oGuess.shape, 'the older group\'s entry went with a (U633)');
+  await ok(d.api.patch(`/api/elements/${b.id}`, { payload: { points: line(0.05, 0.45, 0.7), bbox: [0.05, 0.7, 0.4, 0] } }), 'move b');
+  const [it] = itemsOf(d);
+  assert.ok(it.describe.groups, 'two guesses listed');
+  assert.deepStrictEqual(it.describe.groups.map((g) => g.element_ids), [[o.id], [b.id]], 'the other group kept, b\'s refreshed entry appended');
+  const { element_ids: _ids, ...oWas } = oGuess;
+  const { element_ids: _ids2, ...oNow } = it.describe.groups[0];
+  assert.deepStrictEqual(oNow, oWas, 'the other group\'s guess untouched');
+  assert.equal(it.describe.groups[1].count, 1, 'b\'s group counts b alone: the un-shared stroke never counted');
+  assert.deepStrictEqual(it.describe.groups[1].bbox, [0.05, 0.7, 0.4, 0]);
+  assert.equal(it.describe.count, 2);
+});
