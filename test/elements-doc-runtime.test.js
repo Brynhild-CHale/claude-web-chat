@@ -1509,3 +1509,74 @@ test('a re-draw rebuilds the blend parts: the blend layer holds only the new gro
   assert.equal(first.isConnected, false);
   assert.deepStrictEqual(styleOfEl(now), styleOfEl(markerOf(win, 'b1')), 'placed as its marker');
 });
+
+// A guessed opting group (U624 HAND FOLD 2, K.2-274, R3): its blend part is
+// el-blend plus el-guess for its opacity only — the core marker rules
+// (.wc-el-layer .el-guess, .el-section, .el-masked, …) never reach it, so the
+// blend layer paints no second dashed border, as the live chrome's
+// #el-layer-blend .el-blend draws none (public/app.css read the same way).
+test('a guessed opting group\'s blend part has no border, as in the live chrome', async () => {
+  const { createCascade } = require('../test-support/css-cascade');
+  const p = blendPayload();
+  p.items.find((it) => it.id === 'b1').answer = { state: 'orphaned', how: 'score-low' };
+  assert.equal(E.validatePayload(p), null);
+  const { win, spy } = openBlend(p);
+  await settled(win);
+  const m = markerOf(win, 'b1');
+  assert.ok(classes(m).includes('el-guess'), 'the marker is a guess');
+  const b = spy.group.blend;
+  assert.ok(b && b.parentNode === blendLayerOf(win), 'its blend part');
+  assert.deepStrictEqual([...b.classList].sort(), ['el-blend', 'el-guess'], 'el-blend, plus el-guess for its opacity');
+  const runtimeCss = [...win.document.querySelectorAll('style')].map((s) => s.textContent).find((s) => s.includes('.wc-el-blend'));
+  assert.ok(runtimeCss, 'the runtime\'s style element');
+  const css = createCascade(runtimeCss, { win });
+  assert.match(css.value(m, 'border') || '', /dashed/, 'the marker keeps its guess border');
+  assert.ok(!/dashed|dotted|solid/.test(css.value(b, 'border') || ''), `no border on the blend part: ${css.value(b, 'border')}`);
+  assert.equal(css.value(b, 'opacity'), '.8', 'faded as a guess');
+  // The live chrome: #el-layer-blend's part, by app.css's own rules.
+  const live = new JSDOM('<!doctype html><body><div id="el-layer-blend"><div class="el-blend el-guess"></div></div></body>').window;
+  WINDOWS.push(live);
+  live.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });   // a wide light window
+  const appCss = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8'), { win: live });
+  const lb = live.document.querySelector('.el-blend');
+  assert.equal(appCss.value(lb, 'border'), null, 'the live chrome draws no border there');
+  assert.equal(appCss.value(lb, 'opacity'), '.8');
+});
+
+// A REAL document (U624 HAND FOLD 2, R1): the preview a daemon serves, its
+// payload built by lib/server/document-elements (typeRow carrying the
+// manifest's composite), not a hand-built one, draws an opting box type's
+// blend part in the blend layer.
+test('a real preview built through document-elements\' typeRow draws an opting box type\'s blend part', async (t) => {
+  const { withServer } = require('../test-support/helpers');
+  const { approveElementPack } = require('../test-support/element-type-fixture');
+  const d = await withServer(t);
+  approveElementPack(d, { name: 'rd-blend-pack', type: 'rd-blend',
+    json: { payload: { keys: ['anchor', 'shared', 'label'] }, anchors: ['element'], place: 'box', composite: 'multiply' } });
+  assert.ok(d.srv.elementTypes.listed('rd-blend'), 'the opting type lists');
+  const okJson = async (pr, what) => { const r = await pr; assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${r.text}`); return r.json; };
+  await okJson(d.api.post('/api/render', { id: 'fx-b', html: '<figure><svg class="chart" viewBox="0 0 10 10" width="100" height="100"><rect width="10" height="10"/></svg></figure>' }), 'render');
+  const anchor = { v: 1, kind: 'element', mount: 'fx-b', at: { path: [0, 0], sib: 0 },
+    fp: { tag: 'svg', id: '', cls: ['chart'], head: '', attrs: [], parent: 'figure' }, rows: [] };
+  const el = (await okJson(d.api.post('/api/elements', { type: 'rd-blend', anchor, payload: { label: 'hl' } }), 'element')).element;
+  await okJson(d.api.post('/api/turn-begin', { message: 'blend' }), 'turn-begin');
+  const node = (await okJson(d.api.post('/api/turn-end', { author: 'claude' }), 'turn-end')).node_id;
+  const r = await d.anonApi.get(`/preview/node/${node}`);
+  assert.equal(r.status, 200, r.text);
+  const data = /<script type="application\/json" data-wc-elements>([\s\S]*?)<\/script>/.exec(r.text);
+  assert.ok(data, 'the payload rides');
+  const row = JSON.parse(data[1]).types.find((x) => x.type === 'rd-blend');
+  assert.deepStrictEqual([row.place, row.composite], ['box', 'multiply'], 'typeRow carried composite');
+  const { win } = open(r.text);
+  win.console.error = () => {};
+  const spy = blendDraw(win);
+  win.__wcMount.elements.define('rd-blend', spy.draw, {});
+  await settled(win);
+  const m = markerOf(win, el.id);
+  assert.ok(m && m.parentNode === markLayerOf(win), 'the marker on the markers\' layer');
+  const b = spy.group && spy.group.blend;
+  assert.ok(b && b.parentNode === blendLayerOf(win), 'its blend part in the blend layer');
+  assert.equal(blendLayerOf(win).style.mixBlendMode, 'multiply');
+  assert.ok(blendLayerOf(win).contains(win.document.querySelector('path.hl')), 'the blending path blends');
+  assert.deepStrictEqual(styleOfEl(b), styleOfEl(m), 'placed as its marker');
+});
