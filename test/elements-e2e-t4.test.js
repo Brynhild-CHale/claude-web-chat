@@ -364,7 +364,9 @@ test('the world: an approved strokes pack, its private strokes, describe, undo, 
     assert.equal(items.length, 1, 'one group');
     const it = items[0];
     assert.deepEqual(it.element_ids, [s1.id, s2.id, s3.id]);
-    assert.deepStrictEqual(Object.keys(it.describe).sort(), ['bbox', 'confidence', 'count', 'shape']);
+    // Tranche 5 (U622): every stroke group's describe names its frame word.
+    assert.deepStrictEqual(Object.keys(it.describe).sort(), ['bbox', 'confidence', 'count', 'frame', 'shape']);
+    assert.equal(it.describe.frame, 'target', 'an svg: a fixed-aspect target');
     assert.ok(SHAPES.includes(it.describe.shape));
     assert.equal(it.describe.count, 3);
     assert.deepStrictEqual(it.describe.bbox, [0.05, 0.3, 0.55, 0.4], 'the union of the three');
