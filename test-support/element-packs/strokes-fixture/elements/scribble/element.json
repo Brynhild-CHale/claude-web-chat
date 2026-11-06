@@ -5,7 +5,7 @@
   "private": true,
   "schema": "scribble@1",
   "reads": ["scribble@1"],
-  "anchors": ["element"],
+  "anchors": ["element", "page"],
   "label": "Scribble",
   "icons": { "light": "icon-light.svg", "dark": "icon-dark.svg" },
   "input": "strokes",

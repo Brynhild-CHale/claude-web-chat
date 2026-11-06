@@ -161,7 +161,7 @@ test('the fixture strokes pack: review → approve from the confirm frame → li
   await t.test('(3) approved from the confirm frame: the review names the type, the install lands, the type is listed', async () => {
     const out = await approveFromFrame(d.srv, { name: PACK, tier: 'local' });
     assert.equal(out.doc.status, 200);
-    assert.ok(out.desc.lines.some((l) => l.startsWith(`Element type ${TYPE} — schema ${TYPE}@1 · anchors element`)), JSON.stringify(out.desc.lines));
+    assert.ok(out.desc.lines.some((l) => l.startsWith(`Element type ${TYPE} — schema ${TYPE}@1 · anchors element, page`)), JSON.stringify(out.desc.lines));
     assert.equal(out.res.status, 200, JSON.stringify(out.res.body));
     assert.deepEqual(out.res.body, { ok: true, said: `Installed ${PACK}: ${TYPE}` });
     const row = (await ok(d.api.get('/api/elements/types'), 'types')).types.find((r) => r.type === TYPE);
@@ -169,7 +169,7 @@ test('the fixture strokes pack: review → approve from the confirm frame → li
     assert.equal(row.builtin, false);
     assert.equal(row.private, true);
     assert.equal(row.family, 'page');
-    assert.deepEqual(row.anchors, ['element']);
+    assert.deepEqual(row.anchors, ['element', 'page']);
     assert.equal(row.toolbar.input, 'strokes');
     assert.equal(row.toolbar.place, 'box');
     const bytes = fs.readFileSync(path.join(TYPE_DIR, 'draw.js'));
@@ -330,4 +330,83 @@ test('the fixture\'s create hands wet.push the SAME options object on every poin
   assert.strictEqual(calls[1].opts, calls[0].opts, 'the same options object across dispatches');
   assert.strictEqual(calls[0].predicted, p1, 'predicted set for the first call');
   assert.strictEqual(calls[1].predicted, p2, 'and for the second');
+});
+
+// ── the fixture declares the page (tranche 5, U625) ─────────────────────────
+// DECISIONS.md C5 (a type declares the anchor kinds it accepts) and RULED
+// KIND@declared-check (a): U623's create path refuses an anchor whose kind the
+// type does not declare (400 anchor-kind-undeclared), so the fixture's
+// element.json declares ['element', 'page'] — 'element' still, since place
+// 'box' needs it (lib/packs/elements.js). Staged, reviewed (the review line
+// names both kinds) and approved through the same pipeline as above; then a
+// page stroke (lib/core/strokes pageRecord, the chrome's page frame's anchor:
+// an arrow between two panes and a margin stroke beside one) is accepted,
+// stored private (AD5) and listed, and an element-anchored stroke is still
+// accepted.
+test('U625: the fixture declares the page — staged, reviewed naming both kinds, approved; a page-anchored stroke accepted and listed, an element-anchored one still accepted', async (t) => {
+  const d = await withServer(t, { root: tmpRoot('wc-u625-') });
+  const call = (method, p, body, headers) => client.request(d.port, method, p, body, { headers, timeout: 10000 });
+  await ok(d.api.post('/api/render', { id: MOUNT, html: PANE_HTML }), 'render the pane');
+  await ok(d.api.post('/api/render', { id: 'sp2', html: '<p class="prose">The second pane.</p>' }), 'render a second pane');
+
+  const json = JSON.parse(fs.readFileSync(path.join(TYPE_DIR, 'element.json'), 'utf8'));
+  assert.deepEqual(json.anchors, ['element', 'page'], 'the checked-in element.json declares both kinds');
+  assert.equal(json.place, 'box', 'and still boxes its marker, which needs element');
+
+  const staged = await stageElementPack(t, d, { dir: PACK_DIR, owner: 'acme', repo: 'strokes-page' });
+  assert.equal(staged.res.json.ok, true, staged.res.text);
+  const waiting = (await ok(d.api.get('/api/packs'), 'packs')).quarantined;
+  assert.deepEqual(waiting.map((q) => [q.name, (q.elements || []).map((e) => [e.name, e.anchors])]), [[PACK, [[TYPE, ['element', 'page']]]]],
+    'the quarantine card lists both kinds');
+  const out = await approveFromFrame(d.srv, { name: PACK, tier: 'local' });
+  assert.equal(out.doc.status, 200);
+  const line = out.desc.lines.find((l) => l.startsWith(`Element type ${TYPE} — `));
+  assert.ok(line, JSON.stringify(out.desc.lines));
+  assert.ok(line.startsWith(`Element type ${TYPE} — schema ${TYPE}@1 · anchors element, page`), line);
+  assert.equal(out.res.status, 200, JSON.stringify(out.res.body));
+  assert.deepEqual(out.res.body, { ok: true, said: `Installed ${PACK}: ${TYPE}` });
+  const row = (await ok(d.api.get('/api/elements/types'), 'types')).types.find((r) => r.type === TYPE);
+  assert.ok(row, 'listed once approved');
+  assert.deepEqual(row.anchors, ['element', 'page']);
+  assert.deepEqual(d.srv.elementTypes.descriptor(TYPE).anchors, ['element', 'page'], 'the daemon\'s check reads both kinds');
+
+  const arrow = strokes.pageRecord({
+    frame: { w: 1200, h: 2400 },
+    from: { item: MOUNT, x: 0.5, y: 0.5, w: 600, h: 200 },
+    to: { item: 'sp2', x: 0.25, y: 0.5, w: 600, h: 200 },
+  });
+  const margin = strokes.pageRecord({
+    frame: { w: 1200, h: 2400 },
+    from: { item: MOUNT, x: 1.1, y: 0.2, w: 600, h: 200 },
+    to: { item: MOUNT, x: 1.2, y: 0.8, w: 600, h: 200 },
+  });
+  assert.ok(strokes.isPageRecord(arrow) && strokes.isPageRecord(margin), 'U613\'s closed shape');
+  assert.equal(strokes.pageShape(arrow), 'between');
+  assert.equal(strokes.pageShape(margin), 'beside');
+
+  const a = (await ok(d.anonApi.post('/api/elements', strokeBody(arrow, { under: 'wcu625 the arrow' })), 'POST the arrow')).element;
+  assert.equal(a.type, TYPE);
+  assert.match(a.id, /^p/, 'a plug-in id');
+  assert.deepStrictEqual(a.anchor, arrow, 'the page record kept as given');
+  assert.equal(a.shared, false, 'stored private (AD5)');
+  const m = (await ok(d.anonApi.post('/api/elements', strokeBody(margin, { under: 'wcu625 the margin stroke' })), 'POST the margin stroke')).element;
+  assert.deepStrictEqual(m.anchor, margin);
+
+  const anchor = svgRecord();
+  const e = (await ok(d.anonApi.post('/api/elements', strokeBody(anchor, { under: 'wcu625 on the svg' })), 'POST an element-anchored stroke')).element;
+  assert.equal(e.anchor.kind, 'element', 'an element anchor still accepted');
+  assert.deepEqual(d.srv.state.elements, [`${a.id}@1`, `${m.id}@1`, `${e.id}@1`], 'each reference on the surface');
+
+  const local = await ok(d.anonApi.get(`/api/elements?type=${TYPE}`), 'GET for the host\'s browser');
+  assert.deepEqual(local.elements.map((x) => [x.id, x.anchor.kind, x.shared]).sort(),
+    [[a.id, 'page', false], [m.id, 'page', false], [e.id, 'element', false]].sort(), 'listed, the page strokes beside the element one');
+  const tool = await call('GET', `/api/elements?type=${TYPE}`);
+  assert.equal(tool.status, 200);
+  for (const id of [a.id, m.id, e.id]) assert.ok(!has(tool.body, id), `GET /api/elements for lib/client: ${id} private, dropped`);
+
+  // A kind it still does not declare is refused by U623's check.
+  const range = { v: 1, kind: 'range', mount: MOUNT, start: { path: [0], offset: 0 }, end: { path: [0], offset: 1 } };
+  const r = await d.anonApi.post('/api/elements', strokeBody(range));
+  assert.equal(r.status, 400, r.text);
+  assert.deepEqual([r.json.error, r.json.type, r.json.kind, r.json.declared], ['anchor-kind-undeclared', TYPE, 'range', ['element', 'page']]);
 });

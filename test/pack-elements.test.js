@@ -718,3 +718,31 @@ test('glyph: an unknown leader, a non-boolean detach and an extra key are refuse
     assert.ok(v.errors.some((e) => re.test(e)), `${JSON.stringify(glyph)}: ${v.errors.join(' | ')}`);
   }
 });
+
+// ── the fixture strokes pack declares the page (tranche 5, U625) ────────────
+// DECISIONS.md C5: a type declares the anchor kinds it accepts. The checked-in
+// test-support/element-packs/strokes-fixture validates through the one
+// manifest path with anchors ['element', 'page'] (no error, no warning); a
+// box-placed type cannot drop 'element' for 'page' alone — place 'box' sizes
+// the marker to an element target (lib/packs/elements.js's place rule).
+test('U625: the strokes fixture\'s manifest validates with anchors [element, page]; place box with anchors [page] alone is refused, naming the rule', () => {
+  const stage = path.join(__dirname, '..', 'test-support', 'element-packs', 'strokes-fixture');
+  const m = validateManifest(parseManifest(stage), { stageDir: stage });
+  assert.equal(m.ok, true, m.errors.join('; '));
+  assert.deepStrictEqual(m.warnings, []);
+  assert.deepStrictEqual(m.elements.map((e) => [e.name, e.schema, e.reads, e.anchors]), [['scribble', 'scribble@1', ['scribble@1'], ['element', 'page']]]);
+  const d = m.elements[0].descriptor;
+  assert.deepStrictEqual([d.input, d.place, d.private], ['strokes', 'box', true]);
+
+  const read = readElementJson(path.join(stage, 'elements', 'scribble'));
+  assert.equal(read.ok, true);
+  const pageOnly = validateElement({ ...read.raw, anchors: ['page'] }, { stageDir: stage, name: 'scribble' });
+  assert.equal(pageOnly.ok, false);
+  assert.equal(pageOnly.descriptor, null);
+  assert.ok(pageOnly.errors.some((e) => /^element "scribble": "place"/.test(e) && /"box" sizes the marker to an element target, so the type's "anchors" must include "element" \(got \["page"\]\)/.test(e)),
+    pageOnly.errors.join(' | '));
+  // The same place with 'page' AND 'element' is the fixture as shipped.
+  const both = validateElement({ ...read.raw, anchors: ['page', 'element'] }, { stageDir: stage, name: 'scribble' });
+  assert.equal(both.ok, true, both.errors.join('; '));
+  assert.deepStrictEqual(both.descriptor.anchors, ['page', 'element'], 'kept in the order written');
+});

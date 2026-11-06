@@ -1209,3 +1209,70 @@ test('WIPE@either-end (U623): a Wipe that removes A keeps an arrow from A to B w
   await ok(e.api.post('/api/graph/wipe', {}), 'wipe A and B');
   assert.deepStrictEqual(e.srv.state.elements || [], [], 'none of its items is left: dropped');
 });
+
+// ── the fixture strokes pack's page kind (tranche 5, U625) ──────────────────
+// RULED KIND@declared-check (a), over U623's check above: an inline copy of
+// test-support/element-packs/strokes-fixture — its manifest, element.json,
+// draw.js and icons, byte for byte, but for element.json's anchors cut back to
+// ['element'] (the fixture before U625) — is installed through the reviewed
+// approve path; a page stroke written to it (lib/core/strokes pageRecord) is
+// refused 400 anchor-kind-undeclared and nothing is written, while an element
+// stroke is accepted. The checked-in fixture (anchors ['element', 'page'])
+// takes the same page stroke.
+const FIXTURE_DIR = path.join(__dirname, '..', 'test-support', 'element-packs', 'strokes-fixture');
+function stageFixtureCopy(d, { anchors } = {}) {
+  const typeDir = path.join(FIXTURE_DIR, 'elements', 'scribble');
+  const json = JSON.parse(fs.readFileSync(path.join(typeDir, 'element.json'), 'utf8'));
+  if (anchors) json.anchors = anchors;
+  const extraFiles = { 'elements/scribble/element.json': JSON.stringify(json, null, 2) + '\n' };
+  for (const f of fs.readdirSync(typeDir)) if (f !== 'element.json') extraFiles[`elements/scribble/${f}`] = fs.readFileSync(path.join(typeDir, f), 'utf8');
+  const manifest = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, 'web-chat-pack.json'), 'utf8'));
+  const stageDir = packFixture({ name: manifest.name, version: manifest.version, components: [], skill: false, manifest, extraFiles });
+  pluginPacks.installFromStage({ stageDir, source: { via: 'test' }, tier: 'local', root: d.root, via: 'approve' });
+  d.srv.elementTypes.invalidate();
+  return json;
+}
+const FIXTURE_STROKE = (anchor) => ({
+  type: 'scribble', anchor,
+  payload: { shared: false, tool: 'pen', width: 0.01, colour: 'accent', points: [0.1, 0.2, 0.5, 0, 0.3, 0.4, 0.5, 8], stride: 4, aspect: 2 },
+});
+
+test('U625: a page stroke on an inline copy of the strokes fixture staged with anchors [\'element\'] → 400 anchor-kind-undeclared, nothing written; an element stroke accepted; the checked-in fixture (element, page) takes the page stroke', async (t) => {
+  const d = await withServer(t);
+  const { api, srv } = d;
+  const json = stageFixtureCopy(d, { anchors: ['element'] });
+  assert.deepStrictEqual(json.anchors, ['element']);
+  assert.equal(json.place, 'box', 'the copy still boxes its marker, which needs element');
+  assert.deepStrictEqual(srv.elementTypes.descriptor('scribble').anchors, ['element'], 'the daemon reads the copy\'s declaration');
+  await render(api, 'm1');
+  await render(api, 'm2');
+  const arrow = PAGE_ARROW('m1', 'm2');
+  const ids = () => [...srv.elements.log.ids()];
+  const before = { ids: ids(), refs: srv.state.elements ? srv.state.elements.slice() : [], bytes: logBytes(d.root) };
+
+  for (const anchor of [arrow, PAGE_MARGIN('m1')]) {
+    const r = await api.post('/api/elements', FIXTURE_STROKE(anchor));
+    assert.equal(r.status, 400, r.text);
+    const { hint, ...rest } = r.json;
+    assert.deepStrictEqual(rest, { error: ANCHOR_KIND_ERROR, type: 'scribble', kind: 'page', declared: ['element'] });
+    assert.equal(hint, ANCHOR_KIND_HINT('scribble', ['element']));
+  }
+  assert.deepStrictEqual(ids(), before.ids, 'a refused write mints nothing');
+  assert.deepStrictEqual(srv.state.elements || [], before.refs, 'and puts no reference');
+  assert.equal(logBytes(d.root), before.bytes, 'and appends nothing');
+
+  const el = await ok(api.post('/api/elements', FIXTURE_STROKE(ELEMENT('m1'))), 'an element stroke on the copy');
+  assert.equal(el.element.anchor.kind, 'element');
+  assert.equal(el.element.shared, false);
+
+  // The checked-in fixture, as U625 leaves it, on a second surface.
+  const e = await withServer(t);
+  const shipped = stageFixtureCopy(e);
+  assert.deepStrictEqual(shipped.anchors, ['element', 'page']);
+  assert.deepStrictEqual(e.srv.elementTypes.descriptor('scribble').anchors, ['element', 'page']);
+  await render(e.api, 'm1');
+  await render(e.api, 'm2');
+  const page = await ok(e.api.post('/api/elements', FIXTURE_STROKE(arrow)), 'a page stroke on the checked-in fixture');
+  assert.deepStrictEqual(page.element.anchor, arrow, 'kept as given');
+  assert.deepStrictEqual(e.srv.state.elements, [`${page.element.id}@1`]);
+});
