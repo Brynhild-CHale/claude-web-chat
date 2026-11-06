@@ -561,7 +561,7 @@ test('addKnownSource: nothing of a source is serialized — JSON.stringify of a 
   r.addKnownSource(() => token, 'capture-token');
   r.text('consult it');
   assert.equal(JSON.stringify(r), '{}');
-  assert.deepEqual(Object.keys(r).sort(), ['addKnown', 'addKnownSource', 'knownFragmentAt', 'knownTailAt', 'patch', 'removeKnown', 'text', 'value', 'window']);
+  assert.deepEqual(Object.keys(r).sort(), ['addKnown', 'addKnownSource', 'knownFragmentAt', 'knownTailAt', 'patch', 'pinned', 'removeKnown', 'text', 'value', 'window']);
   assert.ok(Object.isFrozen(r));
   const util = require('node:util');
   assert.ok(!util.inspect(r, { depth: 5, showHidden: true }).includes(token));
@@ -612,4 +612,146 @@ test('adversarial command strings finish in linear time', (t) => {
     if (PERF) assert.ok(took < 500, `${name}: ${took.toFixed(0)} ms for 100 KB`);
   }
   t.diagnostic(`slowest adversarial command: ${worst[0]} at ${worst[1].toFixed(1)} ms for 100 KB`);
+});
+
+// ── pinned(): one known set per response (U634, K.5 J2, C-13) ──────────────
+
+// A source that answers null until `flip` is set, then `value`: maxAgeMs 0,
+// so the live redactor consults it on every call.
+function flipping(value) {
+  const s = { calls: 0, on: false };
+  s.fn = () => { s.calls++; return s.on ? value : null; };
+  return s;
+}
+
+test('pinned(): consults each due source once, and answers every method under that set while the live redactor answers the new one', () => {
+  const token = 'pinned-view-token-0123456789abcdef';
+  const r = createRedactor({ now: () => 7 });
+  const src = flipping(token);
+  r.addKnownSource(src.fn, 'capture-token', { maxAgeMs: 0 });
+  const other = flipping('other-source-value-abcdefgh');
+  r.addKnownSource(other.fn, 'other', { maxAgeMs: 0 });
+  const view = r.pinned();
+  assert.equal(src.calls, 1, 'one consult of each due source, at the pin');
+  assert.equal(other.calls, 1);
+  src.on = true;
+  // The view never consults again, and answers the set it pinned (token unknown).
+  const line = `a ${token} b`;
+  assert.equal(view.text(line), line);
+  assert.deepEqual(view.value({ k: token }), { k: token });
+  assert.equal(view.window(`${line}\n`), `${line}\n`);
+  assert.ok(view.patch(`@@ -1 +1 @@\n-x\n+${token}\n`).includes(token));
+  assert.equal(view.knownTailAt(token.slice(-12)), 0);
+  assert.deepEqual(view.knownFragmentAt(token.slice(3, 15)), { n: 0, mark: null });
+  assert.equal(src.calls, 1, 'the view consults nothing');
+  // The live redactor consults and answers the new set.
+  assert.equal(r.text(line), `a ${MASK('capture-token')} b`);
+  assert.ok(!JSON.stringify(r.value({ k: token })).includes(token));
+  assert.ok(!r.window(`${line}\n`).includes(token));
+  assert.ok(!r.patch(`@@ -1 +1 @@\n-x\n+${token}\n`).includes(token));
+  assert.equal(r.knownTailAt(`${token.slice(-12)} tail`), 12);
+  assert.deepEqual(r.knownFragmentAt(token.slice(3, 15)), { n: 12, mark: MASK('capture-token') });
+  // A view pinned now holds the token, and keeps it after the source drops it.
+  const later = r.pinned();
+  src.on = false;
+  assert.equal(later.text(line), `a ${MASK('capture-token')} b`);
+  assert.equal(later.knownTailAt(`${token.slice(-12)} tail`), 12);
+  assert.equal(r.text(line), line, 'the live redactor follows the drop');
+  // A caller's known merges with the pinned pairs, as with the live ones.
+  assert.equal(later.text(`${line} extra-known-value-1234`, { known: [['extra-known-value-1234', 'email']] }),
+    `a ${MASK('capture-token')} b ${MASK('email')}`);
+  assert.equal(view.text('x extra-known-value-1234', { known: ['extra-known-value-1234'] }), `x ${MASK('known')}`);
+});
+
+test('pinned().run(fn): the instance answers the pinned set inside fn and the live set after it, a throw included', () => {
+  const token = 'run-scope-token-0123456789abcdef';
+  const r = createRedactor({ now: () => 7 });
+  const src = flipping(token);
+  r.addKnownSource(src.fn, 'capture-token', { maxAgeMs: 0 });
+  const view = r.pinned();
+  src.on = true;
+  const line = `x ${token}`;
+  const calls = src.calls;
+  const inside = view.run(() => [r.text(line), r.value({ a: token }).a, r.knownTailAt(token.slice(-10)), r.knownFragmentAt(token.slice(2, 14)).n]);
+  assert.deepEqual(inside, [line, token, 0, 0], 'every call of the instance answers the pinned set');
+  assert.equal(src.calls, calls, 'no consult inside a run');
+  assert.equal(r.text(line), `x ${MASK('capture-token')}`, 'the live set after it');
+  // A throw restores the live set and propagates.
+  assert.throws(() => view.run(() => { assert.equal(r.text(line), line); throw new Error('boom'); }), /boom/);
+  assert.equal(r.text(line), `x ${MASK('capture-token')}`, 'restored after a throw');
+  // A pinned() called inside a run pins the run's set.
+  const inner = view.run(() => r.pinned());
+  assert.equal(inner.text(line), line);
+  // run answers fn's value; a non-function is a TypeError.
+  assert.equal(view.run(() => 42), 42);
+  assert.throws(() => view.run('nope'), TypeError);
+});
+
+test('pinned().run: nested runs restore in order', () => {
+  const token = 'nested-run-token-0123456789abcdef';
+  const r = createRedactor({ now: () => 7 });
+  const src = flipping(token);
+  r.addKnownSource(src.fn, 'capture-token', { maxAgeMs: 0 });
+  const without = r.pinned();
+  src.on = true;
+  const withToken = r.pinned();
+  src.on = false;
+  const line = `x ${token}`;
+  const masked = `x ${MASK('capture-token')}`;
+  const seen = [];
+  withToken.run(() => {
+    seen.push(r.text(line));
+    without.run(() => {
+      seen.push(r.text(line));
+      withToken.run(() => seen.push(r.text(line)));
+      seen.push(r.text(line));
+    });
+    seen.push(r.text(line));
+  });
+  seen.push(r.text(line));
+  assert.deepEqual(seen, [masked, line, masked, line, masked, line]);
+});
+
+test('pinned().run: a fn returning a promise throws a TypeError, and the set is restored', async () => {
+  const token = 'async-run-token-0123456789abcdef';
+  const r = createRedactor({ now: () => 7 });
+  const src = flipping(token);
+  r.addKnownSource(src.fn, 'capture-token', { maxAgeMs: 0 });
+  const view = r.pinned();
+  src.on = true;
+  let after = null;
+  assert.throws(() => view.run(async () => { await null; after = r.text(`x ${token}`); }), TypeError);
+  assert.throws(() => view.run(() => ({ then() {} })), TypeError, 'any thenable');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(after, `x ${MASK('capture-token')}`, 'the async body after its await answered the live set: the scope never crossed it');
+  assert.equal(r.text(`x ${token}`), `x ${MASK('capture-token')}`);
+});
+
+test('pinned().run: addKnown and removeKnown inside a run apply at the next unpinned call', () => {
+  const r = createRedactor({ now: () => 7 });
+  r.addKnown('removed-value-0123456789', 'email');
+  const view = r.pinned();
+  view.run(() => {
+    assert.equal(r.addKnown('added-in-run-0123456789', 'org'), true);
+    assert.equal(r.removeKnown('removed-value-0123456789'), true);
+    assert.equal(r.text('a added-in-run-0123456789'), 'a added-in-run-0123456789', 'not inside the run');
+    assert.equal(r.text('b removed-value-0123456789'), `b ${MASK('email')}`);
+  });
+  assert.equal(r.text('a added-in-run-0123456789'), `a ${MASK('org')}`);
+  assert.equal(r.text('b removed-value-0123456789'), 'b removed-value-0123456789');
+  assert.equal(view.text('b removed-value-0123456789'), `b ${MASK('email')}`, 'the view keeps its set');
+});
+
+test('pinned(): nothing of the set serialises — JSON.stringify of a view is {}, and the view is frozen', () => {
+  const token = fake('json-key-hex-token').secrets[0];
+  const r = createRedactor({ now: () => 5 });
+  r.addKnownSource(() => token, 'capture-token');
+  r.addKnown('someone.person@example.com', 'email');
+  const view = r.pinned();
+  assert.equal(JSON.stringify(view), '{}');
+  assert.ok(Object.isFrozen(view));
+  assert.deepEqual(Object.keys(view).sort(), ['knownFragmentAt', 'knownTailAt', 'patch', 'run', 'text', 'value', 'window']);
+  const util = require('node:util');
+  const shown = util.inspect(view, { depth: 5, showHidden: true });
+  assert.ok(!shown.includes(token) && !shown.includes('someone.person'));
 });
