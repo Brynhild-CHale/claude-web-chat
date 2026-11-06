@@ -515,7 +515,8 @@ test('inspect_capture: the picture\'s capture returns [text, image]; capture_id 
   const cap = pictures(srv)[0];
   const png = fs.readFileSync(path.join(d.root, '.web-chat', 'captures', `${cap.id}.png`));
   assert.equal(sha(Buffer.from(first.content[1].data, 'base64')), sha(png));
-  const meta = JSON.parse(first.content[0].text);
+  // The text is the JSON, then (U619) the line naming the images (a blank line apart).
+  const meta = JSON.parse(first.content[0].text.split('\n\n')[0]);
   assert.equal(meta.id, cap.id);
   assert.equal(meta.element, a.id);
   assert.equal(meta.type, TYPE);
@@ -1205,4 +1206,117 @@ test('U618: a render that gives only the first shot leaves image ready and image
   const item = elementItems(srv)[0];
   assert.equal(item.image.state, 'ready');
   assert.equal(item.image.without, undefined);
+});
+
+// ── U619: inspect_capture hands both images ─────────────────────────────────
+// A stroke group's picture comes back as [text, with its ink, without it] and
+// ONE line of the text says which is which; a box grab's capture keeps its one
+// image; a second shot that did not land leaves the first alone, and the line
+// names the second's state. The tool's description and inputSchema are
+// catalogue 1.0.0's (the 503b8f2f test above holds both hashes).
+
+const jsonOf = (text) => JSON.parse(text.split('\n\n')[0]);
+const count = (text, sub) => text.split(sub).length - 1;
+
+test('U619: inspect_capture on a stroke group\'s picture → [text, image, image]: with its ink, then without it, both PNGs byte-equal to the two files, and one line says which is which (ids only, no stroke text)', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv, calls } = b;
+  const UNDER = 'wcu619 the shared ink text';
+  const a = await b.post({ dx: 0, under: UNDER });
+  const newest = await b.post({ dx: 0.05, under: UNDER });
+  await b.push();
+  const mcp = await launchMcp(t, { WEB_CHAT_PORT: String(d.port) });
+
+  const res = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: `element:${a.id}` } });
+  assert.ok(!res.isError, JSON.stringify(res));
+  assert.deepEqual(res.content.map((c) => c.type), ['text', 'image', 'image'], 'text, then with, then without');
+  assert.equal(calls.length, 1, 'one render for the pair');
+  const cap = pictures(srv)[0];
+  const dir = capturesDir(d);
+  const withPng = fs.readFileSync(path.join(dir, `${cap.id}.png`));
+  const withoutPng = fs.readFileSync(path.join(dir, `${cap.id}.without.png`));
+  assert.equal(res.content[1].data, withPng.toString('base64'), 'the first image is the picture with the ink');
+  assert.equal(res.content[2].data, withoutPng.toString('base64'), 'the second is the picture without it');
+  assert.notEqual(res.content[1].data, res.content[2].data);
+  for (const c of res.content.slice(1)) assert.equal(c.mimeType, 'image/png');
+
+  const text = res.content[0].text;
+  assert.equal(count(text, inspectCapture.PAIR_LINE), 1, 'the which-is-which line, once');
+  assert.ok(text.endsWith(inspectCapture.PAIR_LINE), text.slice(-200));
+  assert.match(inspectCapture.PAIR_LINE, /first image is the stroke group with its ink; the second is the same clip without this group's ink/);
+  assert.ok(!text.includes(UNDER), 'no stroke text in the text');
+  const meta = jsonOf(text);
+  assert.equal(meta.id, cap.id);
+  assert.equal(meta.element, newest.id, 'the url names the group\'s newest member');
+  assert.deepEqual(meta.elements, [`${a.id}@1`, `${newest.id}@1`]);
+  assert.equal(meta.image.state, 'ready');
+  assert.equal(meta.image.sha256, sha(withPng));
+  assert.equal(meta.image_without.state, 'ready');
+  assert.equal(meta.image_without.sha256, sha(withoutPng));
+  assert.equal(meta.data_without, undefined, 'the bytes ride the image block, never the text');
+
+  // The capture id itself: the same pair, no second render.
+  const own = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: cap.id } });
+  assert.deepEqual(own.content.map((c) => c.type), ['text', 'image', 'image']);
+  assert.equal(own.content[1].data, withPng.toString('base64'));
+  assert.equal(own.content[2].data, withoutPng.toString('base64'));
+  assert.equal(count(own.content[0].text, inspectCapture.PAIR_LINE), 1);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(elementItems(srv), [], 'Claude\'s request put no row on the rail (PICTURE@when)');
+});
+
+test('U619: a box grab\'s capture → [text, image], unchanged: its one picture, the text the JSON alone with no which-is-which line', async (t) => {
+  const b = await boot(t, { captureImpl: pairCapture() });
+  const { d, srv, calls } = b;
+  const body = {
+    type: 'box-grab',
+    anchor: { v: 1, kind: 'page', item: MOUNT, mount: MOUNT, rect: { x: 4, y: 6, w: 32, h: 20 }, viewport: { w: 1024, h: 700 } },
+    payload: {
+      rect: { x: 4, y: 6, w: 32, h: 20, item: MOUNT, viewport: { w: 1024, h: 700 } },
+      meta: { item_path: `#${MOUNT}`, element_path: 'p.prose', html: '<p class="prose">The chart the user marked.</p>', mode: 'light', viewport: { w: 1024, h: 700 } },
+    },
+    device: 'desktop',
+  };
+  const g = (await ok(d.api.post('/api/elements', body), 'POST a box grab')).element;
+  assert.ok(g.grab && typeof g.grab.capture === 'string', JSON.stringify(g));
+  assert.equal((await settled(srv, g.grab.capture)).state, 'ready');
+  assert.ok(!calls.some((c) => c.second), 'a box grab asks for no second shot');
+  const png = fs.readFileSync(path.join(capturesDir(d), `${g.grab.capture}.png`));
+  const mcp = await launchMcp(t, { WEB_CHAT_PORT: String(d.port) });
+  const res = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: g.grab.capture } });
+  assert.ok(!res.isError, JSON.stringify(res));
+  assert.deepEqual(res.content.map((c) => c.type), ['text', 'image']);
+  assert.equal(res.content[1].data, png.toString('base64'));
+  assert.equal(res.content[1].mimeType, 'image/png');
+  const text = res.content[0].text;
+  assert.ok(!text.includes(inspectCapture.PAIR_LINE) && !/same clip without/.test(text), 'no which-is-which line');
+  const meta = JSON.parse(text);
+  assert.equal(meta.element, g.id);
+  assert.equal(meta.image.sha256, sha(png));
+  assert.equal(meta.image_without, undefined);
+});
+
+test('U619: a picture whose second shot failed → [text, image]: the picture with its ink alone, and the line names the second\'s state and error', async (t) => {
+  const b = await boot(t);
+  const { d, srv } = b;
+  const a = await b.post({ dx: 0 });
+  const mcp = await launchMcp(t, { WEB_CHAT_PORT: String(d.port) });
+  const res = await mcp.callTool({ name: 'inspect_capture', arguments: { capture_id: `element:${a.id}` } });
+  assert.ok(!res.isError, JSON.stringify(res));
+  assert.deepEqual(res.content.map((c) => c.type), ['text', 'image'], 'the with-image alone');
+  const cap = pictures(srv)[0];
+  assert.deepEqual(captureOf(srv, cap.id).image_without, { state: 'failed', error: WITHOUT_FAILED_ERROR });
+  const png = fs.readFileSync(path.join(capturesDir(d), `${cap.id}.png`));
+  assert.equal(res.content[1].data, png.toString('base64'), 'the one image is the picture with the ink');
+  const text = res.content[0].text;
+  const line = inspectCapture.withoutLine({ state: 'failed', error: WITHOUT_FAILED_ERROR });
+  assert.equal(count(text, line), 1, 'the line, once');
+  assert.ok(text.endsWith(line));
+  assert.match(line, /without this group's ink is not attached: its state is failed \(/);
+  assert.ok(line.includes(WITHOUT_FAILED_ERROR));
+  assert.ok(!text.includes(inspectCapture.PAIR_LINE), 'never the pair line without the pair');
+  assert.equal(jsonOf(text).image_without.state, 'failed');
+  // The line's own forms: a record with no second names `none`; a hint-only state names the state.
+  assert.match(inspectCapture.withoutLine(undefined), /its state is none\.$/);
+  assert.match(inspectCapture.withoutLine({ state: 'gone' }), /its state is gone\.$/);
 });
