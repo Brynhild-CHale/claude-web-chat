@@ -17,7 +17,10 @@
 //     lines, one per NAMES entry it has a value for, nothing for a missing
 //     source;
 //   * fixture.js's copy keeps every file's mtime and refuses a target root
-//     that is not empty; its head read follows a worktree's git files.
+//     that is not empty; its head read follows a worktree's git files;
+//   * the strokes rows (U641): the drive's per-frame stroke counters are in
+//     NAMES, stroke_failures is judged at max 0, and every soak pane carries
+//     an svg (the drive's strokes themselves: test/element-packs-stage.test.js).
 //
 // And opt-in (WEB_CHAT_E2E_SOAK=1 with SOAK_SH set, through e2eGate; CI never
 // sets it): run.sh --minutes 2 in a tmp --out writes report.json with passed
@@ -199,7 +202,28 @@ test('sample.js formatSample: nothing for a missing source, and nothing for a va
   assert.deepEqual(noDaemons, { daemons_per_root: 0 }, 'an empty registry is 0, a missing one nothing');
 });
 
+test('the strokes rows (U641): sample.js prints the drive\'s three per-frame stroke counters, thresholds.json judges stroke_failures at max 0, and drive.js counts each', () => {
+  for (const k of ['stroke_writes', 'stroke_failures', 'stroke_writes_element', 'stroke_writes_pane', 'stroke_writes_page']) {
+    assert.ok(sample.DRIVE_NAMES.includes(k), `${k} is a drive counter sample.js prints`);
+    assert.ok(require('../scripts/soak/drive').COUNTERS.includes(k), `${k} is one drive.js keeps`);
+  }
+  assert.deepEqual(Object.keys(RESOLVED.stroke_failures).filter((k) => !k.startsWith('_')), ['max']);
+  assert.equal(RESOLVED.stroke_failures.max, 0, 'a refused stroke is a fault (RULED I4 a)');
+  for (const k of ['stroke_writes', 'stroke_writes_element', 'stroke_writes_pane', 'stroke_writes_page']) {
+    assert.equal(k in RESOLVED, false, `${k} is read from report.json's counters, not judged`);
+  }
+});
+
 // ── fixture.js ───────────────────────────────────────────────────────────────
+
+test('fixture.js paneHtml carries one inline svg, a fixed-aspect target for the drive\'s element-anchored stroke', () => {
+  for (const id of fixture.PANES) {
+    const html = fixture.paneHtml(id, 'd1');
+    assert.equal((html.match(/<svg\b/g) || []).length, 1, `${id}: one svg`);
+    assert.match(html, /<svg [^>]*viewBox="0 0 \d+ \d+"/, 'with a viewBox (its aspect)');
+    assert.match(html, /^<section class="soak">[\s\S]*<\/section>$/, 'one outermost element, the pane frame\'s record');
+  }
+});
 
 test('fixture.js copyFixture keeps every file\'s mtime and refuses a target that is not empty', () => {
   const dir = tmp('wc-soak-copy-');

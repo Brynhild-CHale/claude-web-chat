@@ -3,6 +3,7 @@
   "reconnect_failures": {"max": 0, "_why": "every dropped surface socket gets its hello back within 5 s (drive.js RECONNECT_MS)"},
   "restart_failures": {"max": 0, "_why": "every restart (stop.js then start.js, each 5 minutes) answers within 10 s (drive.js RESTART_MS)"},
   "write_failures": {"max": 0, "_why": "no render, markdown, element, spawn/close or turn write the drive makes is refused or lost"},
+  "stroke_failures": {"max": 0, "_why": "the drive strokes only the strokes fixture's own type (the listed row whose pack fixture.json names), with the stroke shape it knows — an element-anchored, a pane-frame and a page-frame stroke a cycle, each private and undone — so a refused write, undo or DELETE is a fault (U641; RULED I4 a). stroke_writes and the per-frame counters above 0 are read from report.json's counters, not judged here"},
   "script_errors": {"max": 0, "_why": "no pane script throws at mount (kind script-error in the event log since the soak began)"},
   "viewers": {"_max_from": "drive:sockets", "_why": "the daemon counts exactly the drive's sockets: a socket that outlives its close is a leak (scripts/soak/lib.js DRIVE_SOCKETS, read at run time)"},
   "mirror_parsed": {"_max_from": "retention:parsed-conversations-max", "_why": "the parsed-conversation budget holds: never more conversations parsed than the retention table's parsed-conversations-max (lib/server/mirror/retention.js valueOf, read at run time)"},

@@ -11,11 +11,29 @@
 //     PANES, MD_ID — the page the fixture primed);
 //   * writes an element — a highlight over a rendered pane's text through POST
 //     /api/elements, its range anchor built as test/element-routes.test.js
-//     builds one; and a stroke of the strokes fixture's type when the daemon
-//     lists a non-built-in type — and undoes it (POST /api/elements/undo,
-//     U518). A 404 there, before U518 merges, counts `undo_missing` and the
-//     highlight is removed with DELETE /api/elements/:id instead, so the soak's
-//     page does not grow by one highlight a minute;
+//     builds one — and undoes it (POST /api/elements/undo, U518). A 404 there,
+//     before U518 merges, counts `undo_missing` and the highlight is removed
+//     with DELETE /api/elements/:id instead, so the soak's page does not grow
+//     by one highlight a minute;
+//   * strokes (strokeStep, U641) with the strokes fixture's type — the listed
+//     type whose pack is the one fixture.json names, never another — in three
+//     frames: an element-anchored stroke on a pane's svg, a pane-frame stroke
+//     (the pane's outermost element's record) and one page-frame stroke, an
+//     arrow between two panes on odd cycles and a margin stroke beside a pane
+//     on even ones. The bodies are test-support/element-packs strokeBodies',
+//     built once; each stroke is PRIVATE (shared false: no rail item, K.5 J2)
+//     and written as the local browser writes one (a local Origin, the
+//     socket's, so the daemon reads the writer as 'user' and the writer sees
+//     its private stroke), then undone at once — POST /api/elements/undo {}
+//     for the element and pane strokes, {item} (the arrow's to item, the
+//     margin stroke's item) for the page one — with DELETE /api/elements/:id
+//     when the undo fails. Counted as stroke_writes (the total) and
+//     stroke_writes_element / _pane / _page (the type's row is the listing's,
+//     so its own name rides each body); a refused write, undo or DELETE is
+//     stroke_failures + 1, its status and body in drive.log (judged:
+//     thresholds.json, max 0). No
+//     pack listed, or the helper or jsdom missing, strokes nothing and counts
+//     nothing;
 //   * spawns a child pane under a soak pane and closes it (POST /api/pane/spawn
 //     and /api/pane/close; a lib/client request is a local caller that is not
 //     a browser, which the pane-stamp rule lets through);
@@ -55,11 +73,22 @@ const RESTART_EVERY = DRIVE_RESTART_EVERY; // cycles: a restart and a Set active
 const RECONNECT_MS = 5 * 1000;
 const RESTART_MS = 10 * 1000;
 const CALL_MS = 15 * 1000;
+// strokeBodies' fixed boxes (jsdom lays nothing out): #main's content box at
+// pen-down for a page stroke's points, and each item's box for its endpoints.
+const STROKE_FRAME = Object.freeze({ w: 1200, h: 2400 });
+const STROKE_ITEM_BOX = Object.freeze({ w: 600, h: 240 });
+// The panes the strokes go on: element and pane strokes on STROKE_MOUNT, the
+// arrow from ARROW_FROM to ARROW_TO, the margin stroke beside MARGIN_ITEM.
+const STROKE_MOUNT = PANES[1];
+const ARROW_FROM = PANES[0];
+const ARROW_TO = PANES[1];
+const MARGIN_ITEM = PANES[2];
 
 const COUNTERS = Object.freeze([
   'cycles', 'turns', 'reconnects', 'reconnect_failures', 'restarts', 'restart_failures',
   'element_writes', 'undo_ok', 'undo_missing', 'write_failures', 'nav_reads', 'nav_failures',
   'spawn_close_ok', 'set_active_ok', 'set_active_failures', 'stroke_writes', 'stroke_failures',
+  'stroke_writes_element', 'stroke_writes_pane', 'stroke_writes_page',
   'mirror_reads', 'mirror_read_failures',
 ]);
 
@@ -147,26 +176,73 @@ function createDrive(cfg, { cycleMs = CYCLE_MS, log = (line) => console.log(line
     }
   }
 
-  // A stroke of the first non-built-in type the daemon lists (the strokes
-  // fixture, U565). Its payload keys are the type's own; a refusal counts
-  // `stroke_failures`, recorded and not judged, so a type this drive does not
-  // know never fails the soak.
-  async function strokeStep() {
-    let types = [];
-    try { types = ((await client.get('/api/elements/types', opts())).types || []).filter((t) => t && t.builtin === false); } catch { return; }
-    if (!types.length) return;
-    const t = types[0];
-    const anchorKind = (t.anchors || []).includes('point') ? 'point' : 'range';
-    const anchor = anchorKind === 'range' ? rangeAnchor(PANES[1]) : { v: 1, kind: 'point', mount: PANES[1], x: 0.5, y: 0.5 };
+  // ── the strokes (see the head of this file) ──
+  const fx = readFixtureRecord(cfg);
+  const strokePack = fx && typeof fx.pack === 'string' && fx.pack ? fx.pack : null;
+  let strokeKit = null;
+  if (strokePack) {
     try {
-      const r = await client.post('/api/elements', { type: t.type, anchor, payload: { points: [[0.1, 0.1, 0.5], [0.4, 0.3, 0.6], [0.7, 0.5, 0.5]] } }, opts());
-      counts.stroke_writes += 1;
-      const id = r && r.element && r.element.id;
-      if (id) { try { await client.post('/api/elements/undo', {}, opts()); } catch { await client.api('DELETE', `/api/elements/${encodeURIComponent(id)}`, null, opts()).catch(() => {}); } }
+      const packs = require('../../test-support/element-packs');
+      strokeKit = packs.strokeBodies({
+        type: packs.STROKES_FIXTURE_TYPE, mount: STROKE_MOUNT, html: paneHtml(STROKE_MOUNT, 'd0'),
+        arrowFrom: ARROW_FROM, arrowTo: ARROW_TO, marginItem: MARGIN_ITEM,
+        frame: STROKE_FRAME, itemBox: STROKE_ITEM_BOX,
+      });
+    } catch (e) {
+      log(`drive: no strokes this soak — the stroke bodies could not be built: ${e && e.message}`);
+      strokeKit = null;
+    }
+  }
+  // A browser's write: the socket's local Origin (lib/core/cors isLocalOrigin).
+  const asBrowser = () => ({ ...opts(), headers: { origin: `http://localhost:${cfg.port}` } });
+  const refused = (e) => (e && e.status ? `${e.status} ${JSON.stringify(e.body)}` : (e && e.message) || String(e));
+  let strokeN = 0;
+
+  // One stroke: POST it, then undo it at once (DELETE when the undo fails).
+  async function strokeOnce(type, frame, body, undoBody) {
+    let id = null;
+    try {
+      const r = await client.post('/api/elements', { ...body, type }, asBrowser());
+      id = r && r.element && r.element.id;
+      if (!id) throw new Error(`no element in the answer: ${JSON.stringify(r)}`);
     } catch (e) {
       counts.stroke_failures += 1;
-      log(`drive: stroke of ${t.type} refused: ${e && e.status} ${JSON.stringify(e && e.body)}`);
+      log(`drive: ${frame} stroke of ${type} refused: ${refused(e)}`);
+      return;
     }
+    counts.stroke_writes += 1;
+    counts[`stroke_writes_${frame}`] += 1;
+    try {
+      const u = await client.post('/api/elements/undo', undoBody, asBrowser());
+      if (u && u.undone && u.undone.id === id) return;
+      throw new Error(`undid ${JSON.stringify(u && u.undone)}, not ${id}`);
+    } catch (e) {
+      counts.stroke_failures += 1;
+      log(`drive: undo of the ${frame} stroke ${id} refused (${refused(e)}); deleting it`);
+      try { await client.api('DELETE', `/api/elements/${encodeURIComponent(id)}`, null, asBrowser()); } catch (d) {
+        counts.stroke_failures += 1;
+        log(`drive: DELETE of the ${frame} stroke ${id} refused: ${refused(d)}`);
+      }
+    }
+  }
+
+  // The element, pane and one page stroke (the arrow on odd calls, the margin
+  // stroke on even ones), each written and undone.
+  async function strokeStep() {
+    if (!strokeKit) return;
+    let row = null;
+    try {
+      row = ((await client.get('/api/elements/types', opts())).types || []).find((t) => t && t.builtin === false && t.pack === strokePack) || null;
+    } catch { return; }
+    if (!row) return;
+    strokeN += 1;
+    const page = strokeN % 2 === 1
+      ? { body: strokeKit.arrow, undo: { item: ARROW_TO } }
+      : { body: strokeKit.margin, undo: { item: MARGIN_ITEM } };
+    await strokeOnce(row.type, 'element', strokeKit.element, {});
+    await strokeOnce(row.type, 'pane', strokeKit.pane, {});
+    await strokeOnce(row.type, 'page', page.body, page.undo);
+    save();
   }
 
   async function spawnStep() {
@@ -201,7 +277,6 @@ function createDrive(cfg, { cycleMs = CYCLE_MS, log = (line) => console.log(line
     }
   }
 
-  const fx = readFixtureRecord(cfg);
   const conversations = fx && Number.isInteger(fx.conversations) && fx.conversations > 0 ? fx.conversations : CONVERSATIONS;
   async function readConversation(n) {
     const sid = sessionIdOf(n % conversations);
@@ -288,7 +363,7 @@ function createDrive(cfg, { cycleMs = CYCLE_MS, log = (line) => console.log(line
     await close();
   }
 
-  return { run, stop, counts, cycle, save };
+  return { run, stop, counts, cycle, save, strokeStep };
 }
 
 async function main() {
@@ -305,4 +380,7 @@ async function main() {
 
 if (require.main === module) runMain(main);
 
-module.exports = { createDrive, COUNTERS, CYCLE_MS, RESTART_EVERY, RECONNECT_MS, RESTART_MS, rangeAnchor };
+module.exports = {
+  createDrive, COUNTERS, CYCLE_MS, RESTART_EVERY, RECONNECT_MS, RESTART_MS, rangeAnchor,
+  STROKE_FRAME, STROKE_ITEM_BOX, STROKE_MOUNT, ARROW_FROM, ARROW_TO, MARGIN_ITEM,
+};
