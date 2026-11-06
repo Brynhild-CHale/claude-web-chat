@@ -676,3 +676,67 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     assert.deepStrictEqual(out.groups.map((g) => g.element_ids), [['a1', 'a2'], ['a3', 'b1'], ['c1']], 'a3 left A; order kept');
   });
 }
+
+// ── replaceDescribe appends a refresh no entry covers (U633b, 5B.3; RULED QUEUE@refresh-after-drop G6 = a) ──
+{
+  const { replaceDescribe, reshapedSummary } = require('../lib/channel/policy');
+  const A = { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2], element_ids: ['a1', 'a2'] };
+  const B = { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05], element_ids: ['b1'] };
+  const C = { shape: 'strike', confidence: 0.6, count: 1, bbox: [0.0, 0.9, 0.1, 0.05], element_ids: ['c1'] };
+  const folded = (...groups) => {
+    let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+    for (const { bbox: b } of groups) { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[0] + b[2]); y1 = Math.max(y1, b[1] + b[3]); }
+    const r = (v) => Math.round(v * 1e4) / 1e4;
+    const top = groups[groups.length - 1];
+    return { shape: top.shape, confidence: top.confidence, count: groups.reduce((n, g) => n + g.count, 0), bbox: [r(x0), r(y0), r(x1 - x0), r(y1 - y0)], groups };
+  };
+  const A2 = { shape: 'check', confidence: 0.7, count: 1, bbox: [0.2, 0.0, 0.1, 0.3], element_ids: ['a2'] };
+
+  test('replaceDescribe: no listed entry meets a held member\'s ids → its entry appended as a fold appends a raise, the top level re-derived', () => {
+    const members = ['a1', 'a2', 'b1', 'c1'];
+    const two = replaceDescribe(folded(A, B, C), members, null, ['a1']);
+    assert.deepStrictEqual(two, folded(B, C), 'a1 left: A\'s whole entry went, a2 held with no guess');
+    const out = replaceDescribe(two, ['a2', 'b1', 'c1'], A2, ['a2']);
+    assert.deepStrictEqual(out, folded(B, C, A2), 'appended last; B and C kept in order; count summed, bbox the union, the newest\'s shape on top');
+    // groups_dropped rides as the fold's.
+    const capped = { ...two, groups_dropped: 2 };
+    assert.deepStrictEqual(replaceDescribe(capped, ['a2', 'b1', 'c1'], A2, ['a2']), { ...folded(B, C, A2), groups_dropped: 2 });
+    // A refresh of an id the item never held is not this item's: the prior itself.
+    assert.equal(replaceDescribe(two, ['a2', 'b1', 'c1'], { ...A2, element_ids: ['zz'] }, ['zz']), two);
+  });
+
+  test('replaceDescribe: a drop that leaves one entry keeps the ids it covers beside it (no field), so a later refresh of an uncovered member appends', () => {
+    const one = replaceDescribe(folded(A, B), ['a1', 'a2', 'b1'], null, ['a1']);
+    assert.deepStrictEqual(one, { shape: B.shape, confidence: B.confidence, count: B.count, bbox: B.bbox }, 'the four fields alone, as U633 left them');
+    const out = replaceDescribe(one, ['a2', 'b1'], A2, ['a2']);
+    assert.deepStrictEqual(out, folded(B, A2), 'B\'s guess still listed beside A\'s refreshed entry');
+    // The covered member's own edit still replaces in place.
+    const nb = replaceDescribe(one, ['a2', 'b1'], { ...B, shape: 'strike' }, ['b1']);
+    assert.deepStrictEqual(nb, { shape: 'strike', confidence: B.confidence, count: B.count, bbox: B.bbox });
+    // ... and that result keeps its own cover: a2's edit then appends.
+    assert.deepStrictEqual(replaceDescribe(nb, ['a2', 'b1'], A2, ['a2']).groups.map((g) => [g.shape, g.element_ids]), [['strike', ['b1']], ['check', ['a2']]]);
+    // An uncovered member leaving changes nothing (its group's guess already went).
+    assert.equal(replaceDescribe(one, ['a2', 'b1'], null, ['a2']), one);
+    // A one-entry describe this function never returned (a raise's, a restored
+    // draft's): the fold's rule — it covers every member it was handed — so the
+    // edit replaces it, as U633 does.
+    const plain = { shape: B.shape, confidence: B.confidence, count: B.count, bbox: B.bbox.slice() };
+    assert.deepStrictEqual(replaceDescribe(plain, ['a2', 'b1'], A2, ['a2']), { shape: 'check', confidence: 0.7, count: 1, bbox: [0.2, 0.0, 0.1, 0.3] });
+    // Never on the wire: the result's JSON names no ids.
+    assert.ok(!JSON.stringify(one).includes('b1'));
+  });
+
+  test('reshapedSummary swaps the newest entry\'s shape words for the refreshed one\'s, one part, nothing else', () => {
+    const was = { shape: 'circle', confidence: 0.8, count: 2, bbox: [0, 0, 1, 1] };
+    const now = { ...was, shape: 'cross' };
+    assert.equal(reshapedSummary('Ink · circle · 2 strokes · a2@1', was, now), 'Ink · cross · 2 strokes · a2@1');
+    assert.equal(reshapedSummary('Ink · from pa to pb · circle · 2 strokes · a2@1 · "circle · 2 strokes"', was, now),
+      'Ink · from pa to pb · cross · 2 strokes · a2@1 · "circle · 2 strokes"', 'the first whole part only; quoted words untouched');
+    assert.equal(reshapedSummary('Ink ×2', was, now), 'Ink ×2', 'no shape words: unchanged');
+    assert.equal(reshapedSummary('Ink · circle · 2 strokesX · a2@1', was, now), 'Ink · circle · 2 strokesX · a2@1', 'only a whole part');
+    assert.equal(reshapedSummary('Ink · circle · 2 strokes · a2@1', folded({ ...was, element_ids: ['x'] }, { ...B }), now),
+      'Ink · circle · 2 strokes · a2@1', 'the words looked for are the prior\'s NEWEST entry\'s (underline here)');
+    assert.equal(reshapedSummary('Ink · underline · 1 stroke · b1@1', folded({ ...was, element_ids: ['x'] }, { ...B }), folded({ ...was, element_ids: ['x'] }, { ...B, count: 2, element_ids: ['b0', 'b1'] })),
+      'Ink · underline · 2 strokes · b1@1');
+  });
+}

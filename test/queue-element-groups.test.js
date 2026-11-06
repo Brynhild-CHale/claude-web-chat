@@ -338,3 +338,67 @@ test('sendElement\'s "already queued" reads group membership', () => {
     assert.equal(JSON.stringify(queue.resendElement(s3.state, s3.bus, s3.it.id, { exists: () => true }).item.describe), whole);
   });
 }
+
+// ── a refresh after a partial leave, and the summary's shape words (U633b, 5B.3; RULED G6 = a, G7 = a) ──
+// A leaver drops its whole group's entry; a held member of that group then
+// edited is appended as a fold appends a raise, so every held group's guess
+// stays listed. An older member of the NEWEST group edited brings the
+// summary's shape words with it; an older group's edit leaves them.
+{
+  const { elementItem } = require('../lib/channel/policy');
+  const stroke = (id, describe, v = 1) => ({ ...elementItem({ kind: 'element', type: 'ink', op: 'add', id, v, shared: true, has: true, mount: 'm1' },
+    { wake: true, label: 'Ink', describe }), label: 'Ink' });
+  const A = { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2], element_ids: ['a1', 'a2'] };
+  const B = { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05], element_ids: ['b1'] };
+  function twoGroups() {
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A, count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A));
+    queue.enqueueElement(state, bus, stroke('b1', B));
+    return { state, bus, it: state.queue[0] };
+  }
+
+  test('a folded A+B item, a1 leaves, a2 edited → B\'s guess still listed beside A\'s refreshed entry', () => {
+    const { state, bus, it } = twoGroups();
+    queue.removeByElement(state, bus, 'a1');
+    assert.deepStrictEqual(it.describe, { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05] }, 'A\'s entry went with a1 (U633)');
+    const seen = [];
+    bus.subscribe((e) => { if (e.kind === 'queue' && e.item) seen.push(e.item); });
+    queue.refreshElement(state, bus, 'a2', stroke('a2', { shape: 'check', confidence: 0.7, count: 1, bbox: [0.2, 0.0, 0.1, 0.3], element_ids: ['a2'] }, 2));
+    assert.ok(it.describe.groups, 'two guesses: a list');
+    assert.deepStrictEqual(it.describe.groups.map((g) => [g.shape, g.element_ids]), [['underline', ['b1']], ['check', ['a2']]], 'B kept, A\'s refreshed entry appended');
+    assert.equal(it.describe.count, 2);
+    assert.deepStrictEqual(it.describe.bbox, [0.2, 0, 0.6, 0.65]);
+    assert.deepStrictEqual(seen.at(-1).describe, it.describe, 'the update frame carries it');
+    assert.equal(it.summary, 'Ink ×2', 'the leaver\'s summary has no shape words to follow');
+    // A second edit of a2 now meets its own entry: replaced in place, B untouched.
+    queue.refreshElement(state, bus, 'a2', stroke('a2', { shape: 'cross', confidence: 0.6, count: 1, bbox: [0.2, 0.0, 0.1, 0.3], element_ids: ['a2'] }, 3));
+    assert.deepStrictEqual(it.describe.groups.map((g) => [g.shape, g.element_ids]), [['underline', ['b1']], ['cross', ['a2']]]);
+  });
+
+  test('an unfolded two-stroke item: the older member edited → the summary\'s shape words follow the refreshed describe', () => {
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A, count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A));
+    const [it] = state.queue;
+    assert.equal(it.summary, 'Ink · circle · 2 strokes · a2@1');
+    queue.refreshElement(state, bus, 'a1', stroke('a1', { ...A, shape: 'cross' }, 2));
+    assert.equal(it.describe.shape, 'cross');
+    assert.equal(it.summary, 'Ink · cross · 2 strokes · a2@1', 'the line and describe.shape agree; v and the id part kept');
+    assert.equal(it.v, 1, 'the newest\'s version kept');
+    assert.equal(it.element_id, 'a2');
+  });
+
+  test('a folded item: an older GROUP\'s member edited → the summary is the newest raise\'s words, unchanged', () => {
+    const { state, bus, it } = twoGroups();
+    const { summary, why_wake } = it;
+    assert.equal(summary, 'Ink · underline · 1 stroke · b1@1');
+    queue.refreshElement(state, bus, 'a1', stroke('a1', { ...A, shape: 'cross' }, 2));
+    assert.equal(it.describe.groups[0].shape, 'cross');
+    assert.equal(it.describe.shape, 'underline', 'the newest group\'s shape on top');
+    assert.equal(it.summary, summary);
+    assert.equal(it.why_wake, why_wake);
+  });
+}
