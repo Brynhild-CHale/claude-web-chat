@@ -333,3 +333,29 @@ test('live GET /api/captures names no private member after the un-share, for eve
     assert.equal(entry.image_without.state, 'withdrawn');
   }
 });
+
+// ── GET /api/captures/:id/raw (inspect_capture) ─────────────────────────────
+
+test('GET /api/captures/:id/raw below seesPrivate: after a Wipe the record comes from the committed node, and its url names no private member — it falls back as box-grab.js withdrawFrom writes it; the local browser reads it as committed', async (t) => {
+  const s = await committedThenUnshared(t);
+  await ok(s.d.api.post('/api/graph/wipe', {}), 'wipe');
+  await settle();
+  assert.equal(captureOf(s.srv, s.cap), undefined, 'the live picture is gone: findCapture reaches the committed node');
+  const route = `/api/captures/${encodeURIComponent(s.cap)}/raw`;
+  for (const [who, read] of s.below) {
+    for (const q of ['', '?query=wcu620']) {
+      const r = await read(route + q);
+      assert.equal(r.status, 200, `${who} ${q}: ${JSON.stringify(r.body)}`);
+      const text = JSON.stringify(r.body);
+      assert.ok(!namesId(text, s.priv.id), `${who} ${q}: names the private member: ${text}`);
+      assert.equal(r.body.id, s.cap);
+      assert.equal(r.body.url, `element:${s.kept[s.kept.length - 1].id}`, `${who} ${q}: the url falls back to the newest kept member`);
+      assert.equal(r.body.url, s.live.url, `${who} ${q}: as box-grab.js withdrawFrom wrote the live one`);
+    }
+  }
+  const r = await s.d.anonApi.get(route);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.url, s.committed.url, 'the local browser reads the url as committed');
+  assert.deepEqual(clone(s.node.captures.find((c) => c.id === s.cap)), s.committed, 'the node in memory is as committed');
+  assert.equal(fs.readFileSync(s.nodeFile, 'utf8'), s.fileBefore, 'the node file is untouched');
+});
