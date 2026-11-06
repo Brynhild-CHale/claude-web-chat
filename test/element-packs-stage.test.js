@@ -198,6 +198,11 @@ test('(3) the drive\'s strokeStep, twice, over the staged fixture: an element, a
 
 test('(3b) the drive strokes nothing when fixture.json names no pack, or names one the daemon does not list', async (t) => {
   const d = await withServer(t, { root: tmpRoot('wc-u641-nopack-') });
+  // The fixture's type IS listed (a non-built-in row), so a drive that took
+  // the first non-built-in type instead of the named pack's would stroke it.
+  await renderPanes(d);
+  await stageAndApprove(d);
+  assert.ok((await ok(d.api.get('/api/elements/types'), 'types')).types.some((r) => r.builtin === false && r.pack === NAME), 'a plug-in type is listed');
   const soakRoot = tmpRoot('wc-u641-nopack-soak-');
   const cfg = { root: soakRoot, out: soakRoot, port: d.port, project: d.root };
   const none = drive.createDrive(cfg, { log: () => {} });
