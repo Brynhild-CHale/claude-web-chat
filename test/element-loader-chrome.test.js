@@ -380,8 +380,11 @@ test('while previewing no create runs and no write affordance is drawn', async (
     default: (g, ctx) => {
       drawn.push(ctx.previewing);
       g.container.textContent = '';
-      const b = W.document.createElement(ctx.previewing ? 'span' : 'button');
+      // A write control is a div with role button: a marker holds only the
+      // allowlist's elements (U632, H8 = a: no <button>).
+      const b = W.document.createElement(ctx.previewing ? 'span' : 'div');
       b.className = ctx.previewing ? 'sticker-view' : 'sticker-write';
+      if (!ctx.previewing) b.setAttribute('role', 'button');
       g.container.appendChild(b);
     },
     create: (input) => { if (input.phase === 'click') made.push(input.mount); },
@@ -400,7 +403,7 @@ test('while previewing no create runs and no write affordance is drawn', async (
     // Live: the tool creates, and the type draws its write control.
     realOv.setElements('live', rows);
     await waitUntil(() => { flush(); return marker(); }, { what: 'the live marker' });
-    assert.ok(marker().querySelector('button.sticker-write'));
+    assert.ok(marker().querySelector('div.sticker-write[role="button"]'));
     realOv.setArmed('sticker');
     tap(lead, 71);
     assert.deepStrictEqual(made, ['p1'], 'live, a press creates');
@@ -411,7 +414,7 @@ test('while previewing no create runs and no write affordance is drawn', async (
     await waitUntil(() => { flush(); return drawn.includes(true) && marker(); }, { what: 'the preview marker' });
     tap(lead, 72);
     assert.deepStrictEqual(made, [], 'no create while previewing');
-    assert.equal(marker().querySelector('button'), null, 'no write affordance in a preview');
+    assert.equal(marker().querySelector('.sticker-write'), null, 'no write affordance in a preview');
     assert.ok(marker().querySelector('.sticker-view'));
   } finally {
     realOv.setArmed(null);

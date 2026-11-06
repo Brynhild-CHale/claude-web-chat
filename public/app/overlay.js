@@ -217,6 +217,38 @@ export const PLACE_MODES = Object.freeze(['glyph', 'box']);
 // as ctx.blend. A type with no composite has no group.blend, and the layer is
 // hidden while it holds no container.
 export const COMPOSITE_MODES = Object.freeze(['multiply']);
+// THE MARKER ALLOWLIST (U632; CHROME@element-module-reach's engine half,
+// DECISIONS.md K.2-245; RULED CHROME@csp C3 = a, U632@allowlist-elements H8 =
+// a, U632@post-draw-writes H7 = a). After every type's draw returns
+// (runDraw) and after every move returns (applyGroup), built-in or plug-in
+// alike, the overlay walks the group's containers — group.container and, for
+// a type that declares composite, group.blend — each one's own attributes and
+// every descendant (an open shadow root's too). An element is kept only when
+// it is one of MARKER_ALLOWLIST.svg in the SVG namespace or .html in the XHTML
+// namespace (localName and namespaceURI, never tagName text); any other is
+// removed with its subtree. An attribute is removed when its localName is
+// href, src or srcset (any namespace: xlink:href too) or starts with `on`; and,
+// on every attribute but the inert text ones (MARKER_INERT_ATTRS: title,
+// role, class, id, aria-*, data-* — a comment's title holds the user's text,
+// and no browser fetches from them), when its value holds `url(` or
+// `image-set(` (any case), `javascript:` once ASCII whitespace is taken out,
+// or a backslash (a CSS escape: style and every SVG presentation attribute
+// are read as CSS). A container's own style the type made refused is put
+// back to what the overlay wrote before the call (its placement). What passed
+// stays drawn (never draw-failed); each removed node and attribute is counted
+// in stats().dom_refused, and the type is named once per page load on the
+// console. This narrows the DOM channel only: a write a module makes after its
+// draw returns (a timer, a later callback) is code-level reach — the pack
+// check's reading and the surface page's Content-Security-Policy-Report-Only
+// header's measurement (lib/core/cors.js SURFACE_CSP_REPORT_ONLY) — and a type
+// in the chrome realm keeps the chrome's reach (K.5 K2): pack review and
+// approve are the boundary. The walk runs per draw and per move, never per
+// pointer sample (the wet layer is not a marker).
+export const MARKER_ALLOWLIST = Object.freeze({
+  svg: Object.freeze(['svg', 'g', 'path', 'line', 'polyline', 'circle', 'rect']),
+  html: Object.freeze(['div', 'span']),
+});
+export const MARKER_INERT_ATTRS = Object.freeze(['title', 'role', 'class', 'id', 'aria-*', 'data-*']);
 // The create ctx's own keys (toolCtx): no registerCreateCtx name may take one.
 // `settings` (U512c): settings() → the armed type and profile's frozen
 // {small, large} as they stood at the gesture's start (toolbar-state.js
@@ -422,7 +454,7 @@ let typesApi = null;
 let typesLoading = false;
 const RAW_READ = Object.freeze({ raw: true });
 
-const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0 };
+const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0, dom_refused: 0 };
 const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
 // The page host's record: its pointer state is live from the start (a tool may
 // be armed before initOverlay); initOverlay gives it its layer and registers
@@ -1297,9 +1329,6 @@ function sigOf(h, gs) {
     return a ? `${own}:${a.state}~${a.how}~${a.explain}~${a.note}` : own;
   }).join(',')).join('|');
 }
-function hostOfGroup(g) {
-  return (g && g.host && registry.get(g.host)) || pageHost;
-}
 // One delegated click on each layer for every marker: a carried guess, or a
 // section fallback (K.2-74), is offered to the re-anchor seam; `how` says
 // which (a host's group also names its host).
@@ -1315,11 +1344,12 @@ function onLayerClick(ev) {
   }
 }
 // A box group's ctx also carries `box`: {w, h}, the target's rect at the last
-// measure, read live (the same frozen object answers the newest measure).
+// measure, read live (the same frozen object answers the newest measure). No
+// ctx carries the host's layer (U632, H9 = a: withdrawn in both realms, one
+// draw-ctx shape): a type writes only into its group's containers.
 function drawCtx(g) {
-  const h = hostOfGroup(g);
   const ctx = {
-    layer: h ? h.layer : layer, host: g.host || 'page', scope: g.scope, glyph: g.glyph, previewing: view.previewing,
+    host: g.host || 'page', scope: g.scope, glyph: g.glyph, previewing: view.previewing,
     rectOf: (x) => cfg.rectOf(x),
     rectsOf: (range) => (range && typeof range.getClientRects === 'function' ? [...range.getClientRects()] : []),
   };
@@ -1327,11 +1357,14 @@ function drawCtx(g) {
   if (g.blend) ctx.blend = g.blend;
   return ctx;
 }
-// A type's draw into its group's container; false (the container gone, the
-// failure recorded) when it threw.
+// A type's draw into its group's container, walked by the marker allowlist
+// once it returns; false (the container gone, the failure recorded) when it
+// threw.
 function runDraw(g, t) {
   try {
+    const before = stylesOf(g);
     t.draw(g, drawCtx(g));
+    reachWalk(g, before, 'draw');
     return true;
   } catch (err) {
     console.error(`[web-chat] overlay: the '${g.type}' draw failed`, err);
@@ -1342,6 +1375,65 @@ function runDraw(g, t) {
     for (const it of g.items) failed.set(it.id, { type: g.type, error: String((err && err.message) || err) });
     return false;
   }
+}
+// THE MARKER ALLOWLIST's walk (the header's paragraph). allowlistWalk(root,
+// style?) → the nodes and attributes it removed under root (root's own
+// attributes included; `style` is what root's style is put back to when the
+// walk refuses it, else it is removed). reachWalk(g, before, what) walks both
+// of a group's containers, counts, and names the type once.
+const XHTML_NS = 'http://www.w3.org/1999/xhtml';
+const MARKER_EL = new Map([[SVG_NS, new Set(MARKER_ALLOWLIST.svg)], [XHTML_NS, new Set(MARKER_ALLOWLIST.html)]]);
+const URL_NAMES = new Set(['href', 'src', 'srcset']);
+const INERT_NAMES = new Set(MARKER_INERT_ATTRS.filter((n) => !n.endsWith('*')));
+const ASCII_WS = /[\t\n\f\r ]/g;
+const domWarned = new Set();
+function refusedValue(v) {
+  const x = v.toLowerCase();
+  return x.includes('url(') || x.includes('image-set(') || x.includes('\\') || x.replace(ASCII_WS, '').includes('javascript:');
+}
+function refusedAttr(a) {
+  const n = a.localName.toLowerCase();
+  if (URL_NAMES.has(n) || n.startsWith('on')) return true;
+  if (INERT_NAMES.has(n) || n.startsWith('aria-') || n.startsWith('data-')) return false;
+  return refusedValue(a.value);
+}
+function walkAttrs(el, style) {
+  let n = 0;
+  const as = el.attributes;
+  for (let i = as.length - 1; i >= 0; i--) {
+    const a = as[i];
+    if (!refusedAttr(a)) continue;
+    n++;
+    if (style && a.localName === 'style' && !a.namespaceURI && !refusedValue(style)) el.setAttribute('style', style);
+    else el.removeAttributeNode(a);
+  }
+  return n;
+}
+export function allowlistWalk(root, style) {
+  if (!root || root.nodeType !== 1) return 0;
+  let n = walkAttrs(root, typeof style === 'string' ? style : null);
+  const stack = [...root.children];
+  if (root.shadowRoot) stack.push(...root.shadowRoot.children);
+  while (stack.length) {
+    const el = stack.pop();
+    const ok = MARKER_EL.get(el.namespaceURI);
+    if (!ok || !ok.has(el.localName)) { el.remove(); n++; continue; }
+    n += walkAttrs(el, null);
+    for (const c of el.children) stack.push(c);
+    if (el.shadowRoot) stack.push(...el.shadowRoot.children);
+  }
+  return n;
+}
+function stylesOf(g) {
+  return [g.container ? g.container.getAttribute('style') || '' : '', g.blend ? g.blend.getAttribute('style') || '' : ''];
+}
+function reachWalk(g, before, what) {
+  const n = allowlistWalk(g.container, before[0]) + allowlistWalk(g.blend, before[1]);
+  if (!n) return;
+  totals.dom_refused += n;
+  if (domWarned.has(g.type)) return;
+  domWarned.add(g.type);
+  console.warn(`[web-chat] overlay: the '${g.type}' ${what} wrote what the marker allowlist refuses; removed`);
 }
 function rebuild(h, gs) {
   const layer = h.layer;
@@ -1994,9 +2086,11 @@ function applyGroup(g, m) {
   c.style.display = '';
   if (g.detach) placeLeader(g, m);
   if (t && t.move) {
+    const before = stylesOf(g);
     try { t.move(g, { ...drawCtx(g), x: m.x, y: m.y, clip: m.clip }); } catch (err) {
       console.error(`[web-chat] overlay: the '${g.type}' move failed`, err);
     }
+    reachWalk(g, before, 'move');
   }
 }
 
@@ -2118,6 +2212,7 @@ export function stats(name) {
     draw_failed: failed.size,
     listening: !!(pageHost && pageHost.listeningOn),
     well_resizes: totals.well_resizes,
+    dom_refused: totals.dom_refused,
   };
   if (name === 'page') out.frame_hidden = lastPass.frame_hidden;
   return out;
