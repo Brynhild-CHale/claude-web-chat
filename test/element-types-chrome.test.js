@@ -407,7 +407,10 @@ test('sendToClaude(id): one POST to /api/elements/<id>/send with the device clai
     assert.equal(sent().length, n0 + 1, 'exactly one request');
     const call = sent().at(-1);
     assert.equal(call.url, '/api/elements/h5/send');
-    assert.deepEqual(call.body, { device: deviceKind() }, 'the device claim, nothing else');
+    // U618 (PICTURE@viewer-viewport): the viewer's viewport rides beside the device claim, nothing else.
+    const viewport = { w: Math.round(W.innerWidth || 0), h: Math.round(W.innerHeight || 0), mobile: deviceKind() === 'mobile' };
+    assert.ok(viewport.w > 0 && viewport.h > 0, 'the shell has a viewport');
+    assert.deepEqual(call.body, { viewport, device: deviceKind() }, 'the viewport and the device claim, nothing else');
     assert.deepEqual([a.ok, a.already, a.element.shared, a.item.id, a.note], [true, false, true, 'q3', ET.SENT_NOTE]);
     const b = await ET.sendToClaude('c9');
     assert.deepEqual([b.ok, b.already, b.note], [true, true, ET.ALREADY_NOTE]);

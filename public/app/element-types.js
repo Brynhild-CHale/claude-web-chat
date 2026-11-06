@@ -177,6 +177,7 @@ import { request } from './http.js';
 import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
+import { isPhone } from './viewport.js';
 import { READONLY_HINT, showReaimNote } from './topbar.js';
 import { toolbarState, settingsOf, onToolbarChange, settingsSnapshot, defaultSettings } from './toolbar-state.js';
 import { mediaOf as assetMediaOf } from './element-assets.js';
@@ -758,7 +759,10 @@ export function maySend() {
 export async function sendToClaude(id, { note } = {}) {
   return trayAction(async () => {
     if (id == null || id === '') return { ok: false, hint: SEND_FAILED };
-    const r = await request('POST', sendPath(id), { body: {}, device: true });
+    // The viewer's viewport rides beside the device claim (U618,
+    // PICTURE@viewer-viewport): a stroke's picture renders at it.
+    const viewport = { w: Math.round(window.innerWidth || 0), h: Math.round(window.innerHeight || 0), mobile: isPhone() };
+    const r = await request('POST', sendPath(id), { body: { viewport }, device: true });
     if (!r.ok) return { ok: false, status: r.status, hint: r.hint || SEND_FAILED };
     const b = r.body && typeof r.body === 'object' ? r.body : {};
     const already = b.already === true;
