@@ -1490,3 +1490,22 @@ test('a page stroke of an opting type: its group.blend at the union box, beside 
   assert.equal(g.blend.parentNode, blendLayerOf(win));
   assert.deepStrictEqual(styleOfEl(g.blend), styleOfEl(m), 'placed and masked as its marker');
 });
+
+// A re-draw (a replay step's elements.draw, a fresh payload) rebuilds every
+// group: the blend layer is emptied with the markers', so no stale blend part
+// of an earlier build stays painted at its old place (U624 review).
+test('a re-draw rebuilds the blend parts: the blend layer holds only the new group.blend, mirrored', async () => {
+  const p = blendPayload();
+  const { win, spy } = openBlend(p);
+  await settled(win);
+  const first = spy.group.blend;
+  assert.ok(first && first.parentNode === blendLayerOf(win));
+  win.__wcMount.elements.draw(blendPayload());
+  await settled(win);
+  const L = blendLayerOf(win);
+  const now = spy.group.blend;
+  assert.ok(now && now !== first, 'a new blend part for the new build');
+  assert.deepStrictEqual([...L.querySelectorAll('.el-blend')], [now], 'the earlier build\'s blend part is gone');
+  assert.equal(first.isConnected, false);
+  assert.deepStrictEqual(styleOfEl(now), styleOfEl(markerOf(win, 'b1')), 'placed as its marker');
+});
