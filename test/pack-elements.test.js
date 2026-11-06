@@ -746,3 +746,58 @@ test('U625: the strokes fixture\'s manifest validates with anchors [element, pag
   assert.equal(both.ok, true, both.errors.join('; '));
   assert.deepStrictEqual(both.descriptor.anchors, ['page', 'element'], 'kept in the order written');
 });
+
+// ── the blend seam's manifest field (U624; HIGHLIGHTER@blend-seam, H4 = b) ─────
+// element.json's `composite: 'multiply'` (lib/packs/elements COMPOSITE_MODES):
+// a box type's group gets a second container, group.blend, on the overlay's
+// blend layer. Validated here (any other value refused naming the field; a
+// type not placed 'box' refused, since only a box marker has the part);
+// absent is none, as before. Accepted, it is kept as written in the
+// descriptor and so rides the listing row's toolbar bag (every key that is
+// not a ROW_KEYS key), which is what the chrome reads beside input and place.
+const BLEND_DESC = (extra) => ({ type: 'marker-pen', family: 'page', remote: { see: 'read', send: 'full' }, schema: 'marker-pen@1',
+  anchors: ['element'], input: 'strokes', place: 'box', ...extra });
+test('composite \'multiply\' validates on a box type and is kept as written; it rides the listing row\'s toolbar bag; absent passes with no field', () => {
+  const { COMPOSITE_MODES, TOOLBAR_KEYS } = require('../lib/packs/elements');
+  const { ROW_KEYS } = require('../lib/server/element-types');
+  assert.deepStrictEqual(COMPOSITE_MODES, ['multiply']);
+  assert.ok(Object.isFrozen(COMPOSITE_MODES));
+  assert.ok(TOOLBAR_KEYS.includes('composite'), 'a toolbar field, kept as written');
+  assert.ok(!ROW_KEYS.includes('composite'), 'not a row key: the listing carries it in toolbar, beside input and place');
+  const v = validateElement(BLEND_DESC({ composite: 'multiply' }), { name: 'marker-pen' });
+  assert.deepStrictEqual([v.ok, v.errors], [true, []]);
+  assert.ok(!v.warnings.some((w) => /composite/.test(w)), 'checked, so no "this build does not check" warning');
+  assert.equal(v.descriptor.composite, 'multiply', 'kept as written');
+  const absent = validateElement(BLEND_DESC({}), { name: 'marker-pen' });
+  assert.deepStrictEqual([absent.ok, absent.errors], [true, []]);
+  assert.equal('composite' in absent.descriptor, false, 'absent: no blend, today\'s behaviour');
+});
+
+test('composite: \'screen\', \'overlay\' and any other value are refused naming the field; on a type not placed \'box\' it is refused', () => {
+  for (const composite of ['screen', 'overlay', 'normal', 'MULTIPLY', true, 1, null, { mode: 'multiply' }]) {
+    const v = validateElement(BLEND_DESC({ composite }), { name: 'marker-pen' });
+    assert.equal(v.ok, false, JSON.stringify(composite));
+    assert.equal(v.descriptor, null);
+    assert.ok(v.errors.some((e) => /"composite" must be multiply, or left out for none/.test(e)),
+      `${JSON.stringify(composite)}: ${v.errors.join(' | ')}`);
+  }
+  for (const place of [undefined, 'glyph']) {
+    const desc = BLEND_DESC({ composite: 'multiply' });
+    if (place === undefined) delete desc.place; else desc.place = place;
+    const v = validateElement(desc, { name: 'marker-pen' });
+    assert.equal(v.ok, false, `place ${place}`);
+    assert.ok(v.errors.some((e) => /"composite" "multiply" blends a box marker's second container, so the type's "place" must be "box"/.test(e)),
+      `place ${place}: ${v.errors.join(' | ')}`);
+  }
+});
+
+test('composite through validateManifest: the staged element\'s descriptor carries it, so what review saw is what the listing serves', () => {
+  const dir = elementPack({ name: 'blend-pack', elements: [el('marker-pen', { json: { anchors: ['element'], input: 'strokes', place: 'box',
+    composite: 'multiply', payload: PAYLOAD } })] });
+  const m = validateManifest(parseManifest(dir), { stageDir: dir });
+  assert.equal(m.ok, true, m.errors.join(' | '));
+  assert.deepStrictEqual(m.warnings, []);
+  const staged = m.elements.find((e) => e.name === 'marker-pen');
+  assert.ok(staged, 'the element is staged');
+  assert.equal(staged.descriptor.composite, 'multiply');
+});
