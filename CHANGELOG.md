@@ -212,6 +212,103 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`scripts/soak/run.sh`). This work's commits carry the trailer
   `Co-Authored-By: Claude Fable 5.1`; a few carry the implementing model's
   own line instead, left as written.
+- **Ink draws anywhere on the page now, not only on a picture (0.9.0-alpha.5).**
+  A strokes tool draws on any pane (on its outermost block), in the page's
+  margins and, on a wide window, the gutters beside the column, and as an
+  arrow from one pane or markdown item to the next. Only a control or the
+  chrome refuses it, with the hint "Ink draws anywhere on the page but on a
+  control or the chrome; over text it may drift when the text re-wraps". A
+  stroke follows its items: an arrow both of its ends, a margin stroke the
+  item nearest its pen-down, and how far a width change made it drift is
+  reported beside the stroke's marker. On a phone an arrow is drawn between
+  its stacked items (it turns vertical), and a margin stroke is drawn faded
+  at its guess and listed in the orphans card (⌘K *Orphaned elements*); a
+  pin that opens a shared margin stroke's picture is planned for
+  0.9.0-alpha.6. Previews, exports and replays draw page strokes too, and a
+  private stroke stays out of every reader that does not see private
+  elements, as before. While a strokes tool is armed (the box grab
+  included), one finger no longer scrolls or pinch-zooms anywhere on the
+  page: two fingers pan it, and a pane's own scroll box does not scroll
+  until the tool is put down.
+- **Claude gets a stroke group's picture as a pair, still only on request.**
+  `inspect_capture` on one of the group's elements, or your Send to Claude,
+  draws two images of the same clip in one browser session: the first with
+  the ink, the second without this group's ink (other groups and
+  annotations stay in both, a change picture still greys the group's older
+  members in both, and a private stroke is in neither); a stroke
+  from one pane to the next is clipped to both items. The second image is
+  kept beside the first as `.web-chat/captures/<capture>.without.png`,
+  deleted with it, and served by the picture route with `?which=without`.
+  A stroke picture's `inspect_capture` result is now its text, then the
+  two images; the text is the JSON, a blank line, then a line saying which
+  image is which, so a reader of `content[0].text` parses only the part
+  before the first blank line. Nothing is drawn on a wake.
+- **The highlighter blends with the page under it; the pen and the pencil
+  look as before.** An element type may now declare `"composite":
+  "multiply"` (a box-placed type only): the engine gives each of its markers
+  a second part in a blend layer of its own, multiply over a light page and
+  screen over a dark one, live and in documents, and only what the type
+  draws into that part blends. The ink pack 0.2.0 draws its highlighter
+  there and its pen and pencil into the marker as before, so only the
+  highlighter's look changes.
+- **The ink pack stays at the version you approved until you review its
+  next one.** This release does not install the ink pack 0.2.0. An approved
+  0.1.0 pack declares no page anchor, so it does not draw in the margins or
+  from one pane to the next: a pen-down there shows "This tool draws on
+  panes, images and canvases only; its pack does not draw in the margins
+  yet." Its highlighter does not blend. To use the margins, the arrow and
+  the blend, get the 0.2.0 pack and review it once more:
+  `claude-web-chat pack get <its link>`, then `pack review
+  brynhild-web-chat-ink` and `pack approve brynhild-web-chat-ink` (or ＋ →
+  Manage → **Download for review**, then Approve).
+- **The surface page sends a report-only Content-Security-Policy.** The
+  surface page now sends a Content-Security-Policy-Report-Only header: it
+  blocks nothing; violations appear in the browser console. Through the
+  tunnel the answer host's frames are reported there too; that is expected.
+- **Writing an element pack: a marker holds nine elements, and an anchor
+  kind must be declared.** A marker may hold only svg, g, path, line,
+  polyline, circle, rect, div and span; href, src, srcset, on* attributes
+  and url() or image-set() values are removed after every draw and move.
+  The draw and move ctx no longer carry `layer`: draw into
+  `group.container`, and a type that declares `composite` draws what blends
+  into `group.blend`. An element whose anchor's kind its type's
+  `element.json` does not list in `anchors` (a page stroke for a type that
+  declares only `element`) is refused 400 `anchor-kind-undeclared`, with a
+  hint.
+- **No protocol bump and no migration in 0.9.0-alpha.5.** The tunnel
+  portal's protocol stays 12 and the project schema stays 4: a running
+  portal needs no restart (it reads neither the private-element rules this
+  release widened nor the new header), and coming from 0.9.0-alpha.4 runs
+  no migration.
+- **Page strokes survive a rollback to 0.9.0-alpha.4, undrawn.** That
+  alpha keeps a page stroke in the element log and lists it, but never
+  draws it on the page and leaves it out of previews, exports and replays
+  (a stroke drawn on a pane still draws). It accepts the 0.2.0 ink pack's
+  `element.json` with a warning naming `composite` and ignores the field, so
+  the highlighter draws unblended. Its picture route serves the picture
+  with the ink for `?which=without`, its JSON answer has no `data_without`,
+  `image_without` rides the capture records unread and
+  `<capture>.without.png` stays on disk; `inspect_capture` answers the text
+  and one image. It sends no report-only header, walks no marker, and still
+  hands a type `ctx.layer`. Node ids, comment counts and the log are
+  unchanged, and the page strokes draw again when you come back.
+- **Alpha.5's restarts, for work on web-chat itself.** An edit to
+  `lib/core/strokes.js` needs `claude-web-chat restart` and a browser
+  refresh (it is memoised per process and served as `/app/strokes.js`). An
+  edit to `lib/core/element-log.js`, `lib/core/cors.js`, `lib/core/redact.js`,
+  `lib/core/remote-policy.js` (its `PRIVATE_RULES`), `lib/channel/policy.js`,
+  `lib/packs/elements.js`, `lib/replay/chrome.js`, `lib/server/index.js`,
+  `lib/server/box-grab.js`, `lib/server/preview.js`,
+  `lib/server/routes/elements.js`, `routes/element-picture.js`,
+  `routes/capture.js`, `routes/graph.js`, or
+  `lib/server/domain/{queue,element-refs,element-undo,annotation-impact,mounts}.js`
+  needs `claude-web-chat restart`; one to `lib/server/document-elements.js`
+  or `lib/server/runtime/elements-doc-src.js` needs the restart and a reload
+  of any open document (the runtime is memoised per process).
+  `public/app/target-frame.js`, `overlay.js`, `wet-layer.js`,
+  `input-mode.js`, `ink-describe.js`, `element-types.js`, `orphans.js` and
+  `public/app.css` need a browser refresh only. `lib/mcp/tools/inspect_capture.js`
+  needs `/exit` and a reopened Claude Code. Nothing needs a tunnel restart.
 
 ### Added
 
