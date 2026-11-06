@@ -42,7 +42,8 @@ const REGISTRY_NAMES = Object.freeze(['daemons_per_root']);
 const DRIVE_NAMES = Object.freeze([
   'reconnects', 'reconnect_failures', 'restarts', 'restart_failures', 'element_writes', 'undo_ok', 'undo_missing',
   'write_failures', 'turns', 'nav_reads', 'nav_failures', 'spawn_close_ok', 'set_active_ok', 'set_active_failures',
-  'stroke_writes', 'stroke_failures', 'mirror_reads', 'mirror_read_failures',
+  'stroke_writes', 'stroke_failures', 'stroke_writes_element', 'stroke_writes_pane', 'stroke_writes_page',
+  'mirror_reads', 'mirror_read_failures',
 ]);
 const EXTRA_NAMES = Object.freeze(['script_errors', 'pack_listed']);
 const NAMES = Object.freeze([...PROC_NAMES, ...HEALTH_NAMES, ...REGISTRY_NAMES, ...DRIVE_NAMES, ...EXTRA_NAMES]);

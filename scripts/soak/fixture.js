@@ -27,12 +27,20 @@
 // outside its sandbox, which here is the soak's HOME (WEB_CHAT_TEST_SANDBOX is
 // set to it in this process only, before the fixture is required).
 //
-// THE STROKES PACK (U565, wave 3): when <int>/test-support/element-packs/
-// strokes-fixture/ exists and <int>/test-support/element-packs exports
-// stageStrokesFixture(root) → {name}, the pack is staged into the project's
-// quarantine and approved through the control domain's 'pack-approve' row
-// (lib/server/control/pack-approve.js), as a person's confirm would. Absent,
-// the soak runs without it and sample.js prints pack_listed 0.
+// THE STROKES PACK (U565's fixture, U641): <int>/test-support/element-packs
+// exports stageStrokesFixture(root, {srv}) → {name, record} — the fixture
+// staged into the project's quarantine through the GitHub stand-in and POST
+// /api/packs/quarantine on the boot's own listener — and the pack is then
+// approved through the control domain's 'pack-approve' row
+// (lib/server/control/pack-approve.js), as a person's confirm would. The
+// record (fixture.json's `pack`) names it for drive.js, which strokes only
+// that pack's type. Absent, or a stage that throws (logged), the soak runs
+// without it and sample.js prints pack_listed 0.
+//
+// THE PANES each carry one small inline svg (paneHtml), so every soak pane
+// holds a fixed-aspect target for the drive's element-anchored stroke. The
+// primed cache is keyed by the head's sha, so a head with a different page
+// primes afresh.
 //
 //   node scripts/soak/fixture.js --root R --int <worktree> [--cache DIR] [--nodes 300] [--conversations 50]
 
@@ -53,6 +61,7 @@ const CALL = { timeout: 15000 };
 // ── the page the soak writes, turn after turn (drive.js writes the same) ────
 function paneHtml(id, n) {
   return `<section class="soak"><p class="lead">Hello world — ${id}, turn ${n}</p>`
+    + '<svg class="soak-mark" viewBox="0 0 40 20" width="80" height="40"><rect x="2" y="2" width="36" height="16" rx="3"></rect></svg>'
     + `<p>The soak re-renders this pane once a minute; its text changes so the turn commits a node.</p>`
     + `<ul><li>pane ${id}</li><li>turn ${n}</li></ul></section>`;
 }
@@ -203,17 +212,28 @@ async function seedConversations(cfg, srv, { count = CONVERSATIONS, intDir, log 
   return listed;
 }
 
-// The U565 seam (see the head of this file). → the staged pack's name, or null.
+// The strokes pack (see the head of this file). → the staged and approved
+// pack's name, or null (logged) when it cannot be staged.
 async function stageStrokes(cfg, srv, { intDir, log = console.log } = {}) {
   const dir = path.join(intDir, 'test-support', 'element-packs', 'strokes-fixture');
   if (!fs.existsSync(dir)) return null;
   let helper = null;
   try { helper = require(path.join(intDir, 'test-support', 'element-packs')); } catch { helper = null; }
   if (!helper || typeof helper.stageStrokesFixture !== 'function') {
-    log('soak fixture: strokes-fixture is present but test-support/element-packs exports no stageStrokesFixture(root) — running without it');
+    log('soak fixture: strokes-fixture is present but test-support/element-packs exports no stageStrokesFixture(root, {srv}) — running without it');
     return null;
   }
-  const staged = await helper.stageStrokesFixture(cfg.project);
+  // The forge is the loopback stand-in, never GitHub: the pack pipeline must
+  // not probe the gh program for it (lib/packs/gh available). This process is
+  // the fixture's one-shot (its env is the soak's own).
+  process.env.WEB_CHAT_NO_GH = '1';
+  let staged = null;
+  try {
+    staged = await helper.stageStrokesFixture(cfg.project, { srv });
+  } catch (e) {
+    log(`soak fixture: the strokes pack could not be staged — running without it: ${e && e.message}`);
+    return null;
+  }
   const name = staged && staged.name;
   if (!name) return null;
   await srv.controlStarted;
