@@ -230,3 +230,111 @@ test('sendElement\'s "already queued" reads group membership', () => {
   assert.equal(queue.queuedElementItem(state, 'h9'), null);
 });
 
+
+// ── a folded item's describe per group (U633, 5B.3; K.2-251) ─────────────────
+// The daemon composes each raise's describe over the stroke group's shared
+// members and names them (element_ids); a fold keeps one entry per group. An
+// edit (refreshElement), a leaver (removeByElement) and a re-send
+// (resendElement) change only the entry whose group the member is in.
+{
+  const { elementItem } = require('../lib/channel/policy');
+  // The daemon's dispatch puts the type's label on the item (dispatch above).
+  const stroke = (id, describe, v = 1) => ({ ...elementItem({ kind: 'element', type: 'ink', op: 'add', id, v, shared: true, has: true, mount: 'm1' },
+    { wake: true, label: 'Ink', describe }), label: 'Ink' });
+  const A = (bbox = [0.1, 0.1, 0.2, 0.2]) => ({ shape: 'circle', confidence: 0.8, count: 2, bbox, element_ids: ['a1', 'a2'] });
+  const B = (bbox = [0.5, 0.6, 0.3, 0.05]) => ({ shape: 'underline', confidence: 0.9, count: 1, bbox, element_ids: ['b1'] });
+  const keys = (d) => Object.keys(d).sort();
+  function twoGroups() {
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A(), count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A()));
+    queue.enqueueElement(state, bus, stroke('b1', B()));
+    const [it] = state.queue;
+    assert.deepStrictEqual(it.describe.groups.map((g) => g.element_ids), [['a1', 'a2'], ['b1']], 'two groups folded');
+    return { state, bus, it };
+  }
+
+  test('a folded item: the OLDER group\'s member edited → its own entry refreshed in place, the newer entry untouched, groups kept', () => {
+    const { state, bus, it } = twoGroups();
+    const newer = JSON.stringify(it.describe.groups[1]);
+    const summary = it.summary;
+    queue.refreshElement(state, bus, 'a1', stroke('a1', A([0.1, 0.3, 0.2, 0.2]), 2));
+    assert.deepStrictEqual(it.describe.groups[0].bbox, [0.1, 0.3, 0.2, 0.2], 'the older entry is the edit\'s');
+    assert.equal(JSON.stringify(it.describe.groups[1]), newer, 'the newer entry untouched');
+    assert.deepStrictEqual(it.describe.groups.map((g) => g.element_ids), [['a1', 'a2'], ['b1']], 'order kept');
+    assert.equal(it.describe.count, 3);
+    assert.deepStrictEqual(it.describe.bbox, [0.1, 0.3, 0.7, 0.35], 'the top level re-derived');
+    assert.equal(it.summary, summary, 'an older member\'s edit keeps the newest\'s words');
+  });
+
+  test('a folded item: the newest member edited → only its entry replaced, groups kept', () => {
+    const { state, bus, it } = twoGroups();
+    const older = JSON.stringify(it.describe.groups[0]);
+    queue.refreshElement(state, bus, 'b1', stroke('b1', { ...B([0.5, 0.7, 0.3, 0.05]), shape: 'strike' }, 2));
+    assert.equal(it.describe.groups.length, 2, 'the groups never collapse to one');
+    assert.equal(JSON.stringify(it.describe.groups[0]), older);
+    assert.equal(it.describe.groups[1].shape, 'strike');
+    assert.equal(it.describe.shape, 'strike');
+    assert.equal(it.v, 2, 'the newest\'s version, as before');
+    assert.match(it.summary, /^Ink · strike · 1 stroke · b1@2$/);
+  });
+
+  test('an unfolded item\'s newest member refreshed → describe is exactly {shape, confidence, count, bbox}, no element_ids', () => {
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A(), count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A()));
+    const [it] = state.queue;
+    assert.deepStrictEqual(keys(it.describe), ['bbox', 'confidence', 'count', 'shape']);
+    queue.refreshElement(state, bus, 'a2', stroke('a2', A([0.1, 0.2, 0.2, 0.2]), 2));
+    assert.deepStrictEqual(keys(it.describe), ['bbox', 'confidence', 'count', 'shape'], 'the four fields alone');
+    assert.deepStrictEqual(it.describe.bbox, [0.1, 0.2, 0.2, 0.2]);
+    // An older member's edit refreshes it too (no stale extent).
+    queue.refreshElement(state, bus, 'a1', stroke('a1', A([0.15, 0.2, 0.2, 0.2]), 2));
+    assert.deepStrictEqual(it.describe, { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.15, 0.2, 0.2, 0.2] });
+  });
+
+  test('removeByElement of a member of one group in a folded item: that entry gone, the other kept, the top level re-derived', () => {
+    const { state, bus, it } = twoGroups();
+    const seen = [];
+    bus.subscribe((e) => { if (e.kind === 'queue' && e.item) seen.push(e.item); });
+    queue.removeByElement(state, bus, 'a2');
+    assert.deepStrictEqual(it.element_ids, ['a1', 'b1']);
+    assert.deepStrictEqual(it.describe, { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05] },
+      'one entry left: the four fields alone; no count or extent of the leaver\'s group');
+    assert.equal(it.summary, 'Ink ×2', 'the summary recomputed');
+    assert.deepStrictEqual(seen.at(-1).describe, it.describe, 'the update frame carries it');
+    // Three groups, the middle one's member leaves: the other two stay a list.
+    const s3 = twoGroups();
+    queue.enqueueElement(s3.state, s3.bus, stroke('c1', { shape: 'strike', confidence: 0.6, count: 1, bbox: [0, 0.9, 0.1, 0.05], element_ids: ['c1'] }));
+    queue.removeByElement(s3.state, s3.bus, 'b1');
+    assert.deepStrictEqual(s3.it.describe.groups.map((g) => g.element_ids), [['a1', 'a2'], ['c1']]);
+    assert.equal(s3.it.describe.count, 3);
+    assert.deepStrictEqual(s3.it.describe.bbox, [0, 0.1, 0.3, 0.85]);
+  });
+
+  test('a re-send of a delivered folded item with one group\'s member gone: that group\'s entry dropped, the other kept, the gone member absent', () => {
+    const { state, bus, it } = twoGroups();
+    const kept = it.id;
+    queue.flush(state, bus, {});
+    assert.deepStrictEqual(state.queue, []);
+    const r = queue.resendElement(state, bus, kept, { exists: (id) => id !== 'b1' });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.element_ids, ['a1', 'a2']);
+    assert.deepStrictEqual(r.item.describe, { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2] }, 'the gone member\'s group dropped');
+    assert.ok(!JSON.stringify(r.item).includes('b1'), 'the gone member is nowhere on the item');
+    assert.ok(!JSON.stringify(r.item.describe).includes('0.65'), 'nor its extent');
+    // An older group's member gone instead: the newer group's guess kept.
+    const s2 = twoGroups();
+    queue.flush(s2.state, s2.bus, {});
+    const r2 = queue.resendElement(s2.state, s2.bus, s2.it.id, { exists: (id) => id !== 'a1' });
+    assert.deepStrictEqual(r2.item.element_ids, ['a2', 'b1']);
+    assert.deepStrictEqual(r2.item.describe, { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05] });
+    // Every member alive: the folded describe re-sent whole.
+    const s3 = twoGroups();
+    const whole = JSON.stringify(s3.it.describe);
+    queue.flush(s3.state, s3.bus, {});
+    assert.equal(JSON.stringify(queue.resendElement(s3.state, s3.bus, s3.it.id, { exists: () => true }).item.describe), whole);
+  });
+}
