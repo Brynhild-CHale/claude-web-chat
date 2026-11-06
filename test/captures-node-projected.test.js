@@ -222,6 +222,25 @@ test('GET /api/captures?node=<id> for a reader with seesPrivate (the local brows
   assert.equal(fs.readFileSync(s.nodeFile, 'utf8'), s.fileBefore, 'the node file is untouched');
 });
 
+test('GET /api/captures?node=<id> below seesPrivate fails closed: a member whose latest version the log cannot read is named nowhere', async (t) => {
+  const s = await committedThenUnshared(t);
+  const store = s.srv.graph.elements;
+  const lost = s.kept[0].id;
+  const latest = store.latest;
+  store.latest = function (id, ...rest) { return id === lost ? null : latest.call(this, id, ...rest); };
+  t.after(() => { store.latest = latest; });
+  const route = `/api/captures?node=${encodeURIComponent(s.nodeId)}`;
+  for (const [who, read] of s.below) {
+    const r = await read(route);
+    assert.equal(r.status, 200, who);
+    const text = JSON.stringify(r.body);
+    assert.ok(!namesId(text, lost), `${who}: names the member with no readable record: ${text}`);
+    assert.ok(!namesId(text, s.priv.id), `${who}: names the private member: ${text}`);
+    const entry = r.body.captures.find((c) => c.id === s.cap);
+    assert.deepEqual(entry.distilled.elements, s.kept.slice(1).map((m) => `${m.id}@1`), `${who}: only the readable shared member stays`);
+  }
+});
+
 // ── (ii) both PNGs ──────────────────────────────────────────────────────────
 
 test('the withdrawn picture\'s two PNGs are refused below seesPrivate: GET /api/elements/:id/picture ?as=json, ?which=without and ?which=without&as=json, through every member, carry no bytes and no private id', async (t) => {
