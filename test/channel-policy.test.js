@@ -564,3 +564,115 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     assert.equal(resent.describe.groups.length, DESCRIBE_GROUPS_MAX);
   });
 }
+
+// ── replaceDescribe: an edit or a leaver changes only its group's entry (U633, 5B.3; K.2-251) ──
+{
+  const { replaceDescribe, elementItem, mergeElement, DESCRIBE_GROUPS_MAX } = require('../lib/channel/policy');
+  const A = { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2], element_ids: ['a1', 'a2'] };
+  const B = { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05], element_ids: ['b1'] };
+  const C = { shape: 'strike', confidence: 0.6, count: 1, bbox: [0.0, 0.9, 0.1, 0.05], element_ids: ['c1'] };
+  const folded = (...groups) => {
+    let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
+    for (const { bbox: b } of groups) { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[0] + b[2]); y1 = Math.max(y1, b[1] + b[3]); }
+    const r = (v) => Math.round(v * 1e4) / 1e4;
+    const top = groups[groups.length - 1];
+    return { shape: top.shape, confidence: top.confidence, count: groups.reduce((n, g) => n + g.count, 0), bbox: [r(x0), r(y0), r(x1 - x0), r(y1 - y0)], groups };
+  };
+  const members = ['a1', 'a2', 'b1', 'c1'];
+
+  test('replaceDescribe over a two-group fold: the entry the ids meet is replaced in place, order kept, the top level re-derived', () => {
+    const prior = folded(A, B);
+    const frozen = JSON.stringify(prior);
+    const edited = { shape: 'check', confidence: 0.7, count: 2, bbox: [0.2, 0.0, 0.1, 0.3], element_ids: ['a1', 'a2'] };
+    const out = replaceDescribe(prior, members, edited, ['a1', 'a2']);
+    assert.deepStrictEqual(out.groups, [edited, B], 'the older entry refreshed where it was; the newer untouched');
+    assert.equal(out.count, 3);
+    assert.deepStrictEqual(out.bbox, [0.2, 0, 0.6, 0.65], 'the union of the entries');
+    assert.equal(out.shape, 'underline', 'the last entry\'s shape on top');
+    assert.equal(out.confidence, 0.9);
+    assert.equal(JSON.stringify(prior), frozen, 'the prior is never edited (F7)');
+    // The newest's own edit replaces only its entry; groups kept.
+    const nb = replaceDescribe(prior, members, { ...B, shape: 'strike', bbox: [0.5, 0.6, 0.3, 0.1] }, ['b1']);
+    assert.deepStrictEqual(nb.groups.map((g) => [g.shape, g.element_ids]), [['circle', ['a1', 'a2']], ['strike', ['b1']]]);
+    assert.equal(nb.shape, 'strike');
+    // A refresh naming no ids of its own takes the ids it was handed.
+    const bare = { shape: 'other', confidence: 0.5, count: 1, bbox: [0.5, 0.6, 0.3, 0.05] };
+    assert.deepStrictEqual(replaceDescribe(prior, members, bare, ['b1']).groups[1], { ...bare, element_ids: ['b1'] });
+  });
+
+  test('replaceDescribe drops one entry of three (next null), and a drop leaving one gives the four fields alone', () => {
+    const prior = folded(A, B, C);
+    const two = replaceDescribe(prior, members, null, ['b1']);
+    assert.deepStrictEqual(two, folded(A, C), 'B\'s entry gone, A and C kept in order, the top level re-derived');
+    const one = replaceDescribe(two, members, null, ['a2']);
+    assert.deepStrictEqual(one, { shape: C.shape, confidence: C.confidence, count: C.count, bbox: C.bbox });
+    assert.equal('element_ids' in one, false);
+    assert.equal('groups' in one, false);
+    assert.equal(replaceDescribe(one, ['c1'], null, ['c1']), null, 'none left → null');
+    // A one-group describe names no ids: its ids are the members it was handed.
+    assert.equal(replaceDescribe({ ...C, element_ids: undefined }, ['c1', 'c2'], null, ['c2']), null);
+    // Every entry the ids meet goes (a re-send's several gone members).
+    assert.deepStrictEqual(replaceDescribe(prior, members, null, ['a1', 'c1']), { shape: B.shape, confidence: B.confidence, count: B.count, bbox: B.bbox });
+  });
+
+  test('replaceDescribe keeps groups_dropped (no four-field collapse while one went), and returns the prior itself when no entry meets the ids', () => {
+    const prior = { ...folded(A, B), groups_dropped: 2 };
+    const out = replaceDescribe(prior, members, null, ['a1']);
+    assert.equal(out.groups_dropped, 2);
+    assert.deepStrictEqual(out.groups, [B], 'one entry, but older groups went: still a list');
+    const edited = replaceDescribe(prior, members, { ...A, count: 3 }, ['a2']);
+    assert.equal(edited.groups_dropped, 2);
+    assert.equal(edited.count, 4);
+    assert.equal(replaceDescribe(prior, members, null, ['zz']), prior, 'a drop meeting nothing: unchanged');
+    assert.equal(replaceDescribe(prior, members, { ...C, element_ids: ['zz'] }, ['zz']), prior, 'a replace meeting nothing: unchanged');
+    assert.equal(replaceDescribe(null, members, A, ['a1']), null);
+    assert.equal(replaceDescribe(undefined, members, null, ['a1']), null);
+  });
+
+  test('replaceDescribe carries the incoming entry\'s checked fields whole (a page group\'s frame and items) and never a field the check drops', () => {
+    const arrow = { shape: 'arrow', confidence: 0.7, count: 1, bbox: [0.3, 0.3, 0.2, 0.1], element_ids: ['b1'], frame: 'page', items: ['pa', 'pb'] };
+    const prior = folded({ ...A, frame: 'pane' }, arrow);
+    const moved = { ...arrow, bbox: [0.3, 0.4, 0.2, 0.1], items: ['pa', 'pc'], text_under: 'never here' };
+    const out = replaceDescribe(prior, members, moved, ['b1']);
+    assert.deepStrictEqual(out.groups[1], { shape: 'arrow', confidence: 0.7, count: 1, bbox: [0.3, 0.4, 0.2, 0.1], element_ids: ['b1'], frame: 'page', items: ['pa', 'pc'] });
+    assert.deepStrictEqual(out.groups[0], { ...A, frame: 'pane' });
+    assert.ok(!JSON.stringify(out).includes('never here'), 'no text rides describe');
+    assert.equal('frame' in out, false, 'a multi-group describe names frames per group only');
+    // One left: the four fields and its frame and items (the one-group fold's shape).
+    assert.deepStrictEqual(replaceDescribe(out, members, null, ['a1']), { shape: 'arrow', confidence: 0.7, count: 1, bbox: [0.3, 0.4, 0.2, 0.1], frame: 'page', items: ['pa', 'pc'] });
+    // A malformed incoming is no describe: the entry is dropped.
+    assert.deepStrictEqual(replaceDescribe(prior, members, { ...arrow, shape: 'Revenue fell' }, ['b1']), { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2], frame: 'pane' });
+  });
+
+  test('replaceDescribe over a mergeElement fold reads as the fold of the edited raise; at the cap it keeps the length and the dropped count', () => {
+    const ev = (id) => ({ kind: 'element', type: 'ink', op: 'add', id, v: 1, shared: true, has: true, mount: 'm1' });
+    const raise = (id, describe) => elementItem(ev(id), { wake: true, label: 'Ink', describe });
+    // A group of one held member (a2): a one-group describe's ids are the item's members.
+    const g = mergeElement({ ...raise('a2', A), element_ids: [], excerpt: undefined }, raise('a2', A));
+    mergeElement(g, raise('b1', B));
+    assert.deepStrictEqual(g.describe, folded({ ...A, element_ids: ['a2'] }, B));
+    let d = g.describe;
+    const A2 = { ...A, shape: 'cross', bbox: [0.1, 0.1, 0.25, 0.25], element_ids: ['a2'] };
+    d = replaceDescribe(d, g.element_ids, A2, A2.element_ids);
+    assert.deepStrictEqual(d, folded(A2, B));
+    // At the cap a replace keeps the list's length and its dropped count.
+    const many = Array.from({ length: DESCRIBE_GROUPS_MAX }, (_, i) => ({ ...C, bbox: [0.01 * i, 0.9, 0.01, 0.01], element_ids: [`k${i}`] }));
+    const capped = { ...folded(...many), groups_dropped: 1 };
+    const r = replaceDescribe(capped, [], { ...C, shape: 'check', element_ids: ['k3'] }, ['k3']);
+    assert.equal(r.groups.length, DESCRIBE_GROUPS_MAX);
+    assert.equal(r.groups[3].shape, 'check');
+    assert.equal(r.groups_dropped, 1);
+  });
+
+  test('replaceDescribe: an edit whose group takes another entry\'s member strips it there (an emptied entry goes; no member in two entries)', () => {
+    const prior = folded(A, B);
+    const joined = { shape: 'circle', confidence: 0.7, count: 3, bbox: [0.1, 0.1, 0.7, 0.55], element_ids: ['a1', 'a2', 'b1'] };
+    assert.deepStrictEqual(replaceDescribe(prior, members, joined, joined.element_ids),
+      { shape: 'circle', confidence: 0.7, count: 3, bbox: [0.1, 0.1, 0.7, 0.55] }, 'the newest entry met (B) replaced, the older one (A) emptied and gone: the four fields alone');
+    // The newest entry the ids meet is the one replaced; an older one they meet loses them.
+    const three = folded({ ...A, count: 3, element_ids: ['a1', 'a2', 'a3'] }, B, C);
+    const moved = { shape: 'underline', confidence: 0.6, count: 2, bbox: [0.3, 0.6, 0.5, 0.05], element_ids: ['a3', 'b1'] };
+    const out = replaceDescribe(three, members, moved, moved.element_ids);
+    assert.deepStrictEqual(out.groups.map((g) => g.element_ids), [['a1', 'a2'], ['a3', 'b1'], ['c1']], 'a3 left A; order kept');
+  });
+}
