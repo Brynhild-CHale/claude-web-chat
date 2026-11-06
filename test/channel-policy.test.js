@@ -663,4 +663,16 @@ test('wakeEnvelope: meta uses only the versioned META_KEYS vocabulary', () => {
     assert.equal(r.groups[3].shape, 'check');
     assert.equal(r.groups_dropped, 1);
   });
+
+  test('replaceDescribe: an edit whose group takes another entry\'s member strips it there (an emptied entry goes; no member in two entries)', () => {
+    const prior = folded(A, B);
+    const joined = { shape: 'circle', confidence: 0.7, count: 3, bbox: [0.1, 0.1, 0.7, 0.55], element_ids: ['a1', 'a2', 'b1'] };
+    assert.deepStrictEqual(replaceDescribe(prior, members, joined, joined.element_ids),
+      { shape: 'circle', confidence: 0.7, count: 3, bbox: [0.1, 0.1, 0.7, 0.55] }, 'the newest entry met (B) replaced, the older one (A) emptied and gone: the four fields alone');
+    // The newest entry the ids meet is the one replaced; an older one they meet loses them.
+    const three = folded({ ...A, count: 3, element_ids: ['a1', 'a2', 'a3'] }, B, C);
+    const moved = { shape: 'underline', confidence: 0.6, count: 2, bbox: [0.3, 0.6, 0.5, 0.05], element_ids: ['a3', 'b1'] };
+    const out = replaceDescribe(three, members, moved, moved.element_ids);
+    assert.deepStrictEqual(out.groups.map((g) => g.element_ids), [['a1', 'a2'], ['a3', 'b1'], ['c1']], 'a3 left A; order kept');
+  });
 }
