@@ -432,3 +432,274 @@ test('on touch, a tap on a glyph whose leader is hover shows the leader, and a s
   assert.equal(moves.length, 0, 'a tap writes nothing');
   await setLive([]);
 });
+
+// ── the glyph clamp (tranche 5, U631; plan 5B.1, corrects U587; RULED
+// U631@refusal-feedback I3 a) ────────────────────────────────────────────────
+// A dragged glyph stays inside the clip it was last drawn in (its painted box
+// and its anchor point); a drop whose LAST measure was framed or clipped
+// writes nothing, the glyph drawn back at its stored offset and one bus
+// 'overlay:glyph-refused' {id, hint: GLYPH_DROP_HINT} per element.
+let bus;
+const glyphOfMarker = (m) => {
+  const t = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(m.style.transform);
+  return { dx: Number(t[1]), dy: Number(t[2]), w: 26, h: 26 };
+};
+// The marker's painted box (its placement + the glyph's offsets), client px.
+function painted(m) {
+  const g = glyphOfMarker(m);
+  const x = parseFloat(m.style.left) + g.dx;
+  const y = parseFloat(m.style.top) + g.dy;
+  return { left: x, top: y, right: x + g.w, bottom: y + g.h };
+}
+// How many of the marker's painted px edges lie outside `clip` (0: inside),
+// and its clip-path empty (no inset: wholly inside).
+function outOfClip(m, clip) {
+  const p = painted(m);
+  const out = [clip.left - p.left, clip.top - p.top, p.right - clip.right, p.bottom - clip.bottom].filter((d) => d > 0).length;
+  return out + (m.style.display === '' && m.style.clipPath === '' ? 0 : 1);
+}
+const clipOf = (b) => ({ left: b.left, top: b.top, right: b.right, bottom: b.bottom });
+// A drag through `points` (deltas from (100, 100)), a draw frame flushed after
+// each move, so the overlay measures every step before the release.
+async function dragSteps(el, pointerType, points, { pointerId = 1, hold = 0 } = {}) {
+  pe(el, 'pointerdown', pointerType, pointerId);
+  if (hold) await sleep(hold);
+  for (const [dx, dy] of points) {
+    pe(el, 'pointermove', pointerType, pointerId, { clientX: 100 + dx, clientY: 100 + dy });
+    flush();
+  }
+  const [lx, ly] = points[points.length - 1];
+  pe(el, 'pointerup', pointerType, pointerId, { clientX: 100 + lx, clientY: 100 + ly });
+  el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType, pointerId, clientX: 100 + lx, clientY: 100 + ly }));
+  await settle();
+}
+function hearRefusals() {
+  const heard = [];
+  const off = bus.on('overlay:glyph-refused', (d) => heard.push(d));
+  return { heard, off };
+}
+
+test('the clamp: a mouse drag far past the pane\'s right and bottom edges stops inside the clip it was drawn in; the ONE POST carries the clamped offset', async () => {
+  ({ bus } = await shell.importApp('bus.js'));
+  assert.equal(typeof ov.GLYPH_DROP_HINT, 'string');
+  assert.ok(ov.GLYPH_DROP_HINT.length > 20, 'a plain-words hint');
+  const main = W.document.getElementById('main');
+  // A well narrower than the viewport: the pane's clip is the well ∩ the viewport.
+  main.dataset.pin = 'well';
+  POS.well = box(40, 30, 1000, 700);
+  const clip = clipOf(POS.well);
+  try {
+    POS['lead-p1'] = box(100, 120);
+    await setLive([pinOn('c1', 'p1', lead('p1'))]);
+    ov.requestDraw();
+    await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'attached');
+    moves.length = 0;
+    await drag(markersFor('c1')[0], 'mouse', 4000, 4000, { pointerId: 20 });
+    // The comment's glyph (-13, -26, 26 × 26): the point clamped to
+    // (1040 - 13, 730 - 0.5) = (1027, 729.5), nearest the anchor box's
+    // bottom-right corner (160, 134).
+    assert.deepStrictEqual(moves.map((m) => [m.id, m.body.dx, m.body.dy, m.body.corner]), [['c1', 867, 595.5, 'br']], 'one POST, clamped');
+    await drawnUntil(() => at(markersFor('c1')[0], 1027, 729.5), 'drawn at the clamped drop');
+    const m = markersFor('c1')[0];
+    assert.equal(outOfClip(m, clip), 0, `0 out of clip: ${JSON.stringify(painted(m))}`);
+    assert.equal(ov.stats().clipped, 0, 'the next measure is drawn, not clipped');
+    // Up and left past the well's top-left: stops at the well's corner.
+    moves.length = 0;
+    await drag(markersFor('c1')[0], 'mouse', -4000, -4000, { pointerId: 21 });
+    // (40 + 13, 30 + 26) = (53, 56), nearest the top-left corner (100, 120).
+    assert.deepStrictEqual(moves.map((x) => [x.body.dx, x.body.dy, x.body.corner]), [[-47, -64, 'tl']]);
+    await drawnUntil(() => at(markersFor('c1')[0], 53, 56), 'at the well\'s top-left');
+    assert.equal(outOfClip(markersFor('c1')[0], clip), 0, '0 out of clip at the top-left');
+  } finally {
+    delete main.dataset.pin;
+    delete POS.well;
+    ov.requestDraw();
+    flush();
+  }
+});
+
+test('a drag released over a displayed frame: 0 POST, the glyph drawn back at its stored offset, one overlay:glyph-refused {id, hint} per element', async () => {
+  POS['lead-p1'] = box(100, 120);
+  const off0 = { dx: 30, dy: -20, corner: 'tr' };
+  // Two pins on one element at one offset: one marker, two elements.
+  await setLive([
+    { ...pinOn('c1', 'p1', lead('p1')), v: 7, display: { glyph: off0 } },
+    { ...pinOn('c2', 'p1', lead('p1')), v: 2, display: { glyph: off0 } },
+  ]);
+  await drawnUntil(() => at(markersFor('c1')[0], 190, 100) && markersFor('c2')[0] === markersFor('c1')[0], 'one marker at (160 + 30, 120 - 20)');
+  const frame = W.document.createElement('iframe');
+  frame.dataset.pin = 'frame-2';
+  POS['frame-2'] = box(400, 300, 100, 100);
+  W.document.body.appendChild(frame);
+  const { heard, off } = hearRefusals();
+  try {
+    ov.requestDraw();
+    flush();
+    moves.length = 0;
+    const n0 = shell.calls.length;
+    // (190, 100) by (+260, +250): (450, 350), its painted box over the frame.
+    await dragSteps(markersFor('c1')[0], 'mouse', [[130, 125], [260, 250]], { pointerId: 22 });
+    assert.equal(moves.length, 0, '0 glyph POSTs');
+    assert.equal(shell.calls.slice(n0).filter((c) => /\/glyph$/.test(c.url)).length, 0, 'nothing sent');
+    assert.deepStrictEqual(heard, [{ id: 'c1', hint: ov.GLYPH_DROP_HINT }, { id: 'c2', hint: ov.GLYPH_DROP_HINT }], 'one refusal per element');
+    assert.equal(pinPop(), null, 'the drag\'s click did not open the thread');
+    await drawnUntil(() => at(markersFor('c1')[0], 190, 100), 'drawn back at its stored offset');
+    assert.deepStrictEqual(live.get('c1').display.glyph, off0, 'its row\'s display unchanged');
+    assert.equal(markersFor('c1')[0].style.display, '');
+  } finally {
+    off();
+    frame.remove();
+    ov.requestDraw();
+    flush();
+  }
+  closePops();
+});
+
+test('a drag that crosses the frame and leaves it before the release is written once, at the drop point (the last measure decides)', async () => {
+  POS['lead-p1'] = box(100, 120);
+  await setLive([pinOn('c1', 'p1', lead('p1'))]);
+  await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'attached');
+  const frame = W.document.createElement('iframe');
+  frame.dataset.pin = 'frame-3';
+  POS['frame-3'] = box(300, 200, 100, 100);
+  W.document.body.appendChild(frame);
+  const { heard, off } = hearRefusals();
+  try {
+    ov.requestDraw();
+    flush();
+    moves.length = 0;
+    // Onto the frame at (350, 250), then clear of it at (600, 250).
+    await dragSteps(markersFor('c1')[0], 'mouse', [[250, 130], [500, 130]], { pointerId: 23 });
+    assert.deepStrictEqual(moves.map((m) => [m.body.dx, m.body.dy, m.body.corner]), [[440, 116, 'br']], 'written once at the drop');
+    assert.deepStrictEqual(heard, [], 'no refusal');
+    await drawnUntil(() => at(markersFor('c1')[0], 600, 250), 'drawn at the drop');
+  } finally {
+    off();
+    frame.remove();
+    ov.requestDraw();
+    flush();
+  }
+  closePops();
+});
+
+test('at 390 px wide the clamp holds (0 out of clip) for a mouse, a touch after the hold and a pen', async () => {
+  shell.setViewport({ width: 390, height: 800 });
+  try {
+    const clip = { left: 0, top: 0, right: 390, bottom: 800 };
+    // The point clamped to (390 - 13, 800 - 0.5) = (377, 799.5), from the
+    // anchor box's bottom-right corner (160, 134).
+    for (const [kind, pointerId, hold] of [['mouse', 30, 0], ['touch', 31, 80], ['pen', 32, 0]]) {
+      POS['lead-p1'] = box(100, 120);
+      await setLive([pinOn('c1', 'p1', lead('p1'))]);
+      await drawnUntil(() => at(markersFor('c1')[0], 100, 120), `${kind}: attached`);
+      moves.length = 0;
+      await drag(markersFor('c1')[0], kind, 4000, 4000, { pointerId, hold });
+      assert.deepStrictEqual(moves.map((m) => [m.body.dx, m.body.dy, m.body.corner]), [[217, 665.5, 'br']], `${kind}: one POST, clamped`);
+      await drawnUntil(() => at(markersFor('c1')[0], 377, 799.5), `${kind}: drawn at the clamped drop`);
+      assert.equal(outOfClip(markersFor('c1')[0], clip), 0, `${kind}: 0 out of clip at 390 px`);
+      closePops();
+    }
+  } finally { shell.setViewport({ width: 1280, height: 800 }); }
+});
+
+test('a glyph whose anchor is a markdown item (the page well\'s clip) dragged past the well\'s edge stops inside the well', async () => {
+  const order = ['p1', 'p2', 'md-g'];
+  const text = '## Margin heading\n\nBody text under it.';
+  await shell.frame({ type: 'markdown', id: 'md-g', text, owner: 'claude', gen: 1, order, claude_order: order });
+  const item = W.document.querySelector('[data-md-id="md-g"]');
+  assert.ok(item, 'precondition: the markdown item is drawn');
+  const main = W.document.getElementById('main');
+  // A Range's box: that of the nearest element around its start naming one
+  // (this case alone: the file's rectOf lays out elements only).
+  const desc = Object.getOwnPropertyDescriptor(W.Range.prototype, 'dataset');
+  Object.defineProperty(W.Range.prototype, 'dataset', {
+    configurable: true,
+    get() {
+      const sc = this.startContainer;
+      const el = sc && (sc.nodeType === 1 ? sc : sc.parentNode);
+      const named = el && el.closest ? el.closest('[data-pin]') : null;
+      return named ? { pin: named.dataset.pin } : undefined;
+    },
+  });
+  try {
+    const h2 = item.querySelector('h2');
+    const range = W.document.createRange();
+    range.selectNodeContents(h2);
+    const { sourceMap } = await shell.importApp('markdown.js');
+    const rec = anchors.recordSource(item, range, sourceMap(item._wcText), item._wcText, { md: 'md-g' });
+    assert.ok(rec, 'precondition: a source record');
+    item.dataset.pin = 'md-item';
+    h2.dataset.pin = 'md-h';
+    POS['md-item'] = box(60, 260);
+    POS['md-h'] = box(100, 300);
+    main.dataset.pin = 'well';
+    POS.well = box(45, 0, 979, 768);
+    const clip = clipOf(POS.well);
+    await setLive([{ id: 'c90', v: 1, seq: 1, type: 'comment', text: 'md pin', shared: true, replies: [], anchor: rec,
+      locator: { mount: 'md-g', selector: 'h2', text: 'Margin heading', ordinal: 0, section: 'Margin heading' } }]);
+    ov.requestDraw();
+    const m = () => markersFor('c90')[0];
+    await drawnUntil(() => at(m(), 60, 300), 'the md pin drawn in the margin, at the item\'s left edge');
+    assert.equal(m().dataset.detach, '1', 'its glyph detaches');
+    const sg = comments.SOURCE_GLYPH;
+    moves.length = 0;
+    await drag(m(), 'mouse', -4000, 4000, { pointerId: 33 });
+    // The margin glyph (sourceGlyph's offsets, 26 × 26): the point clamped to
+    // (45 - dx, 768 - 0.5 or 768 - dy - 26), from the anchor box's bottom-left
+    // corner (60, 314).
+    const x = 45 - sg.dx;
+    const y = Math.min(768 - sg.dy - 26, 767.5);
+    assert.deepStrictEqual(moves.map((v) => [v.id, v.body.dx, v.body.dy, v.body.corner]), [['c90', x - 60, y - 314, 'bl']], 'one POST, clamped into the well');
+    await drawnUntil(() => at(m(), x, y), 'drawn at the clamped drop');
+    assert.equal(outOfClip(m(), clip), 0, `0 out of the well: ${JSON.stringify(painted(m()))}`);
+  } finally {
+    if (desc) Object.defineProperty(W.Range.prototype, 'dataset', desc); else delete W.Range.prototype.dataset;
+    delete main.dataset.pin;
+    delete POS.well;
+    delete item.dataset.pin;
+    await setLive([]);
+    await shell.frame({ type: 'markdown:remove', id: 'md-g', order: ['p1', 'p2'], claude_order: ['p1', 'p2'] });
+    ov.requestDraw();
+    flush();
+  }
+});
+
+test('a drop whose last measure was clipped (the well shrank under the drag): 0 POST, the glyph drawn back, one overlay:glyph-refused', async () => {
+  const main = W.document.getElementById('main');
+  main.dataset.pin = 'well';
+  POS.well = box(40, 30, 1000, 700);
+  const { heard, off } = hearRefusals();
+  try {
+    POS['lead-p1'] = box(100, 120);
+    await setLive([pinOn('c1', 'p1', lead('p1'))]);
+    ov.requestDraw();
+    await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'attached');
+    moves.length = 0;
+    const el = markersFor('c1')[0];
+    // (100, 120) by (+300, +300): (400, 420), inside the well it was drawn in.
+    pe(el, 'pointerdown', 'mouse', 24);
+    pe(el, 'pointermove', 'mouse', 24, { clientX: 400, clientY: 400 });
+    flush();
+    // The well shrinks under the drag: (400, 420) is outside it, so the last
+    // measure before the release is clipped.
+    POS.well = box(40, 30, 200, 200);
+    ov.requestDraw();
+    flush();
+    assert.ok(ov.stats().clipped >= 1, 'precondition: the last measure is clipped');
+    pe(el, 'pointerup', 'mouse', 24, { clientX: 400, clientY: 400 });
+    el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 24, clientX: 400, clientY: 400 }));
+    await settle();
+    assert.equal(moves.length, 0, '0 glyph POSTs');
+    assert.deepStrictEqual(heard, [{ id: 'c1', hint: ov.GLYPH_DROP_HINT }], 'one refusal');
+    assert.equal(pinPop(), null, 'the drag\'s click did not open the thread');
+    await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'drawn back at its stored place');
+    assert.equal(live.get('c1').display, undefined, 'its row\'s display unchanged');
+  } finally {
+    off();
+    delete main.dataset.pin;
+    delete POS.well;
+    ov.requestDraw();
+    flush();
+  }
+  closePops();
+});

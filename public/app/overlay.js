@@ -127,6 +127,15 @@
 // touch. A carried guess keeps its offset at the guess, its leader styled
 // as an orphan. A box group never detaches; no layer or placement mode is
 // added (HOST_NAMES unchanged), and the look is app.css's tokens.
+// THE GLYPH CLAMP (U631, plan 5B.1; corrects U587; RULED U631@refusal-feedback
+// I3 a). A drag keeps the glyph's painted box inside the clip it was last
+// drawn in (clampedOffset: the clip placeLeader keeps as lastClip — the pane
+// well ∩ the viewport for a pane anchor, the page well for a markdown item's),
+// its anchor point inside it too (measureGroup's own start test); a drop whose
+// LAST measure was 'framed' or 'clipped' (applyGroup's lastRes) writes
+// nothing: the glyph is drawn back at its stored offset, and bus
+// 'overlay:glyph-refused' {id, hint: GLYPH_DROP_HINT} is emitted per element
+// (commitMove's shape) — the glyph drawn back is the feedback, no notice.
 //
 // It makes no other network call, sends no report (U314's, through
 // onAnswers), and assigns `hidden` only through the probe seam (U303's). Previews are
@@ -260,6 +269,10 @@ export const GLYPH_OFFSET_MAX = 4096;
 export const GLYPH_HOLD_MS = 450;
 // A leader whose glyph sits this near its anchor's box collapses to 'hover'.
 export const LEADER_NEAR_PX = 8;
+// A drop the glyph clamp refuses (U631): the hint on bus 'overlay:glyph-refused'.
+export const GLYPH_DROP_HINT = 'This pin cannot be dropped over a frame or outside its pane, so it went back where it was.';
+// The last measures that refuse a drop (applyGroup's lastRes).
+const REFUSED_DROPS = new Set(['framed', 'clipped']);
 // More detached glyphs than this on one pane: their leaders collapse to 'hover'.
 export const LEADER_PANE_MAX = 8;
 // The route a drop writes (lib/server/routes/element-glyph.js).
@@ -996,6 +1009,8 @@ function placeLeader(g, m) {
   g.lastY = m.y;
   g.lastAbox = m.abox || null;
   g.lastGbox = m.gbox || null;
+  // The clip it was drawn in (U631: the drag's clamp), a plain copy.
+  g.lastClip = m.clip ? { left: m.clip.left, top: m.clip.top, right: m.clip.right, bottom: m.clip.bottom } : null;
   const svg = g.leader;
   if (!svg) return;
   const L = m.leader;
@@ -1710,6 +1725,28 @@ function offsetFrom(p, b) {
   return Object.freeze({ dx: step(p.x - best.c.x), dy: step(p.y - best.c.y), corner: best.corner });
 }
 const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// THE GLYPH CLAMP (U631): the offset of a dragged point p from box b's nearest
+// corner (offsetFrom, its grammar untouched), the point first clamped so the
+// glyph gl {dx, dy, w, h} painted there lies inside `clip` and its anchor point
+// does too (measureGroup's start test: left/top inclusive, right/bottom not);
+// a clip narrower (shorter) than the glyph clamps to its left (top) edge. The
+// half-px rounding is nudged back inside. No clip (never drawn): as offsetFrom.
+function clampedOffset(p, b, clip, gl) {
+  if (!clip || !gl) return offsetFrom(p, b);
+  const span = (lo, hi, d, w) => ({ lo: Math.max(lo - d, lo), hi: Math.min(hi - d - w, hi - 0.5) });
+  const bx = span(clip.left, clip.right, gl.dx, gl.w);
+  const by = span(clip.top, clip.bottom, gl.dy, gl.h);
+  const off = offsetFrom({ x: clampTo(p.x, bx.lo, bx.hi), y: clampTo(p.y, by.lo, by.hi) }, b);
+  const c = cornerOf(b, off.corner);
+  const fit = (d, at, r) => {
+    if (r.hi - r.lo < 0.5) return d;
+    const n = at + d > r.hi ? d - 0.5 : at + d < r.lo ? d + 0.5 : d;
+    return Math.max(-GLYPH_OFFSET_MAX, Math.min(GLYPH_OFFSET_MAX, n)) + 0;
+  };
+  const dx = fit(off.dx, c.x, bx);
+  const dy = fit(off.dy, c.y, by);
+  return dx === off.dx && dy === off.dy ? off : Object.freeze({ dx, dy, corner: off.corner });
+}
 // The part of segment a→b inside box (Liang–Barsky), or null.
 function clipSegment(a, b, box) {
   let t0 = 0;
@@ -1927,6 +1964,8 @@ function applyGroup(g, m) {
   const c = g.container;
   if (!c) return;
   if (g.page) applyPage(g, m);
+  // A detached group's every measure, a hidden one too (U631: the drop reads it).
+  if (g.detach) g.lastRes = m.res;
   if (m.res !== 'drawn') { hide(g); return; }
   const [top, right, bottom, left] = m.inset;
   c.style.left = m.x + 'px';
@@ -2975,7 +3014,9 @@ function onDragMove(e) {
   const g = groupOfKey(drag.key) || drag.group;
   const abox = g.lastAbox || drag.group.lastAbox;
   if (!abox) return;
-  drag.offset = offsetFrom({ x: drag.p0.x + dx, y: drag.p0.y + dy }, abox);
+  // Clamped into the clip it was last drawn in (U631; never drawn: unclamped).
+  const clip = g.lastClip || drag.group.lastClip || null;
+  drag.offset = clampedOffset({ x: drag.p0.x + dx, y: drag.p0.y + dy }, abox, clip, g.glyph || drag.group.glyph);
   syncLeaderOn(g);
   requestDraw();
 }
@@ -2987,13 +3028,23 @@ function onDragUp(e) {
     // The click this release makes is the drag's, never the glyph's own.
     swallowClick = true;
     setTimeout(() => { swallowClick = false; }, 0);
-    if (d.offset) commitMove(d);
+    // The LAST measure decides (U631): framed or clipped writes nothing.
+    const g = groupOfKey(d.key) || d.group;
+    if (REFUSED_DROPS.has(g.lastRes)) refuseDrop(d);
+    else if (d.offset) commitMove(d);
   } else if (d.kind === 'touch') {
     // A tap on the glyph on touch shows (or hides) its hover leader.
     if (tapShown.has(d.key)) tapShown.delete(d.key); else tapShown.add(d.key);
     const g = groupOfKey(d.key);
     if (g) syncLeaderOn(g);
   }
+}
+// A refused drop (U631): nothing sent; the drag is already cleared (endDrag),
+// so the next frame draws the glyph back at its stored offset; one bus
+// 'overlay:glyph-refused' {id, hint} per element, commitMove's shape.
+function refuseDrop(d) {
+  requestDraw();
+  for (const it of d.group.items) bus.emit('overlay:glyph-refused', { id: String(it.id), hint: GLYPH_DROP_HINT });
 }
 function onDragCancel(e) {
   if (!drag || e.pointerId !== drag.pointerId) return;
