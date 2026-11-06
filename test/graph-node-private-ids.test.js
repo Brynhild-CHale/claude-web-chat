@@ -194,7 +194,9 @@ test('GET /api/graph and GET /api/graph/diff: no id of a private highlight for l
 // after (h@2, shared: false) is listed for no reader below seesPrivate —
 // lib/client, a network peer, a remote viewer — and stays listed, as
 // committed, for the local browser; nor in the diff's element section (graph.js
-// privateFor's latestOnly); the node file is never rewritten. Red with the
+// privateFor's latestOnly), either way round; a shared pin chained on it
+// keeps its own place with the member nulled (comments[] through the same
+// branch); the node file is never rewritten. Red with the
 // held-reference branch reading the version held (record(id, v)).
 const PEER = '10.0.0.5';
 function stubPeers(server) {
@@ -221,6 +223,10 @@ test('GET /api/graph/node/:id and GET /api/graph/diff: a highlight shared at the
   await ok(d.api.post('/api/turn-begin', { message: 'u620c node' }), 'turn-begin');
   const later = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u620c-later' } }), 'shared highlight')).element.id;
   const kept = (await ok(d.anonApi.post('/api/elements', { type: 'highlight', anchor: RANGE, payload: { note: 'wc-u620c-kept' } }), 'shared highlight')).element.id;
+  // A shared comment pin chained on the highlight made private after: the
+  // node read's comments[] chain answers through the same held-reference
+  // branch (privateFor's chainPrivate over the node), so the member is nulled.
+  const chained = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOC, payload: { text: 'wc-u620c-chained', shared: true, chain: [later] } }), 'chained pin')).pin.id;
   const nodeId = (await ok(d.api.post('/api/turn-end', { author: 'claude', summary: 'u620c node' }), 'turn-end')).node_id;
   assert.ok(nodeId, 'a node was committed');
   const stored = fs.readFileSync(nodeFile(d.root, nodeId), 'utf8');
@@ -237,6 +243,8 @@ test('GET /api/graph/node/:id and GET /api/graph/diff: a highlight shared at the
   assert.ok(localDiff.elements.added.some((e) => e && e.id === later), 'the local browser\'s diff names the highlight made private');
   const browser = await ok(d.anonApi.get(`/api/graph/node/${nodeId}`), 'browser node read');
   assert.deepStrictEqual(browser.elements, committed, 'the local browser (seesPrivate) gets the references as committed');
+  const browserPin = browser.comments.find((c) => c && c.id === chained);
+  assert.ok(browserPin && browserPin.chain.includes(later), `the local browser keeps the chained pin's member: ${JSON.stringify(browserPin)}`);
   for (const [who, headers] of [['lib/client', undefined], ['a network peer', { 'x-test-peer': PEER }], ['a remote viewer', REMOTE]]) {
     const r = await call(`/api/graph/node/${nodeId}`, headers);
     assert.equal(r.status, 200, `${who}: ${textOf(r.body)}`);
@@ -249,6 +257,18 @@ test('GET /api/graph/node/:id and GET /api/graph/diff: a highlight shared at the
     assert.equal(diff.status, 200, `${who} diff: ${textOf(diff.body)}`);
     assert.ok(!carriesRef(diff.body, later) && !textOf(diff.body).includes(`"${later}"`), `${who}: the diff names the highlight made private: ${textOf(diff.body)}`);
     assert.ok(diff.body.elements.added.some((e) => e && e.id === kept), `${who}: the diff keeps the highlight still shared`);
+    // The reversed diff lists both under `removed` (latestOnly walks every list).
+    const back = await call(`/api/graph/diff?a=${nodeId}&b=${baseId}`, headers);
+    assert.equal(back.status, 200, `${who} reversed diff: ${textOf(back.body)}`);
+    assert.ok(!carriesRef(back.body, later) && !textOf(back.body).includes(`"${later}"`), `${who}: the reversed diff names the highlight made private: ${textOf(back.body)}`);
+    assert.ok(back.body.elements.removed.some((e) => e && e.id === kept), `${who}: the reversed diff keeps the highlight still shared`);
+    // A reader that gets comments[] (lib/client; a network peer is at basic
+    // and gets none) keeps the shared pin with its chain member nulled.
+    if (Array.isArray(r.body.comments)) {
+      const pin = r.body.comments.find((c) => c && c.id === chained);
+      assert.ok(pin, `${who}: the chained pin itself (shared) stays`);
+      assert.deepStrictEqual(pin.chain, [null], `${who}: its member made private is nulled: ${JSON.stringify(pin)}`);
+    } else assert.equal(who, 'a network peer', `${who}: comments[] is absent only for the network peer`);
   }
   assert.equal(fs.readFileSync(nodeFile(d.root, nodeId), 'utf8'), stored, 'the node file is never rewritten');
 });
