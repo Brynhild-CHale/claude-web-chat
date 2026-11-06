@@ -152,6 +152,7 @@ import { settingsSnapshot } from './toolbar-state.js';
 // (lib/core/strokes.js, served at /app/strokes.js), and the narrow answer.
 import { isPageRecord, pageShape, mapPage, reboxPoints, isStrokePayload, frameKindOf } from './strokes.js';
 import { isNarrow } from './viewport.js';
+import { effectiveMode } from './theme.js';
 
 // ── the vocabulary ──────────────────────────────────────────────────────────
 // The states come from the one vocabulary (lib/core/anchor-states, carried by
@@ -185,6 +186,28 @@ export const INPUT_KINDS = Object.freeze(['taps', 'strokes', 'selection']);
 // sizes the marker of an element row's group to the target's own rect (the
 // guess's, for a guess), clipped to its well, never over a displayed frame.
 export const PLACE_MODES = Object.freeze(['glyph', 'box']);
+// THE BLEND PER MARKER PART (U624; HIGHLIGHTER@blend-seam, H4 = b; HAND FOLD 1,
+// DECISIONS.md K.2-271). A box type whose `composite` (lib/packs/elements.js
+// COMPOSITE_MODES, held equal by test/overlay-blend-chrome.test.js) names a
+// mode gets, for each page-host group, a SECOND container: group.blend, a
+// div.el-blend in #el-layer-blend — a body-level layer of the page host (not a
+// host: no HOST_NAMES entry, registerHost unchanged), before #el-layer in tree
+// order at the same --z-pins, so every glyph stays above it — whose element
+// blends against the page: multiply in the theme's light mode, screen in its
+// dark (theme.js effectiveMode, re-read on the bus's 'mode'; never the OS
+// scheme, which the ◑ toggle overrides). #el-layer is its own stacking
+// context, so a blend inside it composites against nothing
+// (HIGHLIGHTER@blend-isolated); this layer is the seam. The type draws its
+// blending paths into group.blend and the rest into group.container; its
+// marker is NEVER re-parented: group.container, its glyph, leader and
+// selection stay in #el-layer. group.blend mirrors group.container on every
+// pass: the same left/top/width/height, clip-path (inset or the frame mask)
+// and display — so it is hidden, unplaced, framed and masked exactly as the
+// container is — and carries the group's data-el-ids but no data-place, and
+// no listener: it is never a hit-test target. The draw and move ctx carry it
+// as ctx.blend. A type with no composite has no group.blend, and the layer is
+// hidden while it holds no container.
+export const COMPOSITE_MODES = Object.freeze(['multiply']);
 // The create ctx's own keys (toolCtx): no registerCreateCtx name may take one.
 // `settings` (U512c): settings() → the armed type and profile's frozen
 // {small, large} as they stood at the gesture's start (toolbar-state.js
@@ -206,9 +229,11 @@ export const MARKER_GLYPH = Object.freeze({ dx: -13, dy: -26, w: 26, h: 26 });
 export const MD_BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
 // The hosts a layer may be registered for: each one's layer id is reserved
 // (lib/server/domain/mounts.js RESERVED_IDS: 'el-layer', 'el-layer-chat',
-// 'el-layer-turns'). A later host adds its name here and its id there in one
-// change. The page is registered by initOverlay; U432 registers 'chat', U433
-// 'turns'.
+// 'el-layer-turns', and 'el-layer-blend' — the page host's blend layer, a
+// second layer of the page host and never a host of its own, so it has no
+// name here and registerHost cannot take it; U624). A later host adds its
+// name here and its id there in one change. The page is registered by
+// initOverlay; U432 registers 'chat', U433 'turns'.
 export const HOST_NAMES = Object.freeze(['page', 'chat', 'turns']);
 // The anchor kinds the page host holds (plus the kind-less and 'page' rows it
 // keeps — a box grab's page anchor never drawn, a stroke's page record drawn
@@ -336,7 +361,7 @@ let initialQueued = new Set();
 let initialScheduled = false;
 let sourcesPending = false;
 const mapCache = new Map();       // md id → {text, map}
-const types = new Map();          // type → {draw, create, input, glyph, move, place, detach}
+const types = new Map();          // type → {draw, create, input, glyph, move, place, detach, composite}
 const answerSubs = new Set();
 const armedSubs = new Set();
 let probe = null;
@@ -344,6 +369,7 @@ let policy = null;
 let armedState = null;            // {type, profile} or null
 let pickState = null;
 let layer = null;                 // the page host's layer, #el-layer
+let blendLayer = null;            // the page host's blend layer, #el-layer-blend (U624)
 let inited = false;
 let pass = null;                  // a position pass carried across frames (every host's groups)
 // THE host registry: name → its record, in registration order, the page first.
@@ -1283,6 +1309,7 @@ function drawCtx(g) {
     rectsOf: (range) => (range && typeof range.getClientRects === 'function' ? [...range.getClientRects()] : []),
   };
   if (g.place === 'box') ctx.box = g.box;
+  if (g.blend) ctx.blend = g.blend;
   return ctx;
 }
 // A type's draw into its group's container; false (the container gone, the
@@ -1295,6 +1322,7 @@ function runDraw(g, t) {
     console.error(`[web-chat] overlay: the '${g.type}' draw failed`, err);
     if (g.container) g.container.remove();
     g.container = null;
+    dropBlend(g);
     g.failed = true;
     for (const it of g.items) failed.set(it.id, { type: g.type, error: String((err && err.message) || err) });
     return false;
@@ -1303,6 +1331,7 @@ function runDraw(g, t) {
 function rebuild(h, gs) {
   const layer = h.layer;
   for (const m of [...layer.querySelectorAll('.el-marker, .el-leader')]) m.remove();
+  if (h.page && blendLayer) blendLayer.replaceChildren();
   if (h.page) hoverable.clear();
   for (const g of gs) {
     const c = document.createElement('div');
@@ -1322,6 +1351,14 @@ function rebuild(h, gs) {
       c._group = g;
       g.container = c;
       layer.appendChild(c);
+      if (h.page && t.composite && blendLayer) {
+        const b = document.createElement('div');
+        b.className = 'el-blend';
+        b.dataset.elIds = c.dataset.elIds;
+        b.style.display = 'none';
+        g.blend = b;
+        blendLayer.appendChild(b);
+      }
       continue;
     }
     const gl = g.glyph;
@@ -1349,6 +1386,36 @@ function rebuild(h, gs) {
       c.appendChild(s);
     }
   }
+  if (h.page) syncBlendLayer();
+}
+// The blend layer is hidden while it holds no group.blend (so a page with no
+// opting type composites as it did before U624).
+function syncBlendLayer() {
+  if (blendLayer) blendLayer.hidden = !blendLayer.firstChild;
+}
+function dropBlend(g) {
+  if (!g.blend) return;
+  g.blend.remove();
+  g.blend = null;
+  syncBlendLayer();
+}
+// group.blend takes group.container's placement (THE BLEND PER MARKER PART):
+// written after applyGroup on every pass, and by hide. A container the gate
+// turned into a stand-in (its draw failed or parked) leaves no blended path.
+const BLEND_STYLE = Object.freeze(['left', 'top', 'width', 'height', 'clipPath', 'display']);
+function syncBlend(g) {
+  const b = g.blend;
+  if (!b) return;
+  const c = g.container;
+  if (!c) { b.style.display = 'none'; return; }
+  for (const k of BLEND_STYLE) b.style[k] = c.style[k];
+  b.classList.toggle('el-guess', g.kind === 'guess');
+  if (b.firstChild && c.classList.contains('el-standin')) b.replaceChildren();
+}
+// The blend's mode follows the theme's effective mode (light: multiply; dark:
+// screen).
+function setBlendMode(mode) {
+  if (blendLayer) blendLayer.style.mixBlendMode = mode === 'dark' ? 'screen' : COMPOSITE_MODES[0];
 }
 
 export function requestDraw() {
@@ -1450,6 +1517,7 @@ function wellOf(g, fr) {
 }
 function hide(g) {
   if (g.container) g.container.style.display = 'none';
+  if (g.blend) g.blend.style.display = 'none';
   if (g.leader) { g.leader.style.display = 'none'; hoverable.delete(g); }
 }
 
@@ -1948,7 +2016,7 @@ function drawFrame() {
   }
   // The write phase: every marker style of the slice, after all its reads.
   for (const [h, g, m] of slice) {
-    if (!g.failed) applyGroup(g, m);
+    if (!g.failed) { applyGroup(g, m); syncBlend(g); }
     const c = h.passCount || {};
     if (m.res === 'drawn') {
       c.drawn++;
@@ -2366,7 +2434,9 @@ export function isHostRoot(el) {
 // marker sized to its target (boxRow, measureBox): the draw gets ctx.box
 // {w, h} and draws in the target's normalised space (an <svg viewBox="0 0 1
 // 1" preserveAspectRatio="none"> at 100 % of the marker), so a resize
-// rescales it with no second draw. `detach` {leader?} (U587; leader one of
+// rescales it with no second draw. `composite` (COMPOSITE_MODES, a 'box'
+// type's only; U624) gives each of its page groups group.blend, the blend
+// part (THE BLEND PER MARKER PART above). `detach` {leader?} (U587; leader one of
 // GLYPH_LEADERS or fn() → one, read per draw; default 'dotted'), a page
 // type's, gives its glyph the engine's drag, stored offset and leader (the
 // header's THE DETACHABLE GLYPH). An element whose type has none draws a
@@ -2410,8 +2480,13 @@ export function registerType(type, spec) {
     if (host === 'page') detach = Object.freeze({ leader: l == null ? GLYPH_LEADERS[0] : l });
   }
   if (detach) loadGuard();
+  // `composite` (U624): a box type's blend part; refused on a glyph type.
+  if (spec.composite != null && (!COMPOSITE_MODES.includes(spec.composite) || place !== 'box')) {
+    throw new TypeError(`registerType: composite is one of ${COMPOSITE_MODES.join(', ')}, on a type placed 'box'`);
+  }
+  const composite = spec.composite == null ? null : spec.composite;
   const entry = { draw: spec.draw, create: spec.create || null, move: spec.move || null, input: spec.input || null, glyph,
-    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool, place, detach };
+    sourceGlyph, targets: spec.targets === 'panes' ? 'panes' : 'items', host, tool, place, detach, composite };
   types.set(type, entry);
   resetSigs(type);
   syncListening();
@@ -3186,6 +3261,14 @@ export function initOverlay(opts = {}) {
   layer = document.createElement('div');
   layer.id = 'el-layer';
   document.body.appendChild(layer);
+  // THE BLEND PER MARKER PART's layer (U624): before #el-layer, so the glyphs
+  // stay above; no listener (never a hit-test target).
+  blendLayer = document.createElement('div');
+  blendLayer.id = 'el-layer-blend';
+  blendLayer.hidden = true;
+  document.body.insertBefore(blendLayer, layer);
+  setBlendMode(effectiveMode());
+  bus.on('mode', (e) => setBlendMode(e && e.mode ? e.mode : effectiveMode()));
   // The page well, the registry's first host: root and well #main, its layer
   // #el-layer at --z-pins; its place is the resolver paths above, its hidden
   // the one probe (setHiddenProbe), its settle the mount runtime's onSettle

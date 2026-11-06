@@ -1247,8 +1247,13 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // around each frame it meets by clip-path: path(), never hidden whole), on
 // the same RUNTIME@restate, 2026-11-05: 29,175 at ae/documents-page-strokes
 // aa5e2c3f → 30,578 (the four spliced functions still 5,111 B of it;
-// 'comment+highlight+box' 21,758).
-const RUNTIME_WHOLE_BYTES = 30578;
+// 'comment+highlight+box' 21,758); and at U624 (the blend per marker part,
+// H4 = b: a composite row's group.blend in a sibling blend layer, its mode
+// read off the document's --wc-bg, mirrored after every apply — the box
+// section's, plus five core lines), on RUNTIME@restate's second reading,
+// 2026-11-05: 30,578 at ae/int c89f1f83 → 31,820 (core 17,192 → 17,356;
+// 'comment+highlight+box' 21,758 → 23,000).
+const RUNTIME_WHOLE_BYTES = 31820;
 // The documents' share beside (C-17-share; RULED B3@documents-share-line a:
 // the 12 % line, read by the gate, never a status here): the gate's
 // gate-t4-exit reading at 627c5f53 — resolver 27,038 B (the element cut) +
@@ -1340,4 +1345,238 @@ test('a real Chrome: the fixture type\'s inline module defines it and draws its 
     assert.ok(report.types.includes('f-box'), `${page}: the type defined itself and drew (not the generic mark)`);
     assert.ok(report.types.includes('comment') && report.types.includes('f-gone:generic'), `${page}: the others drew`);
   }
+});
+
+// ── the blend per marker part in documents (U624; HIGHLIGHTER@blend-seam,
+// H4 = b; HAND FOLD 1, DECISIONS.md K.2-271) ─────────────────────────────────
+// A type row naming composite: 'multiply' (lib/packs/elements COMPOSITE_MODES,
+// on a box type) gives its box groups group.blend, a div.el-blend in a sibling
+// layer `.wc-el-layer.wc-el-blend` before the markers' layer, whose element
+// blends with the page (multiply; screen when the document's --wc-bg is dark).
+// group.container stays on .wc-el-layer; group.blend takes its placement,
+// clip and display after every apply, carries data-el-ids and no data-place,
+// and rides the draw ctx as ctx.blend. A payload with no such row makes no
+// blend layer at all.
+const blendPayload = () => {
+  const p = fixturePayload();
+  p.types[0].composite = 'multiply';
+  assert.equal(E.validatePayload(p), null, E.validatePayload(p) || '');
+  return p;
+};
+// A draw in the document's realm: a blending path into ctx.blend, the rest
+// into the container (the ink pack's split, U626).
+function blendDraw(win, { throws = false } = {}) {
+  const spy = { calls: 0, ctx: null, group: null };
+  spy.draw = function (g, ctx) {
+    spy.calls++;
+    spy.ctx = ctx;
+    spy.group = g;
+    const NS = 'http://www.w3.org/2000/svg';
+    const put = (parent, cls) => {
+      const s = win.document.createElementNS(NS, 'svg');
+      const p = win.document.createElementNS(NS, 'path');
+      p.setAttribute('class', cls);
+      s.appendChild(p);
+      parent.appendChild(s);
+    };
+    if (ctx.blend) put(ctx.blend, 'hl');
+    if (throws) throw new Error('this draw fails half way');
+    put(g.container, 'pen');
+  };
+  return spy;
+}
+const blendLayerOf = (win) => win.document.querySelector('.wc-el-layer.wc-el-blend');
+const markLayerOf = (win) => win.document.querySelector('.wc-el-layer:not(.wc-el-blend)');
+const BLEND_STYLE = ['left', 'top', 'width', 'height', 'clipPath', 'display'];
+const styleOfEl = (el) => Object.fromEntries(BLEND_STYLE.map((k) => [k, el.style[k]]));
+function openBlend(p, html) {
+  const { win } = open(html || documentOf(p));
+  const errors = [];
+  win.console.error = (...a) => errors.push(a.join(' '));
+  const spy = blendDraw(win);
+  win.__wcMount.elements.define('f-box', spy.draw, p.types[0].assets);
+  return { win, spy, errors };
+}
+
+test('validatePayload: a type row\'s composite is \'multiply\' on a box type, or absent; anything else is refused', () => {
+  assert.ok(E.TYPE_KEYS.includes('composite'));
+  assert.equal(E.validatePayload(blendPayload()), null);
+  for (const bad of ['screen', 'overlay', true]) {
+    const p = fixturePayload();
+    p.types[0].composite = bad;
+    assert.match(E.validatePayload(p) || '', /composite is not one of multiply/, JSON.stringify(bad));
+  }
+  const glyph = fixturePayload();
+  glyph.types[0].place = 'glyph';
+  glyph.types[0].composite = 'multiply';
+  assert.match(E.validatePayload(glyph) || '', /composite is not one of multiply on a type placed box/);
+});
+
+test('an opting group\'s group.blend sits in the document\'s blend layer and its group.container on .wc-el-layer, placed alike; no blend layer without an opting row', async () => {
+  const p = blendPayload();
+  const { win, spy, errors } = openBlend(p);
+  await settled(win);
+  const m = markerOf(win, 'b1');
+  const L = blendLayerOf(win);
+  assert.ok(m && L, 'the marker and the blend layer');
+  assert.equal(m.parentNode, markLayerOf(win), 'group.container stays on .wc-el-layer');
+  assert.equal(spy.group.container, m);
+  const b = spy.group.blend;
+  assert.ok(b && b.parentNode === L, 'group.blend sits in the blend layer');
+  assert.equal(spy.ctx.blend, b, 'the draw ctx carries it');
+  assert.equal(b.getAttribute('data-el-ids'), 'b1', 'it carries the group\'s data-el-ids');
+  assert.equal(b.hasAttribute('data-place'), false, 'and no data-place');
+  assert.ok(!markers(win).includes(b), 'no marker query takes it');
+  assert.ok(L.contains(win.document.querySelector('path.hl')), 'the blending path blends');
+  assert.ok(m.contains(win.document.querySelector('path.pen')), 'the rest stays on the markers\' layer');
+  assert.deepStrictEqual(styleOfEl(b), styleOfEl(m), 'the same placement, clip and display');
+  assert.notEqual(b.style.display, 'none');
+  assert.ok(L.compareDocumentPosition(markLayerOf(win)) & win.Node.DOCUMENT_POSITION_FOLLOWING, 'before the markers\' layer');
+  assert.equal(L.style.mixBlendMode, 'multiply', 'a light document: multiply');
+  assert.deepEqual(errors, []);
+  // The fixture as it was (no composite): no blend layer, no group.blend.
+  const plain = fixturePayload();
+  const o = openBlend(plain);
+  await settled(o.win);
+  assert.equal(blendLayerOf(o.win), null, 'no blend layer');
+  assert.equal(o.spy.group.blend, undefined);
+  assert.equal('blend' in o.spy.ctx, false);
+});
+
+test('a dark document blends with screen; a clipped box\'s blend part is inset alike, and hidden with it when it is not drawn', async () => {
+  const p = blendPayload();
+  const [a, b, c, d] = previewTemplate();
+  const dark = a + previewThemeCss({ tokens: { '--wc-bg': '#14110c' } }) + b + anchorsSrc.scriptElement({ kinds: ALL_KINDS })
+    + E.scripts(p) + c + previewNodeJson(fixture().node) + d;
+  const D = openBlend(p, dark);
+  await settled(D.win);
+  assert.equal(blendLayerOf(D.win).style.mixBlendMode, 'screen', 'its --wc-bg is dark: screen');
+  const saved = BOXES['svg.chart'];
+  try {
+    BOXES['svg.chart'] = [700, 750, 200, 100];
+    const { win, spy } = openBlend(p);
+    await settled(win);
+    const m = markerOf(win, 'b1');
+    assert.equal(m.style.clipPath, 'inset(0px 100px 0px 0px)', 'cut at the host\'s right edge');
+    assert.deepStrictEqual(styleOfEl(spy.group.blend), styleOfEl(m), 'inset alike');
+    BOXES['svg.chart'] = [900, 750, 200, 100];
+    win.dispatchEvent(new win.Event('resize'));
+    assert.equal(m.style.display, 'none', 'past its host: not drawn');
+    assert.equal(spy.group.blend.style.display, 'none', 'hidden with it');
+  } finally { BOXES['svg.chart'] = saved; }
+});
+
+test('a draw that throws leaves no blend part: the generic mark stands in on the markers\' layer alone', async () => {
+  const p = blendPayload();
+  const { win } = open(documentOf(p));
+  win.console.error = () => {};
+  const spy = blendDraw(win, { throws: true });
+  win.__wcMount.elements.define('f-box', spy.draw, p.types[0].assets);
+  await settled(win);
+  assert.equal(spy.calls, 1);
+  assert.ok(classes(markerOf(win, 'b1')).includes('el-generic'), 'the generic mark');
+  assert.equal(spy.group.blend, null, 'group.blend dropped');
+  assert.equal(blendLayerOf(win).children.length, 0, 'nothing of it left to blend');
+});
+
+test('a page stroke of an opting type: its group.blend at the union box, beside its marker', async () => {
+  const p = withItems(blendPayload(), ARROW('p1'));
+  const { win, spy } = openBlend(p);
+  await settled(win);
+  const m = markerOf(win, 'p1');
+  assert.ok(m && m.getAttribute('data-place') === 'box', 'the page marker');
+  const g = spy.group;
+  assert.ok(g && g.items.some((x) => x.id === 'p1') && g.blend, 'the page group has group.blend');
+  assert.equal(g.blend.parentNode, blendLayerOf(win));
+  assert.deepStrictEqual(styleOfEl(g.blend), styleOfEl(m), 'placed and masked as its marker');
+});
+
+// A re-draw (a replay step's elements.draw, a fresh payload) rebuilds every
+// group: the blend layer is emptied with the markers', so no stale blend part
+// of an earlier build stays painted at its old place (U624 review).
+test('a re-draw rebuilds the blend parts: the blend layer holds only the new group.blend, mirrored', async () => {
+  const p = blendPayload();
+  const { win, spy } = openBlend(p);
+  await settled(win);
+  const first = spy.group.blend;
+  assert.ok(first && first.parentNode === blendLayerOf(win));
+  win.__wcMount.elements.draw(blendPayload());
+  await settled(win);
+  const L = blendLayerOf(win);
+  const now = spy.group.blend;
+  assert.ok(now && now !== first, 'a new blend part for the new build');
+  assert.deepStrictEqual([...L.querySelectorAll('.el-blend')], [now], 'the earlier build\'s blend part is gone');
+  assert.equal(first.isConnected, false);
+  assert.deepStrictEqual(styleOfEl(now), styleOfEl(markerOf(win, 'b1')), 'placed as its marker');
+});
+
+// A guessed opting group (U624 HAND FOLD 2, K.2-274, R3): its blend part is
+// el-blend plus el-guess for its opacity only — the core marker rules
+// (.wc-el-layer .el-guess, .el-section, .el-masked, …) never reach it, so the
+// blend layer paints no second dashed border, as the live chrome's
+// #el-layer-blend .el-blend draws none (public/app.css read the same way).
+test('a guessed opting group\'s blend part has no border, as in the live chrome', async () => {
+  const { createCascade } = require('../test-support/css-cascade');
+  const p = blendPayload();
+  p.items.find((it) => it.id === 'b1').answer = { state: 'orphaned', how: 'score-low' };
+  assert.equal(E.validatePayload(p), null);
+  const { win, spy } = openBlend(p);
+  await settled(win);
+  const m = markerOf(win, 'b1');
+  assert.ok(classes(m).includes('el-guess'), 'the marker is a guess');
+  const b = spy.group.blend;
+  assert.ok(b && b.parentNode === blendLayerOf(win), 'its blend part');
+  assert.deepStrictEqual([...b.classList].sort(), ['el-blend', 'el-guess'], 'el-blend, plus el-guess for its opacity');
+  const runtimeCss = [...win.document.querySelectorAll('style')].map((s) => s.textContent).find((s) => s.includes('.wc-el-blend'));
+  assert.ok(runtimeCss, 'the runtime\'s style element');
+  const css = createCascade(runtimeCss, { win });
+  assert.match(css.value(m, 'border') || '', /dashed/, 'the marker keeps its guess border');
+  assert.ok(!/dashed|dotted|solid/.test(css.value(b, 'border') || ''), `no border on the blend part: ${css.value(b, 'border')}`);
+  assert.equal(css.value(b, 'opacity'), '.8', 'faded as a guess');
+  // The live chrome: #el-layer-blend's part, by app.css's own rules.
+  const live = new JSDOM('<!doctype html><body><div id="el-layer-blend"><div class="el-blend el-guess"></div></div></body>').window;
+  WINDOWS.push(live);
+  live.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });   // a wide light window
+  const appCss = createCascade(fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8'), { win: live });
+  const lb = live.document.querySelector('.el-blend');
+  assert.equal(appCss.value(lb, 'border'), null, 'the live chrome draws no border there');
+  assert.equal(appCss.value(lb, 'opacity'), '.8');
+});
+
+// A REAL document (U624 HAND FOLD 2, R1): the preview a daemon serves, its
+// payload built by lib/server/document-elements (typeRow carrying the
+// manifest's composite), not a hand-built one, draws an opting box type's
+// blend part in the blend layer.
+test('a real preview built through document-elements\' typeRow draws an opting box type\'s blend part', async (t) => {
+  const { withServer } = require('../test-support/helpers');
+  const { approveElementPack } = require('../test-support/element-type-fixture');
+  const d = await withServer(t);
+  approveElementPack(d, { name: 'rd-blend-pack', type: 'rd-blend',
+    json: { payload: { keys: ['anchor', 'shared', 'label'] }, anchors: ['element'], place: 'box', composite: 'multiply' } });
+  assert.ok(d.srv.elementTypes.listed('rd-blend'), 'the opting type lists');
+  const okJson = async (pr, what) => { const r = await pr; assert.ok(r.status >= 200 && r.status < 300, `${what}: ${r.status} ${r.text}`); return r.json; };
+  await okJson(d.api.post('/api/render', { id: 'fx-b', html: '<figure><svg class="chart" viewBox="0 0 10 10" width="100" height="100"><rect width="10" height="10"/></svg></figure>' }), 'render');
+  const anchor = { v: 1, kind: 'element', mount: 'fx-b', at: { path: [0, 0], sib: 0 },
+    fp: { tag: 'svg', id: '', cls: ['chart'], head: '', attrs: [], parent: 'figure' }, rows: [] };
+  const el = (await okJson(d.api.post('/api/elements', { type: 'rd-blend', anchor, payload: { label: 'hl' } }), 'element')).element;
+  await okJson(d.api.post('/api/turn-begin', { message: 'blend' }), 'turn-begin');
+  const node = (await okJson(d.api.post('/api/turn-end', { author: 'claude' }), 'turn-end')).node_id;
+  const r = await d.anonApi.get(`/preview/node/${node}`);
+  assert.equal(r.status, 200, r.text);
+  const data = /<script type="application\/json" data-wc-elements>([\s\S]*?)<\/script>/.exec(r.text);
+  assert.ok(data, 'the payload rides');
+  const row = JSON.parse(data[1]).types.find((x) => x.type === 'rd-blend');
+  assert.deepStrictEqual([row.place, row.composite], ['box', 'multiply'], 'typeRow carried composite');
+  const { win } = open(r.text);
+  win.console.error = () => {};
+  const spy = blendDraw(win);
+  win.__wcMount.elements.define('rd-blend', spy.draw, {});
+  await settled(win);
+  const m = markerOf(win, el.id);
+  assert.ok(m && m.parentNode === markLayerOf(win), 'the marker on the markers\' layer');
+  const b = spy.group && spy.group.blend;
+  assert.ok(b && b.parentNode === blendLayerOf(win), 'its blend part in the blend layer');
+  assert.equal(blendLayerOf(win).style.mixBlendMode, 'multiply');
+  assert.ok(blendLayerOf(win).contains(win.document.querySelector('path.hl')), 'the blending path blends');
+  assert.deepStrictEqual(styleOfEl(b), styleOfEl(m), 'placed as its marker');
 });

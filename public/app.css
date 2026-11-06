@@ -3206,6 +3206,7 @@ button.sh-line:focus-visible { outline: 2px solid var(--wc-accent); outline-offs
   /* the open queue screen covers the page, so its markers go (they floated on
      the queue items) */
   body:has(.rail.open) #el-layer { display: none; }
+  body:has(.rail.open) #el-layer-blend { display: none; }
 }
 
 /* ── U308 · the bottom bar's tool slot (annotation engine 2A.4; ruling H-3) ──
@@ -3633,3 +3634,17 @@ html.framed #topbar > #btn-graph { margin-left: auto; }
 #el-layer .el-leader[data-leader="hover"]:not(.el-leader-on) { visibility: hidden; }
 #el-layer .el-leader.el-leader-orphan line { stroke: var(--wc-gold); stroke-dasharray: 4 3; opacity: .8; }
 #el-layer .el-marker.el-dragging { cursor: grabbing; }
+
+/* ── the page host's blend layer (public/app/overlay.js; U624, HIGHLIGHTER@blend-seam, H4 = b) ──
+   #el-layer-blend sits before #el-layer at the same rung, so every glyph stays
+   above it. #el-layer is its own stacking context, so a blend inside it meets
+   nothing; this layer's ELEMENT blends against the page (the overlay writes
+   mix-blend-mode inline: multiply in the theme's light mode, screen in its
+   dark). It holds only group.blend, an opting box type's second container,
+   placed and clipped as its marker is; it never takes a press. Hidden while it
+   holds nothing, and with the markers under the open queue on a phone (the
+   759px block above). */
+#el-layer-blend { position: fixed; inset: 0; z-index: var(--z-pins); pointer-events: none; }
+#el-layer-blend[hidden] { display: none; }
+#el-layer-blend .el-blend { position: absolute; box-sizing: border-box; pointer-events: none; line-height: 0; color: var(--wc-comment); }
+#el-layer-blend .el-blend.el-guess { opacity: .8; }

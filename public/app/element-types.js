@@ -53,8 +53,9 @@
 // contract a): the default export is the function draw — `export default
 // function draw(group, ctx)` — and create, move, glyph, sourceGlyph and
 // targets are optional NAMED exports; anything else it exports is ignored.
-// The manifest wins over the module: `input` and `place` come from the
-// listing row's toolbar fields (what review saw), never from the module. The
+// The manifest wins over the module: `input`, `place` and `composite` (U624)
+// come from the listing row's toolbar fields (what review saw), never from
+// the module. The
 // spec goes through registerElementType only, so the reads gate, the liar
 // control and draw-failed hold for a plug-in type unchanged. A rejected
 // import, a module whose evaluation throws, or one with no default draw
@@ -575,8 +576,8 @@ function startImport(type, p, sha) {
 }
 
 // The registration spec from a module: mod.default (the function draw) plus
-// the named exports MODULE_EXPORTS lists; `input` and `place` from the
-// listing row's toolbar fields (the manifest wins over the module).
+// the named exports MODULE_EXPORTS lists; `input`, `place` and `composite`
+// from the listing row's toolbar fields (the manifest wins over the module).
 function specOf(mod, row) {
   let draw;
   try { draw = mod ? mod.default : undefined; } catch (e) { return { error: String((e && e.message) || e) }; }
@@ -592,6 +593,7 @@ function specOf(mod, row) {
   const tb = row && row.toolbar && typeof row.toolbar === 'object' ? row.toolbar : {};
   if (overlayModule.INPUT_KINDS.includes(tb.input)) spec.input = tb.input;
   if (overlayModule.PLACE_MODES.includes(tb.place)) spec.place = tb.place;
+  if (spec.place === 'box' && overlayModule.COMPOSITE_MODES.includes(tb.composite)) spec.composite = tb.composite;
   return { spec };
 }
 

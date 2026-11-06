@@ -642,3 +642,51 @@ test('a private page stroke is in no file document (the export, the replay downl
   assert.ok(pinned, 'and the withdrawn one, at the version the node pins');
   assert.equal(pinned.shared, false, 'read private by its latest version');
 });
+
+// ── the blend part's type row (U624; H4 = b; HAND FOLD 2, K.2-274) ──────────
+// typeRow carries the manifest's composite (lib/packs/elements COMPOSITE_MODES)
+// on a box type, so a REAL document (a preview, an export, a replay, both
+// pictures) draws an opting type's group.blend; a glyph type, and a type
+// without the field, carry no composite key. The glyph row is also read
+// through a descriptor that names composite (as a registry would serve one
+// the validator never saw): typeRow's own place guard keeps it off.
+test('U624: a box type whose listing toolbar has composite \'multiply\' gets row.composite; a glyph type and a type without the field get no composite key', async (t) => {
+  const d = await withServer(t);
+  approveElementPack(d, { name: 'de-blend-pack', type: 'de-blend', json: { ...MARK_JSON, composite: 'multiply' } });
+  approveElementPack(d, { name: 'de-plain-pack', type: 'de-plain', json: MARK_JSON });
+  approveElementPack(d, { name: 'de-pin-pack', type: 'de-pin', json: { ...MARK_JSON, place: 'glyph' } });
+  for (const type of ['de-blend', 'de-plain', 'de-pin']) assert.ok(d.srv.elementTypes.listed(type), `${type} lists`);
+  assert.equal(d.srv.elementTypes.descriptor('de-blend').toolbar.composite, 'multiply', 'the listing carries it in the toolbar bag');
+  await ok(d.api.post('/api/render', { id: 'pb', html: HTML_B }), 'render');
+  for (const type of ['de-blend', 'de-plain', 'de-pin']) await post(d.api, { type, anchor: ELEMENT('pb'), payload: { label: type } }, type);
+  const node = await commit(d.api, 'the blend rows');
+  const rowsOf = (p) => Object.fromEntries(p.types.map((r) => [r.type, r]));
+  for (const [route, reader] of [[PREVIEW, readerOf(createAudience({ configFile: null }), REQ.browser)], [EXPORT, fileReader('local')]]) {
+    const p = build(d, node, reader, { route });
+    assert.equal(validatePayload(p), null, `${route}: ${JSON.stringify(p && p.types)}`);
+    const rows = rowsOf(p);
+    assert.deepStrictEqual(Object.keys(rows).sort(), ['de-blend', 'de-pin', 'de-plain'], route);
+    assert.deepStrictEqual([rows['de-blend'].place, rows['de-blend'].composite], ['box', 'multiply'], `${route}: the opting box type`);
+    assert.ok(!Object.hasOwn(rows['de-plain'], 'composite'), `${route}: no field, no composite key`);
+    assert.equal(rows['de-pin'].place, 'glyph');
+    assert.ok(!Object.hasOwn(rows['de-pin'], 'composite'), `${route}: a glyph type has no blend part`);
+  }
+  // A descriptor that names composite on a glyph type (and an unknown mode on
+  // a box type): typeRow keeps both off the row.
+  const reg = d.srv.elementTypes;
+  const odd = { 'de-pin': 'multiply', 'de-plain': 'screen' };
+  const elementTypes = new Proxy(reg, {
+    get(target, k) {
+      if (k !== 'descriptor') return typeof target[k] === 'function' ? target[k].bind(target) : target[k];
+      return (type) => {
+        const desc = target.descriptor(type);
+        return Object.hasOwn(odd, type) && desc ? { ...desc, toolbar: { ...desc.toolbar, composite: odd[type] } } : desc;
+      };
+    },
+  });
+  const p = build(d, node, fileReader('local'), { route: EXPORT, deps: { ...documentDeps(ctxOf(d)), elementTypes } });
+  const rows = rowsOf(p);
+  assert.equal(rows['de-blend'].composite, 'multiply');
+  assert.ok(!Object.hasOwn(rows['de-pin'], 'composite'), 'a glyph type: never, whatever the descriptor says');
+  assert.ok(!Object.hasOwn(rows['de-plain'], 'composite'), 'a mode outside COMPOSITE_MODES: never');
+});
