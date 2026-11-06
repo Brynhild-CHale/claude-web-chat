@@ -1252,8 +1252,11 @@ test('the runtime: no work at require time, then memoised per key', () => {
 // read off the document's --wc-bg, mirrored after every apply — the box
 // section's, plus five core lines), on RUNTIME@restate's second reading,
 // 2026-11-05: 30,578 at ae/int c89f1f83 → 31,820 (core 17,192 → 17,356;
-// 'comment+highlight+box' 21,758 → 23,000).
-const RUNTIME_WHOLE_BYTES = 31820;
+// 'comment+highlight+box' 21,758 → 23,000); and at U613b (the page item id
+// grammar: PAGE_ITEM_RE's regex literal inlined in the spliced isPageRecord,
+// under DOC_SPLICE's rule, and its test; the page cut alone), 2026-11-05:
+// 31,928 at ae/int 302931f3 → 31,983 (the spliced functions 5,111 → 5,166).
+const RUNTIME_WHOLE_BYTES = 31983;
 // The documents' share beside (C-17-share; RULED B3@documents-share-line a:
 // the 12 % line, read by the gate, never a status here): the gate's
 // gate-t4-exit reading at 627c5f53 — resolver 27,038 B (the element cut) +
