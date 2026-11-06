@@ -1583,3 +1583,38 @@ test('a real preview built through document-elements\' typeRow draws an opting b
   assert.ok(blendLayerOf(win).contains(win.document.querySelector('path.hl')), 'the blending path blends');
   assert.deepStrictEqual(styleOfEl(b), styleOfEl(m), 'placed as its marker');
 });
+
+// U632 (ctx.layer withdrawn, H9 = a: one draw-ctx shape in both realms): the
+// document's draw ctx, a box group's with its group.blend, carries no
+// `layer` — the type writes only into its group's containers.
+test('the document draw ctx carries no layer (U632): live and in documents one shape', async () => {
+  for (const p of [fixturePayload(), blendPayload()]) {
+    const { win, spy, errors } = openBlend(p);
+    await settled(win);
+    assert.ok(spy.calls >= 1 && spy.ctx, 'drawn');
+    assert.equal('layer' in spy.ctx, false, 'no own or inherited layer key');
+    assert.equal(spy.ctx.document, true);
+    assert.equal(Boolean(spy.ctx.blend), Boolean(p.types[0].composite), 'ctx.blend as U624 left it');
+    assert.deepEqual(errors, []);
+  }
+});
+
+// U632 (HAND FOLD 3, K.2-275, optional (b)): darkDoc reads a hex --wc-bg as
+// the ink pack's darkBackdrop does — 3 or 6 digits; 4 and 5 read as light.
+test('a short-hex --wc-bg: #111 blends with screen, #fff with multiply; a 4- or 5-digit hex reads as light (the pack\'s darkBackdrop)', async () => {
+  const p = blendPayload();
+  const [a, b, c, d] = previewTemplate();
+  const modeFor = async (bg) => {
+    const html = a + previewThemeCss({ tokens: { '--wc-bg': bg } }) + b + anchorsSrc.scriptElement({ kinds: ALL_KINDS })
+      + E.scripts(p) + c + previewNodeJson(fixture().node) + d;
+    const D = openBlend(p, html);
+    await settled(D.win);
+    assert.equal(D.win.getComputedStyle(D.win.document.documentElement).getPropertyValue('--wc-bg').trim(), bg, `${bg} is the document's --wc-bg`);
+    return blendLayerOf(D.win).style.mixBlendMode;
+  };
+  assert.equal(await modeFor('#111'), 'screen', '#111 is dark');
+  assert.equal(await modeFor('#fff'), 'multiply', '#fff is light');
+  assert.equal(await modeFor('#14110c'), 'screen', 'a 6-digit dark hex as before');
+  assert.equal(await modeFor('#1111'), 'multiply', 'a 4-digit hex reads as light');
+  assert.equal(await modeFor('#11111'), 'multiply', 'a 5-digit hex reads as light');
+});
