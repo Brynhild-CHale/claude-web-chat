@@ -663,3 +663,43 @@ test('a glyph whose anchor is a markdown item (the page well\'s clip) dragged pa
     flush();
   }
 });
+
+test('a drop whose last measure was clipped (the well shrank under the drag): 0 POST, the glyph drawn back, one overlay:glyph-refused', async () => {
+  const main = W.document.getElementById('main');
+  main.dataset.pin = 'well';
+  POS.well = box(40, 30, 1000, 700);
+  const { heard, off } = hearRefusals();
+  try {
+    POS['lead-p1'] = box(100, 120);
+    await setLive([pinOn('c1', 'p1', lead('p1'))]);
+    ov.requestDraw();
+    await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'attached');
+    moves.length = 0;
+    const el = markersFor('c1')[0];
+    // (100, 120) by (+300, +300): (400, 420), inside the well it was drawn in.
+    pe(el, 'pointerdown', 'mouse', 24);
+    pe(el, 'pointermove', 'mouse', 24, { clientX: 400, clientY: 400 });
+    flush();
+    // The well shrinks under the drag: (400, 420) is outside it, so the last
+    // measure before the release is clipped.
+    POS.well = box(40, 30, 200, 200);
+    ov.requestDraw();
+    flush();
+    assert.ok(ov.stats().clipped >= 1, 'precondition: the last measure is clipped');
+    pe(el, 'pointerup', 'mouse', 24, { clientX: 400, clientY: 400 });
+    el.dispatchEvent(new W.PointerEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 1, pointerType: 'mouse', pointerId: 24, clientX: 400, clientY: 400 }));
+    await settle();
+    assert.equal(moves.length, 0, '0 glyph POSTs');
+    assert.deepStrictEqual(heard, [{ id: 'c1', hint: ov.GLYPH_DROP_HINT }], 'one refusal');
+    assert.equal(pinPop(), null, 'the drag\'s click did not open the thread');
+    await drawnUntil(() => at(markersFor('c1')[0], 100, 120), 'drawn back at its stored place');
+    assert.equal(live.get('c1').display, undefined, 'its row\'s display unchanged');
+  } finally {
+    off();
+    delete main.dataset.pin;
+    delete POS.well;
+    ov.requestDraw();
+    flush();
+  }
+  closePops();
+});
