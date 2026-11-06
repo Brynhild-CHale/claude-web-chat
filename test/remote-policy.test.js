@@ -1542,7 +1542,7 @@ test('PRIVATE_RULES: the one table of where private records ride — frames and 
       // The documents' element payloads (U521: documentElements applies them).
       'GET /api/export/:ref': ['doc_elements.items[]'],
       'GET /api/elements/search': ['hits[]'],
-      'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]'],
+      'GET /api/graph/node/:id': ['comments[]', 'lean_elements[]', 'captures[]'],
       'GET /preview/node/:id': ['comments[]', 'doc_elements.items[]'],
       'GET /preview/pane/:node/:mount': ['doc_elements.items[]'],
       'GET /api/graph/diff': ['elements.added[]', 'elements.removed[]', 'elements.changed[]', 'elements.orphaned[]'],
