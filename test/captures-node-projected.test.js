@@ -359,3 +359,73 @@ test('GET /api/captures/:id/raw below seesPrivate: after a Wipe the record comes
   assert.deepEqual(clone(s.node.captures.find((c) => c.id === s.cap)), s.committed, 'the node in memory is as committed');
   assert.equal(fs.readFileSync(s.nodeFile, 'utf8'), s.fileBefore, 'the node file is untouched');
 });
+
+// ── GET /api/graph/node/:id (U620b: the node read's captures[]) ─────────────
+// The node read answers the committed node whole; below seesPrivate its
+// `captures` go through the captures route's own rule (routes/capture.js
+// nodeCapturesFor, called from graph.js privateFor where PRIVATE_RULES.routes'
+// row names captures[]), so a member made private since the commit is named
+// nowhere in it: GT-16, F9.
+
+test('GET /api/graph/node/:id below seesPrivate: a member made private since the commit is named nowhere in captures[] — no id@v, no describe, no url — the entry as GET /api/captures?node= projects it, and the node is untouched', async (t) => {
+  const s = await committedThenUnshared(t);
+  const route = `/api/graph/node/${encodeURIComponent(s.nodeId)}`;
+  const bboxText = JSON.stringify(s.committed.distilled.describe.bbox);
+  for (const [who, read] of s.below) {
+    const r = await read(route);
+    assert.equal(r.status, 200, `${who}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.id, s.nodeId, who);
+    assert.ok(Array.isArray(r.body.captures), `${who}: the node read carries captures[]`);
+    const caps = JSON.stringify(r.body.captures);
+    assert.ok(!namesId(caps, s.priv.id), `${who}: captures[] names the private member: ${caps}`);
+    assert.ok(!caps.includes(bboxText), `${who}: the union bbox (covering the private member) rides in captures[]`);
+    // The rest of the node read, less its top-level `elements`: those id@v
+    // references are judged by the committed version's record (graph.js
+    // sharedRef, U584 — p@1 was shared), a rule this unit does not change.
+    const { elements: _refs, ...rest } = r.body;
+    const text = JSON.stringify(rest);
+    assert.ok(!namesId(text, s.priv.id), `${who}: the node read names the private member: ${text}`);
+    const entry = r.body.captures.find((c) => c.id === s.cap);
+    assert.ok(entry, `${who}: the picture entry is listed`);
+    assert.deepEqual(entry.distilled.elements, s.kept.map((m) => `${m.id}@1`), `${who}: the shared members stay`);
+    assert.equal(entry.distilled.describe, undefined, `${who}: no describe`);
+    assert.equal(entry.url, `element:${s.kept[s.kept.length - 1].id}`, `${who}: the url falls back to the newest kept member`);
+    assert.deepEqual(entry.image, s.committed.image, `${who}: the image block as committed`);
+    assert.deepEqual(entry.image_without, s.committed.image_without, `${who}: the image_without block as committed`);
+    // The one rule: what the captures route answers the same reader.
+    const viaCaptures = await read(`/api/captures?node=${encodeURIComponent(s.nodeId)}`);
+    assert.equal(viaCaptures.status, 200, who);
+    assert.deepEqual(r.body.captures, viaCaptures.body.captures, `${who}: captures[] as GET /api/captures?node= projects them`);
+  }
+  assert.deepEqual(clone(s.node.captures.find((c) => c.id === s.cap)), s.committed, 'the node in memory is as committed');
+  assert.equal(fs.readFileSync(s.nodeFile, 'utf8'), s.fileBefore, 'the node file is untouched');
+});
+
+test('GET /api/graph/node/:id for a reader with seesPrivate (the local browser): captures[] as committed — the private member\'s id@v and the describe ride', async (t) => {
+  const s = await committedThenUnshared(t);
+  const r = await s.d.anonApi.get(`/api/graph/node/${encodeURIComponent(s.nodeId)}`);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(r.json.captures, clone(s.node.captures), 'every entry as committed');
+  const entry = r.json.captures.find((c) => c.id === s.cap);
+  assert.deepEqual(entry, s.committed);
+  assert.ok(entry.distilled.elements.includes(`${s.priv.id}@1`), 'the private member\'s id@v');
+  assert.deepEqual(entry.distilled.describe, s.committed.distilled.describe, 'the describe');
+});
+
+test('GET /api/graph/node/:id below seesPrivate fails closed: a member whose latest version the log cannot read is named nowhere in captures[]', async (t) => {
+  const s = await committedThenUnshared(t);
+  const store = s.srv.graph.elements;
+  const lost = s.kept[0].id;
+  const latest = store.latest;
+  store.latest = function (id, ...rest) { return id === lost ? null : latest.call(this, id, ...rest); };
+  t.after(() => { store.latest = latest; });
+  for (const [who, read] of s.below) {
+    const r = await read(`/api/graph/node/${encodeURIComponent(s.nodeId)}`);
+    assert.equal(r.status, 200, who);
+    const caps = JSON.stringify(r.body.captures);
+    assert.ok(!namesId(caps, lost), `${who}: names the member with no readable record: ${caps}`);
+    assert.ok(!namesId(caps, s.priv.id), `${who}: names the private member: ${caps}`);
+    const entry = r.body.captures.find((c) => c.id === s.cap);
+    assert.deepEqual(entry.distilled.elements, s.kept.slice(1).map((m) => `${m.id}@1`), `${who}: only the readable shared member stays`);
+  }
+});
