@@ -365,7 +365,8 @@ test('GET /api/captures/:id/raw below seesPrivate: after a Wipe the record comes
 // `captures` go through the captures route's own rule (routes/capture.js
 // nodeCapturesFor, called from graph.js privateFor where PRIVATE_RULES.routes'
 // row names captures[]), so a member made private since the commit is named
-// nowhere in it: GT-16, F9.
+// nowhere in it — nor in the node read's top-level `elements` (U620c: by the
+// element's latest version, the same reading): GT-16, F9.
 
 test('GET /api/graph/node/:id below seesPrivate: a member made private since the commit is named nowhere in captures[] — no id@v, no describe, no url — the entry as GET /api/captures?node= projects it, and the node is untouched', async (t) => {
   const s = await committedThenUnshared(t);
@@ -379,12 +380,14 @@ test('GET /api/graph/node/:id below seesPrivate: a member made private since the
     const caps = JSON.stringify(r.body.captures);
     assert.ok(!namesId(caps, s.priv.id), `${who}: captures[] names the private member: ${caps}`);
     assert.ok(!caps.includes(bboxText), `${who}: the union bbox (covering the private member) rides in captures[]`);
-    // The rest of the node read, less its top-level `elements`: those id@v
-    // references are judged by the committed version's record (graph.js
-    // sharedRef, U584 — p@1 was shared), a rule this unit does not change.
-    const { elements: _refs, ...rest } = r.body;
-    const text = JSON.stringify(rest);
+    // The whole node read, its top-level `elements` included: those id@v
+    // references are judged by the element's LATEST version (U620c; graph.js
+    // sharedRef through domain/elements latestShared, the pictures' reading —
+    // p@1 was shared at the commit, p is private now).
+    const text = JSON.stringify(r.body);
     assert.ok(!namesId(text, s.priv.id), `${who}: the node read names the private member: ${text}`);
+    assert.ok(Array.isArray(r.body.elements), `${who}: the node read carries elements`);
+    for (const m of s.kept) assert.ok(r.body.elements.includes(`${m.id}@1`), `${who}: the shared member ${m.id}@1 stays in elements: ${JSON.stringify(r.body.elements)}`);
     const entry = r.body.captures.find((c) => c.id === s.cap);
     assert.ok(entry, `${who}: the picture entry is listed`);
     assert.deepEqual(entry.distilled.elements, s.kept.map((m) => `${m.id}@1`), `${who}: the shared members stay`);
