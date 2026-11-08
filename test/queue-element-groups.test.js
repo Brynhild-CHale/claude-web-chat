@@ -402,3 +402,93 @@ test('sendElement\'s "already queued" reads group membership', () => {
     assert.equal(it.why_wake, why_wake);
   });
 }
+
+// ── a re-send carries the item as delivered (U633c, 5B.3; the 5B gate's GT-14, C-5B-14-resend) ──
+// The kept copy resendElement reads follows every edit of the queued item —
+// a refresh and a leaver write it through — so a re-send after a
+// pre-delivery edit raises the describe the maintainer last saw delivered,
+// never the last raise's.
+{
+  const { elementItem } = require('../lib/channel/policy');
+  const stroke = (id, describe, v = 1) => ({ ...elementItem({ kind: 'element', type: 'ink', op: 'add', id, v, shared: true, has: true, mount: 'm1' },
+    { wake: true, label: 'Ink', describe }), label: 'Ink' });
+  const A = { shape: 'circle', confidence: 0.8, count: 2, bbox: [0.1, 0.1, 0.2, 0.2], element_ids: ['a1', 'a2'] };
+  const B = { shape: 'underline', confidence: 0.9, count: 1, bbox: [0.5, 0.6, 0.3, 0.05], element_ids: ['b1'] };
+  const FIELDS = ['element_id', 'element_ids', 'count', 'v', 'summary', 'why_wake', 'describe', 'excerpt'];
+  const pick = (it) => Object.fromEntries(FIELDS.filter((k) => Object.hasOwn(it, k)).map((k) => [k, it[k]]));
+  function twoGroups() {
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A, count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A));
+    queue.enqueueElement(state, bus, stroke('b1', B));
+    return { state, bus, it: state.queue[0] };
+  }
+
+  test('edit then deliver then resend: the re-sent item carries the refreshed describe', () => {
+    // An unfolded two-stroke item, its older member edited (the summary's shape words follow, G7).
+    const state = freshState();
+    const bus = createBus();
+    queue.enqueueElement(state, bus, stroke('a1', { ...A, count: 1, element_ids: ['a1'] }));
+    queue.enqueueElement(state, bus, stroke('a2', A));
+    const id = state.queue[0].id;
+    queue.refreshElement(state, bus, 'a1', stroke('a1', { ...A, shape: 'cross', bbox: [0.1, 0.3, 0.2, 0.2] }, 2));
+    const { batch: [delivered] } = queue.flush(state, bus, {});
+    assert.equal(delivered.describe.shape, 'cross', 'delivered as refreshed');
+    const r = queue.resendElement(state, bus, id, { exists: () => true });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.describe, delivered.describe, 'the describe as delivered, not the last raise\'s');
+    assert.equal(r.item.summary, 'Ink · cross · 2 strokes · a2@1');
+    assert.deepStrictEqual(pick(r.item), pick(delivered), 'every field Claude read, as delivered');
+    // A folded item whose NEWEST member was edited: its v, words and entry as delivered.
+    const f = twoGroups();
+    queue.refreshElement(f.state, f.bus, 'b1', stroke('b1', { ...B, shape: 'strike', bbox: [0.5, 0.7, 0.3, 0.05] }, 2));
+    const { batch: [d2] } = queue.flush(f.state, f.bus, {});
+    const r2 = queue.resendElement(f.state, f.bus, f.it.id, { exists: () => true });
+    assert.deepStrictEqual(pick(r2.item), pick(d2));
+    assert.equal(JSON.stringify(r2.item.describe), JSON.stringify(d2.describe), 'byte-equal to the delivered describe');
+    assert.equal(r2.item.v, 2);
+  });
+
+  test('edit then deliver then un-share one member then resend: the re-sent item carries the refreshed describe less the un-shared member', () => {
+    const { state, bus, it } = twoGroups();
+    const id = it.id;
+    queue.refreshElement(state, bus, 'a1', stroke('a1', { ...A, shape: 'cross', bbox: [0.1, 0.3, 0.2, 0.2] }, 2));
+    const { batch: [delivered] } = queue.flush(state, bus, {});
+    assert.deepStrictEqual(delivered.describe.groups.map((g) => g.shape), ['cross', 'underline']);
+    // b1 un-shared after delivery: the queue holds nothing, so only the re-send's `exists` reads it.
+    assert.equal(queue.removeByElement(state, bus, 'b1'), 0);
+    const r = queue.resendElement(state, bus, id, { exists: (m) => m !== 'b1' });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.element_ids, ['a1', 'a2']);
+    assert.deepStrictEqual(r.item.describe, { shape: 'cross', confidence: 0.8, count: 2, bbox: [0.1, 0.3, 0.2, 0.2] },
+      'A\'s refreshed entry alone, the four fields');
+    assert.ok(!JSON.stringify(r.item).includes('b1'), 'the un-shared member is nowhere on the item');
+  });
+
+  test('un-share before delivery then resend: the kept copy follows the leaver, so the re-send never re-raises it', () => {
+    const { state, bus, it } = twoGroups();
+    const id = it.id;
+    queue.removeByElement(state, bus, 'b1');
+    const { batch: [delivered] } = queue.flush(state, bus, {});
+    const r = queue.resendElement(state, bus, id, { exists: () => true });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.element_ids, ['a1', 'a2'], 'the delivered members, even with an `exists` that says yes');
+    assert.deepStrictEqual(pick(r.item), pick(delivered));
+    assert.ok(!JSON.stringify(r.item).includes('b1'));
+  });
+
+  test('un-share an OLDER member before delivery then resend: the kept copy follows that leaver too', () => {
+    // The leaver is not the newest (wasNewest false): the write-through runs on
+    // every leaver, so the re-send never re-raises a1 nor A's entry (J2, AD5).
+    const { state, bus, it } = twoGroups();
+    const id = it.id;
+    queue.removeByElement(state, bus, 'a1');
+    const { batch: [delivered] } = queue.flush(state, bus, {});
+    const r = queue.resendElement(state, bus, id, { exists: () => true });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.element_ids, ['a2', 'b1'], 'the delivered members, even with an `exists` that says yes');
+    assert.deepStrictEqual(pick(r.item), pick(delivered));
+    assert.ok(!JSON.stringify(r.item).includes('a1'));
+  });
+}
