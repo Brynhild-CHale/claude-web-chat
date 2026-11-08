@@ -477,4 +477,18 @@ test('sendElement\'s "already queued" reads group membership', () => {
     assert.deepStrictEqual(pick(r.item), pick(delivered));
     assert.ok(!JSON.stringify(r.item).includes('b1'));
   });
+
+  test('un-share an OLDER member before delivery then resend: the kept copy follows that leaver too', () => {
+    // The leaver is not the newest (wasNewest false): the write-through runs on
+    // every leaver, so the re-send never re-raises a1 nor A's entry (J2, AD5).
+    const { state, bus, it } = twoGroups();
+    const id = it.id;
+    queue.removeByElement(state, bus, 'a1');
+    const { batch: [delivered] } = queue.flush(state, bus, {});
+    const r = queue.resendElement(state, bus, id, { exists: () => true });
+    assert.equal(r.ok, true);
+    assert.deepStrictEqual(r.item.element_ids, ['a2', 'b1'], 'the delivered members, even with an `exists` that says yes');
+    assert.deepStrictEqual(pick(r.item), pick(delivered));
+    assert.ok(!JSON.stringify(r.item).includes('a1'));
+  });
 }
