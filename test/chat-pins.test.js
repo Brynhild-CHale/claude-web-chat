@@ -1026,12 +1026,21 @@ test('the re-read interval: a reset and a hello each make one GET and supersede 
   bus.emit('mirror', { what: ['stream'] });
   await shell.tick();
   assert.equal(chatGets, n, 'pending again');
+  // Half the interval on, so a trailing read the hello failed to supersede
+  // would land half an interval after the hello's GET, not a whole one.
+  await pause(MS / 2);
+  assert.equal(chatGets, n, 'still pending');
+  const helloAt = getTimes.length;
   await shell.frame(helloFrame());
   await settle();
   assert.equal(chatGets, n + 1, 'one GET for the hello, at once');
   await pause(MS + 100);
   await settle();
   assert.ok(chatGets - n >= 1 && chatGets - n <= 2, `the hello's GET, plus at most its hydrate's one trailing re-read: ${chatGets - n}`);
+  if (chatGets - n === 2) {
+    const gap = getTimes[helloAt + 1] - getTimes[helloAt];
+    assert.ok(gap >= MS - 10, `the second GET is the hydrate's own trailing read, a whole interval after the hello's (${Math.round(gap)} ms), not the superseded one`);
+  }
   await backToShipped();
 });
 
@@ -1042,12 +1051,50 @@ test('the re-read interval: stopChatPins clears a pending trailing read; a hidde
   const intervals = shell.intervals().length;
   await CP.refreshChatPins();
   let n = chatGets;
-  bus.emit('mirror', { what: ['stream'] });
+  // The trailing timer itself, seen through the bare globals the module calls.
+  const made = [];
+  const cleared = new Set();
+  const fired = new Set();
+  const st = globalThis.setTimeout;
+  const ct = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn, ms, ...a) => {
+    const h = st((...x) => { fired.add(h); fn(...x); }, ms, ...a);
+    made.push({ h, ms });
+    return h;
+  };
+  try {
+    bus.emit('mirror', { what: ['stream'] });
+  } finally {
+    globalThis.setTimeout = st;
+  }
+  const timers = made.filter((m) => m.ms > 0 && m.ms <= MS);
+  assert.ok(timers.length >= 1, 'a stream-only change inside the interval sets the trailing timer');
   await shell.tick();
   assert.equal(chatGets, n, 'pending');
-  CP.stopChatPins();
+  globalThis.clearTimeout = (h) => { cleared.add(h); return ct(h); };
+  try {
+    CP.stopChatPins();
+  } finally {
+    globalThis.clearTimeout = ct;
+  }
+  for (const { h } of timers) assert.ok(cleared.has(h) || fired.has(h), 'stopChatPins clears the pending trailing timer');
   await pause(MS + 100);
   assert.equal(chatGets, n, 'no GET after stop');
+  // A timer stop left pending would fire into the next run: stopped and
+  // started again inside the interval (the new run's own interval longer
+  // than the pause), the new run makes its init GET and no other.
+  await restartPins({ rereadMinMs: MS });
+  await CP.refreshChatPins();
+  bus.emit('mirror', { what: ['stream'] });
+  await shell.tick();
+  CP.stopChatPins();
+  n = chatGets;
+  CP.initChatPins({ rereadMinMs: MS * 4 });
+  await waitUntil(() => chatGets > n, { what: 'the re-init\'s GET' });
+  await settle();
+  await pause(MS + 100);
+  await settle();
+  assert.equal(chatGets, n + 1, 'the re-init\'s one GET: stop left no trailing timer behind');
   await restartPins({ rereadMinMs: MS });
   // Hidden: the trailing read comes due while the tab is hidden and is owed
   // until it shows, as any read.
@@ -1067,5 +1114,31 @@ test('the re-read interval: stopChatPins clears a pending trailing read; a hidde
   await pause(MS + 100);
   assert.equal(chatGets, n + 1, 'and nothing more');
   assert.equal(shell.intervals().length, intervals, 'no interval');
+  await backToShipped();
+});
+
+test('the re-read interval: a stream-only change heard while a read is in flight trails by the interval once that read lands (read()\'s again path)', async () => {
+  const MS = 300;
+  pinList = QUIET();
+  await restartPins({ rereadMinMs: MS });
+  let release;
+  hold = new Promise((r) => { release = r; });
+  const from = getTimes.length;
+  const p = CP.refreshChatPins();
+  await shell.tick();
+  assert.equal(getTimes.length, from + 1, 'one read in flight');
+  bus.emit('mirror', { what: ['stream'] });
+  bus.emit('mirror', { what: ['stream'] });
+  hold = null;
+  release();
+  await p;
+  await settle();
+  assert.equal(getTimes.length, from + 1, 'the stream-only again waits out the interval: no read at once');
+  await waitUntil(() => getTimes.length === from + 2, { timeout: MS + 2000, what: 'the again path\'s trailing read' });
+  const gap = getTimes[from + 1] - getTimes[from];
+  assert.ok(gap >= MS - 10, `the trailing read starts an interval after the read in flight started (${Math.round(gap)} ms)`);
+  await pause(MS + 100);
+  await settle();
+  assert.equal(getTimes.length, from + 2, 'one trailing read for the changes heard in flight, no more');
   await backToShipped();
 });
