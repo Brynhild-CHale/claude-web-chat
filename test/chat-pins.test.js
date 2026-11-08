@@ -42,6 +42,7 @@ let shell, W, $, doc, bus, S, ov, CP, dock, sheet, sh, topbar, anchors;
 let level = 'local';
 let rev = 1000;
 let chatGets = 0;
+const getTimes = [];          // when each chat GET reached the route (performance.now())
 let hold = null;              // a promise the next chat GET waits on
 let pinList = [];             // what GET /api/elements?type=chat-comment answers
 const pages = new Map();      // conversation id → its page of turns
@@ -230,6 +231,7 @@ before(async () => {
       '/api/elements': async (url) => {
         if (!url.includes('type=chat-comment')) return { elements: [], next_cursor: 0 };
         chatGets++;
+        getTimes.push(performance.now());
         if (hold) await hold;
         return { elements: pinList.map((p) => ({ ...p })), next_cursor: 9 };
       },
@@ -699,7 +701,10 @@ test('indexing → placed: one more GET after a bus mirror {what: [all]}; two bu
   release();
   await settle();
   // The 'stream' burst heard during the read asks for one more once it lands:
-  // the followed conversation has pins (K.2-177 g3); then nothing further.
+  // the followed conversation has pins (K.2-177 g3), a stream-only reason,
+  // so it trails by the re-read interval (U635); then nothing further.
+  await waitUntil(() => chatGets === n + 2, { timeout: CP.REREAD_MIN_MS + 2000, what: 'the burst\'s trailing re-read' });
+  await settle();
   assert.equal(chatGets, n + 2, 'placed now: the burst\'s one re-read, no further read');
   assert.ok(markerOf('k3').classList.contains('el-hit'), 'placed');
   bus.emit('mirror', { what: ['all'] });
@@ -718,6 +723,8 @@ test('a superseded answer after a terminal rewind: a bus mirror {what: [stream]}
   const n = chatGets;
   pinList = QUIET().map((p) => (p.id === 'k1' ? { ...p, ...A('superseded') } : p));
   bus.emit('mirror', { what: ['stream'] });
+  // A stream-only reason: the re-read trails by the re-read interval (U635).
+  await waitUntil(() => chatGets === n + 1, { timeout: CP.REREAD_MIN_MS + 2000, what: 'the stream change\'s trailing re-read' });
   await settle();
   assert.equal(chatGets, n + 1, 'one re-read for the stream change');
   assert.ok(!markerOf('k1').classList.contains('el-hit'), 'no longer el-hit');
@@ -891,7 +898,7 @@ test('a marker\'s click opens the pin list until an open is registered; register
 });
 
 // ── the source checks ───────────────────────────────────────────────────────
-test('source: no element id, no state literal outside the vocabulary, overlay exports only, no runs walker, no timer; no document builder serves it', async () => {
+test('source: no element id, no state literal outside the vocabulary, overlay exports only, no runs walker, no interval (one timer: the trailing re-read); no document builder serves it', async () => {
   const src = read('public/app/chat-pins.js');
   const code = stripComments(src);
   assert.ok(!/\.id\s*=[^=]/.test(code), 'no element id assigned');
@@ -913,7 +920,9 @@ test('source: no element id, no state literal outside the vocabulary, overlay ex
   }
   assert.ok(!/createTreeWalker|SHOW_TEXT|nextNode\(/.test(code), 'no runs walker of its own: the offsets are anchors.resolveSource');
   assert.ok(/anchors\.resolveSource\(/.test(code) && /sourceMap\(text, \{ flavor: 'chat' \}\)/.test(code));
-  assert.ok(!/\bsetInterval\(|\bsetTimeout\(|requestAnimationFrame\(/.test(code), 'no timer');
+  assert.ok(!/\bsetInterval\(|requestAnimationFrame\(/.test(code), 'no interval, no frame');
+  // The one timer is the trailing re-read's (U635): one bare setTimeout.
+  assert.equal((code.match(/\bsetTimeout\(/g) || []).length, 1, 'one timer: the trailing re-read');
   assert.ok(!/\bmarks\b/.test(code), 'no `marks` Set: draw() keeps no detached marker div (K.2-177 g2)');
   assert.ok(!/\bfetch\(/.test(code), 'every request through http.js');
   const serverFiles = [];
