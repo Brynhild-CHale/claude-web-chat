@@ -1626,6 +1626,18 @@ function reachWalk(g, before, what) {
   domWarned.add(g.type);
   console.warn(`[web-chat] overlay: the '${g.type}' ${what} wrote what the marker allowlist refuses; removed`);
 }
+// A glyph-sized marker (a type's glyph, or THE PHONE PIN): sized and offset
+// by g.glyph, hidden until its first measure, and made the group's container
+// (one helper for both of rebuild's glyph branches; HAND FOLD 8, U690).
+function glyphContainer(g, c) {
+  const gl = g.glyph;
+  c.style.width = gl.w + 'px';
+  c.style.height = gl.h + 'px';
+  c.style.transform = `translate(${gl.dx}px, ${gl.dy}px)`;
+  c.style.display = 'none';
+  c._group = g;
+  g.container = c;
+}
 function rebuild(h, gs) {
   const layer = h.layer;
   for (const m of [...layer.querySelectorAll('.el-marker, .el-leader')]) m.remove();
@@ -1639,13 +1651,7 @@ function rebuild(h, gs) {
     const t = types.get(g.type);
     // THE PHONE PIN (U629): a glyph marker the overlay draws, taking a press.
     if (g.pin) {
-      const gl = g.glyph;
-      c.style.width = gl.w + 'px';
-      c.style.height = gl.h + 'px';
-      c.style.transform = `translate(${gl.dx}px, ${gl.dy}px)`;
-      c.style.display = 'none';
-      c._group = g;
-      g.container = c;
+      glyphContainer(g, c);
       drawPin(g, c);
       layer.appendChild(c);
       continue;
@@ -1672,13 +1678,7 @@ function rebuild(h, gs) {
       }
       continue;
     }
-    const gl = g.glyph;
-    c.style.width = gl.w + 'px';
-    c.style.height = gl.h + 'px';
-    c.style.transform = `translate(${gl.dx}px, ${gl.dy}px)`;
-    c.style.display = 'none';
-    c._group = g;
-    g.container = c;
+    glyphContainer(g, c);
     // A detached glyph's leader (U587): drawn under the markers, placed by
     // applyGroup at each measure.
     if (g.detach) {
