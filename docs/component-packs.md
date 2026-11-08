@@ -632,6 +632,25 @@ review checks each (`lib/packs/elements.js`'s header is the field reference):
   `"dotted"`, `"faint"` or `"hover"`). The engine owns the drag, the stored
   offset and the line; the type's `draw.js` ships none of them.
 
+**What a type's `draw.js` is handed, and what stays drawn.** The draw ctx
+(and a move's) carries no `layer`: a type draws into `group.container`. A
+box-placed type that declares `"composite": "multiply"` gets a second part
+per marker, `group.blend`, in a blend layer of its own: it draws what should
+blend there and the rest into `group.container`. After every draw and every
+move the engine walks the marker: only svg, g, path, line, polyline, circle,
+rect, div and span are kept, anything else is removed with its subtree, and
+so is any `href`, `xlink:href`, `src` or `srcset`, any `on*` handler, and any
+value holding `url(`, `image-set(`, `javascript:` or a backslash (title,
+role, class, id, `aria-*` and `data-*` keep their values). Each removal is
+counted in the overlay's stats and the type is named once on the browser
+console; what passed stays drawn. Never attach a shadow root to a marker
+part. The walk is a DOM rule only: a URL a draw writes may be fetched before
+the walk removes it, the surface page's Content-Security-Policy-Report-Only
+header reports and blocks nothing, and review and approve are the boundary
+until the surface page has an enforced policy. In a node's preview or a
+replay the draw runs under that document's enforced policy: images from
+`data:` and `blob:` only, and no network.
+
 A pack's type that declares `"family": "chat"` is refused: plug-in chat
 types are not supported in this build, and only the built-in chat-comment is a
 chat type.
