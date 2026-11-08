@@ -447,3 +447,30 @@ test('an element shared at the node\'s commit, then made private: absent from th
     assert.deepStrictEqual(hasAny(html, SHARED_WORDS), SHARED_WORDS, `${who}: with its text`);
   }
 });
+
+// ── either end (RULED MOUNT@either-end, G2 a; U690) ─────────────────────────
+// The export's hidden-item test reads either end of a page record (element-
+// refs anchorItems): an arrow whose second item is a pane the node minimizes
+// is hidden (B3's second strip may take it over the cap), as one whose first
+// item is; an arrow between two shown panes is placed and never stripped.
+test('U690 (G2 a): fitElements counts an arrow hidden when either end\'s pane is minimized, and never strips one between two shown panes', () => {
+  const strokes = require('../lib/core/strokes');
+  const arrowTo = (a, b) => strokes.pageRecord({
+    frame: { w: 1200, h: 2400 },
+    from: { item: a, x: 0.5, y: 0.5, w: 600, h: 200 },
+    to: { item: b, x: 0.25, y: 0.5, w: 600, h: 200 },
+  });
+  const item = (id, seq, anchor) => ({
+    id, v: 1, type: 'comment', schema: 'comment@1', seq, anchor,
+    shared: true, answer: null, payload: { text: `text of ${id} ${'x'.repeat(400)}`, replies: [] },
+  });
+  const payload = {
+    v: 1, builtins: ['comment'], types: [], removed: [],
+    items: [item('to-min', 2, arrowTo('pa', 'pm')), item('from-min', 1, arrowTo('pm', 'pa')), item('shown', 0, arrowTo('pa', 'pb'))],
+  };
+  for (const it of payload.items) assert.ok(strokes.isPageRecord(it.anchor), `${it.id}: a page record`);
+  const node = { mounts: [{ id: 'pa', html: '' }, { id: 'pb', html: '' }, { id: 'pm', html: '', pane_state: { minimized: true } }] };
+  const none = exp.fitElements(payload, node, 0);
+  assert.deepStrictEqual(none.stripped.map((s) => s.id), ['from-min', 'to-min'], 'both arrows touching the minimized pane, oldest first; never the shown one');
+  assert.deepStrictEqual(none.payload.items.map((it) => it.id), ['shown']);
+});
