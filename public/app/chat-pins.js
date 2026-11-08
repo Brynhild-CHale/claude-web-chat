@@ -19,7 +19,7 @@
 // THE RECORDS. The daemon owns the state (D5): each served chat-comment record
 // carries the resolver's answer at its top level (state, visible, explain,
 // how?, at?, note?, turn_id_now?; lib/server/routes/elements.js U416). They
-// reach the chrome two ways, and none of them is a timer:
+// reach the chrome two ways, and none of them is a poll:
 //   - ONE GET /api/elements?type=chat-comment through http.js `request`: at
 //     init, after every hello, after every reset, when the mirror's level
 //     rises to `read`, and when a frame names a pin it cannot place (one with
@@ -31,9 +31,19 @@
 // conversation has a pin (any state: a terminal rewind may supersede or
 // re-key its turn), or an `indexing` pin's turn is listed by another host
 // (the inspector's turn list), one more read follows a bus 'mirror' change
-// naming 'stream' or 'all' (a parse's scoped mirror:reset), single-flight. Below the mirror's `read` level nothing is requested and
-// nothing drawn; the daemon's projection decides what a level sees (L6,
-// C-15-1) and no rule here narrows or widens it.
+// naming 'stream' or 'all' (a parse's scoped mirror:reset), single-flight.
+// THE RE-READ INTERVAL (U635, corrective to U460): a re-read asked only
+// because a 'stream' change met a pin of the followed conversation (the g3
+// arm, wantsReread's 'stream' reason) is trailing-throttled to one per
+// REREAD_MIN_MS from the last read's start — one bare setTimeout, never more
+// than one pending, cleared by stopChatPins — so while Claude streams the set
+// is read once a second, not once per round trip; a rewind's supersede shows
+// up to REREAD_MIN_MS late (the accepted cost). The indexing re-read (the
+// 'index' reason), a hello, a reset, the level gate, a frame naming a pin it
+// cannot place and a visibility return stay immediate, and an immediate read
+// supersedes a pending trailing one. Below the mirror's `read` level nothing
+// is requested and nothing drawn; the daemon's projection decides what a
+// level sees (L6, C-15-1) and no rule here narrows or widens it.
 //
 // PLACE (the chrome owns placement, from the renderer's stamps):
 //   turn       → the turn root, article.ct-turn[data-turn-id]
@@ -85,7 +95,8 @@
 // turn_id}).
 //
 // It creates no element id (classes only: the layer is the overlay's), adds no
-// frame, route or timer, and puts no quote into a wake or an envelope (D2).
+// frame, route or interval (its one timer is the trailing re-read's), and puts
+// no quote into a wake or an envelope (D2).
 import { bus } from './bus.js';
 import { request } from './http.js';
 import { onFrame, onHello } from './ws.js';
@@ -105,6 +116,9 @@ export const ELEMENTS_PATH = '/api/elements';
 export const HOST = 'chat';
 export const KINDS = Object.freeze(['turn', 'item', 'item-range', 'diff-line']);
 export const PALETTE_SOURCE = 'chat-pins';
+// The re-read interval (U635): a re-read asked only by a 'stream' change (the
+// g3 arm) waits until this long after the last read started (trailing).
+export const REREAD_MIN_MS = 1000;
 export const goneLabel = (n) => `Chat pins no longer in a chat (${n})`;
 // The chat host's glyph: the type's 26 px pin, hung from its anchor's top-left
 // corner (a chat element's top edge is the next one's bottom), so the stream
@@ -138,6 +152,10 @@ let again = false;                // false, or the Set of mirror changes heard w
 const againFor = (prev, what) => new Set([...(prev || []), ...what]);
 let rerun = false;                // a read asked for while one was in flight (sent after it)
 let stale = false;                // a read asked for while the tab was hidden
+let rereadMs = REREAD_MIN_MS;     // the interval (initChatPins's test seam may shorten it)
+let lastReadAt = -Infinity;       // when the last read started (performance.now())
+let trailing = null;              // the one pending trailing re-read's timer, or null
+const now = () => (typeof performance !== 'undefined' && performance && typeof performance.now === 'function' ? performance.now() : Date.now());
 let levelOk = false;
 const decisions = new Map();      // id → {state, how, hidden}: the last place() made
 
@@ -199,10 +217,13 @@ function onChatFrame(msg) {
   if (list.some((r) => validPin(r) && !answerOf(r))) refreshChatPins();
 }
 
-// One read of the live chat set (single-flight). Never below `read`, never
-// while the tab is hidden (asked for again when it shows).
+// One read of the live chat set (single-flight), asked for at once. Never
+// below `read`, never while the tab is hidden (asked for again when it shows).
+// It supersedes a pending trailing re-read: the read it makes (or owes) is as
+// fresh as the trailing one would have been.
 export function refreshChatPins() {
   if (!running || !contentOk()) return Promise.resolve(false);
+  clearTrailing();
   if (isHidden()) { stale = true; return Promise.resolve(false); }
   stale = false;
   if (inFlight) { rerun = true; return inFlight; }
@@ -210,6 +231,7 @@ export function refreshChatPins() {
 }
 function read() {
   const mine = ++seq;
+  lastReadAt = now();
   inFlight = (async () => {
     const r = await request('GET', `${ELEMENTS_PATH}?type=${CHAT_TYPE}`);
     inFlight = null;
@@ -217,11 +239,14 @@ function read() {
     if (fresh) setAll(r.body.elements);
     // One more read when one was asked for meanwhile (a hello, a reset, a
     // frame naming a pin it cannot place), or when an indexing re-read was and
-    // a pin of the followed conversation still answers indexing.
-    const more = rerun || (!!again && wantsReread(again));
+    // a pin of the followed conversation still answers indexing — at once; a
+    // stream-only `again` (the g3 arm) obeys the re-read interval.
+    const why = !!again && wantsReread(again);
+    const more = rerun || why === 'index';
     rerun = false;
     again = false;
     if (more) refreshChatPins();
+    else if (why === 'stream') rereadSoon();
     return !!fresh;
   })();
   return inFlight;
@@ -229,27 +254,45 @@ function read() {
 function onVisibility() {
   if (!isHidden() && stale) refreshChatPins();
 }
+// A re-read asked only by the 'stream' reason: at once when the last read
+// started REREAD_MIN_MS ago or more, else one trailing timer for the rest of
+// the interval; a further ask while it is pending adds nothing.
+function rereadSoon() {
+  if (trailing) return;
+  const wait = lastReadAt + rereadMs - now();
+  if (!(wait > 0)) { refreshChatPins(); return; }
+  trailing = setTimeout(() => { trailing = null; refreshChatPins(); }, wait);
+}
+function clearTrailing() {
+  if (!trailing) return;
+  clearTimeout(trailing);
+  trailing = null;
+}
 
-// Whether a mirror change asks for the one single-flight re-read: on a
+// Whether a mirror change asks for the one single-flight re-read, and why:
+// 'index' — on a 'stream' or 'all' change, an `indexing` pin of the followed
+// conversation, or one whose turn another registered host lists — the graph
+// inspector's turn list (U433), whatever conversation the chat follows
+// (K.2-181 g7) — read at once; 'stream' — only the g3 arm matched: on a
 // 'stream' change, a pin of the followed conversation in any state (a
-// terminal rewind may have superseded or re-keyed its turn, K.2-177 g3); on a
-// 'stream' or 'all' change, an `indexing` pin of the followed conversation, or
-// one whose turn another registered host lists — the graph inspector's turn
-// list (U433), whatever conversation the chat follows (K.2-181 g7).
+// terminal rewind may have superseded or re-keyed its turn, K.2-177 g3),
+// read under the re-read interval; false — no read.
 function wantsReread(what) {
   const cid = followed();
   const stream = what.has('stream');
   if (!stream && !what.has('all')) return false;
   let listed = null;
+  let why = false;
   for (const rec of records.values()) {
     if (!isObj(rec.anchor)) continue;
     const mine = !!cid && rec.anchor.conversation_id === cid;
-    if (mine && (stream || rec.state === INDEXING)) return true;
-    if (mine || rec.state !== INDEXING || !str(rec.anchor.turn_id)) continue;
+    if (mine && rec.state === INDEXING) return 'index';
+    if (mine) { if (stream) why = 'stream'; continue; }
+    if (rec.state !== INDEXING || !str(rec.anchor.turn_id)) continue;
     if (!listed) listed = turnsListed();
-    if (listed.has(rec.anchor.turn_id)) return true;
+    if (listed.has(rec.anchor.turn_id)) return 'index';
   }
-  return false;
+  return why;
 }
 // The turn ids the registered hosts other than the chat's (and the page's)
 // draw rows for ([data-turn-id] under the host's root). DOM reads only.
@@ -281,9 +324,11 @@ function onMirror(d) {
   // A follow elsewhere ends a reveal still waiting (K.2-177 g4).
   if (reveal && followed() !== reveal.cid) reveal = null;
   const what = new Set(d && Array.isArray(d.what) ? d.what : []);
-  if (ok && wantsReread(what)) {
+  const why = ok && wantsReread(what);
+  if (why) {
     if (inFlight) again = againFor(again, what);
-    else refreshChatPins();
+    else if (why === 'index') refreshChatPins();
+    else rereadSoon();
   }
 }
 
@@ -724,10 +769,13 @@ function registerChatHost() {
 }
 
 // initChatPins() — idempotent; after the chat panel (main.js), whose
-// #chat-views the host is registered over.
-export function initChatPins() {
+// #chat-views the host is registered over. `rereadMinMs` is a test seam only
+// (the re-read interval, REREAD_MIN_MS when absent; main.js passes none).
+export function initChatPins({ rereadMinMs } = {}) {
   if (running || typeof document === 'undefined') return;
   running = true;
+  rereadMs = Number.isFinite(rereadMinMs) && rereadMinMs >= 0 ? rereadMinMs : REREAD_MIN_MS;
+  lastReadAt = -Infinity;
   levelOk = contentOk();
   registerChatType();
   if (!registerChatHost()) offs.push(bus.on('chat:host', () => registerChatHost()));
@@ -754,10 +802,12 @@ export function initChatPins() {
 }
 
 // stopChatPins(): everything initChatPins set up taken down (a test's, or a
-// teardown's): the host, the type, the listeners, the popover.
+// teardown's): the host, the type, the listeners, the popover, a pending
+// trailing re-read.
 export function stopChatPins() {
   if (!running) return;
   running = false;
+  clearTrailing();
   for (const off of offs.splice(0)) { try { off(); } catch { /* already gone */ } }
   document.removeEventListener('visibilitychange', onVisibility);
   if (flashOff) { flashOff(); flashOff = null; }
