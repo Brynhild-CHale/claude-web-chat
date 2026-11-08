@@ -222,9 +222,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   item nearest its pen-down, and how far a width change made it drift is
   reported beside the stroke's marker. On a phone an arrow is drawn between
   its stacked items (it turns vertical), and a margin stroke is drawn faded
-  at its guess and listed in the orphans card (⌘K *Orphaned elements*); a
-  pin that opens a shared margin stroke's picture is planned for
-  0.9.0-alpha.6. Previews, exports and replays draw page strokes too, and a
+  at its guess and listed in the orphans card (⌘K *Orphaned elements*); from
+  0.9.0-alpha.6 a shared one Claude has a picture of shows as a pin instead
+  (see Added). Previews, exports and replays draw page strokes too, and a
   private stroke stays out of every reader that does not see private
   elements, as before. While a strokes tool is armed (the box grab
   included), one finger no longer scrolls or pinch-zooms anywhere on the
@@ -242,7 +242,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   A stroke picture's `inspect_capture` result is now its text, then the
   two images; the text is the JSON, a blank line, then a line saying which
   image is which, so a reader of `content[0].text` parses only the part
-  before the first blank line. Nothing is drawn on a wake.
+  before the first blank line. Nothing is drawn on a wake. The capture
+  Chrome (the replay GIF and video exports and the picture pair) now
+  launches with `--disable-gpu`, so a picture's two shots are
+  pixel-identical outside the group's ink; the live chrome is untouched.
 - **The highlighter blends with the page under it; the pen and the pencil
   look as before.** An element type may now declare `"composite":
   "multiply"` (a box-placed type only): the engine gives each of its markers
@@ -309,6 +312,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `input-mode.js`, `ink-describe.js`, `element-types.js`, `orphans.js` and
   `public/app.css` need a browser refresh only. `lib/mcp/tools/inspect_capture.js`
   needs `/exit` and a reopened Claude Code. Nothing needs a tunnel restart.
+- **The marker allowlist is a DOM rule, not a policy (0.9.0-alpha.6).** For
+  pack authors: the walk that keeps a marker to svg, g, path, line,
+  polyline, circle, rect, div and span runs after a draw or a move returns,
+  so a URL a draw writes may already have been fetched when the walk removes
+  it. Each removal is counted in the overlay's `stats().dom_refused` and the
+  type is named once on the browser console. The surface page's
+  report-only header measures and blocks nothing, and there is still no
+  enforced Content-Security-Policy on the surface page: `pack review` and
+  `pack approve` stay the boundary until there is one. A type never attaches
+  a shadow root to a marker part; a closed one escapes the walk. The ink
+  pack 0.2.0 already draws into `group.container` and `group.blend`.
+- **Neither the portal nor the schema moves in 0.9.0-alpha.6.** No protocol
+  bump: the tunnel portal stays on 12, so a running portal needs no restart.
+  No migration: the project schema stays 4, and coming from 0.9.0-alpha.5
+  writes no new record kind, field or file. No MCP tool or tool description
+  changed (still 24), so Claude Code needs no restart for it; the rules
+  file's two new sentences reach a project when `claude-web-chat install` or
+  `update` runs there.
+- **Back on 0.9.0-alpha.5, the phone pin and the as-delivered re-send are
+  gone.** That alpha reads everything this one writes. It re-sends a folded
+  stroke item's guess as it was last raised, so an edit made before the
+  delivery does not ride the re-send; it draws a shared margin stroke on a
+  phone faded, never as a pin; the chat's pins re-read on every streamed
+  change again; a PATCH that re-anchors an element to a kind its type does
+  not declare is taken; and an arrow is listed only under the item it
+  starts from (`GET /api/elements?mount=`, a pane's preview, an export's
+  hidden-pane test). Rolled back further, to 0.9.0-alpha.4, the page strokes
+  are kept but undrawn, as the bullet on that rollback above says.
+- **Restart the daemon after an edit to the queue, the element routes or a
+  document source.** For work on web-chat itself, alpha.6's product edits:
+  `lib/server/domain/queue.js` and `lib/server/routes/elements.js` need
+  `claude-web-chat restart`; `lib/server/document-elements.js` and
+  `lib/server/export.js` need the restart and a reload of any open document
+  (a downloaded export is a file: download it again); `public/app/overlay.js`,
+  `chat-pins.js` and `event-anchor.js` need a browser refresh only. Nothing
+  needs a tunnel restart.
 
 ### Added
 
@@ -341,6 +380,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   no longer matches is drawn at the resolver's guess when it has one, and
   listed under ⌘K *Orphaned elements* and in the graph inspector; a card
   re-anchors it at the guess or at a spot you pick.
+- **On a phone, a shared margin stroke Claude has pictured is a pin.** On a
+  screen under 760 px wide, a margin ink stroke whose strokes are all shared
+  and whose picture Claude has (you sent it with Send to Claude, or Claude
+  asked for it) is drawn as one pin; a tap opens the page with the ink and
+  without it. A stroke with a private member, one never pictured, an arrow
+  and a previewed node keep the faded guess, and a margin stroke drawn in a
+  wide window's gutter shows faded at the phone's edge. The phone learns a
+  picture is ready from the picture route itself, once per stroke version,
+  never on every frame; one Claude drew with `inspect_capture` alone shows
+  after the next reload.
 
 ### Changed
 
@@ -370,6 +419,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **A secret typed into a comment is masked.** A note's text, its replies and
   the pane text its anchor records pass the redactor before they reach the
   log, so a token typed into a comment shows masked, to its author too.
+- **A folded stroke item keeps one guess per group, and a re-send sends it
+  as last delivered.** Editing one stroke refreshes only its own group's
+  entry in `describe.groups` (a group the item does not list yet is folded
+  in as a new one would be), and the summary's shape words follow the
+  newest group. A re-send of a stroke group sends what is still shared, as
+  it was last delivered: a stroke the user un-shared after it was sent is
+  never sent again. Which strokes a collapsed one-group guess covers is kept
+  in memory only, so after a restart, a re-send or a new raise over it the
+  guess covers every member again.
+- **A comment pin's glyph stops at its pane's edge.** A glyph dragged past
+  the pane it was drawn in stops at the edge, and one dropped over a frame
+  goes back where it was, with nothing saved.
+- **While Claude streams, the chat's pins re-read at most once a second.**
+  A streamed change asks for at most one re-read per second, the last one
+  trailing; a hello may add one. A pin superseded by a rewind in the
+  terminal can take up to a second to show it.
+- **Re-anchoring an element checks its anchor kind, and an arrow is listed
+  under both its items.** A PATCH to `/api/elements/:id` that moves an
+  element to an anchor kind its type's `element.json` does not declare is
+  refused 400 `anchor-kind-undeclared`, as a create already was; an arrow
+  between two panes is listed under either pane (`GET /api/elements?mount=`,
+  a pane's preview, an export's hidden-pane test).
 
 ### Fixed
 
@@ -439,6 +510,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   inside either, however it is spelled (a link, `..`, another letter case),
   is refused, so a pane cannot reach the writer token, the capture token or a
   git hook through it.
+- **The surface page reports what it loads, and blocks nothing.** It sends
+  a Content-Security-Policy-Report-Only header with no report sink: a load
+  the policy would refuse shows on the browser console, and nothing a pane,
+  a theme or an element type does is blocked. A preview and a replay keep
+  their enforced policy.
+- **An element type's marker keeps only inert elements.** After every draw
+  and move the overlay removes any element outside svg, g, path, line,
+  polyline, circle, rect, div and span, any `href`, `src` or `srcset`, any
+  `on*` attribute, and any value holding `url(`, `image-set(`,
+  `javascript:` or a backslash; the draw and move ctx carry no `layer`. It
+  is a DOM rule only, and review and approve stay the boundary.
 
 ## [0.8.5] - 2026-10-15
 
