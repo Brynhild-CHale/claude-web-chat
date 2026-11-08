@@ -287,6 +287,10 @@ test('findChrome: an explicit WEB_CHAT_CHROME is the only candidate — a wrong 
 
 // ── the Chrome pipe driver, against a real process ─────────────────────────
 
+test('CHROME_FLAGS: the capture Chrome rasterises in software, so a picture pair\'s second shot is identical outside the ink', () => {
+  assert.ok(CHROME_FLAGS.includes('--disable-gpu'), 'launched with --disable-gpu (PICTURE@aligned)');
+});
+
 test('captureFrames: launches with the pipe flags on a throwaway profile, seeks and screenshots each time, then tears down', async (t) => {
   const fake = fakeChrome(t);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-cap-'));
