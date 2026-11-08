@@ -1276,3 +1276,52 @@ test('U625: a page stroke on an inline copy of the strokes fixture staged with a
   assert.deepStrictEqual(page.element.anchor, arrow, 'kept as given');
   assert.deepStrictEqual(e.srv.state.elements, [`${page.element.id}@1`]);
 });
+
+// ── the re-anchor's declared-kind check and either end (tranche 5, U690) ────
+// HAND FOLD 2 (DECISIONS.md K.2-274, from W3's review): the PATCH that
+// rewrites a plug-in version's anchor reads the same anchorKindRefusal POST
+// reads — a page record PATCHed onto a type declaring ['element'] only is
+// refused 400 anchor-kind-undeclared, nothing appended; a type declaring
+// 'page' takes it. RULED MOUNT@either-end (G2 a, DECISIONS.md O.3): GET
+// /api/elements?mount= lists an arrow from A to B under B as under A.
+test('U690 (HAND FOLD 2): PATCH {anchor: a page record} on a type declaring [\'element\'] only → 400 anchor-kind-undeclared, nothing appended (top level and in payload); a type declaring page takes it', async (t) => {
+  const d = await withServer(t);
+  const { api } = d;
+  approvePlugin(d, { name: 'tq-patch-el-pack', type: 'tq-patch-el', json: { anchors: ['element'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  approvePlugin(d, { name: 'tq-patch-pg-pack', type: 'tq-patch-pg', json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  await render(api, 'm1');
+  await render(api, 'm2');
+  const arrow = PAGE_ARROW('m1', 'm2');
+  const el = (await ok(api.post('/api/elements', { type: 'tq-patch-el', anchor: ELEMENT('m1'), payload: { note: 'on m1', shared: true } }), 'element-only write')).element;
+  const bytes = logBytes(d.root);
+  for (const body of [{ anchor: arrow }, { payload: { anchor: arrow } }]) {
+    const r = await api.patch(`/api/elements/${el.id}`, body);
+    assert.equal(r.status, 400, r.text);
+    const { hint, ...rest } = r.json;
+    assert.deepStrictEqual(rest, { error: ANCHOR_KIND_ERROR, type: 'tq-patch-el', kind: 'page', declared: ['element'] });
+    assert.equal(hint, ANCHOR_KIND_HINT('tq-patch-el', ['element']));
+  }
+  assert.equal(logBytes(d.root), bytes, 'a refused re-anchor appends nothing');
+  assert.equal(d.srv.elements.latest(el.id).v, 1, 'the element stays at v1');
+  // A re-anchor to a declared kind, and a PATCH that leaves the anchor alone, pass.
+  const moved = await ok(api.patch(`/api/elements/${el.id}`, { anchor: ELEMENT('m2') }), 'a declared kind');
+  assert.equal(moved.element.anchor.mount, 'm2');
+  await ok(api.patch(`/api/elements/${el.id}`, { note: 'words only' }), 'no anchor in the patch');
+
+  const pg = (await ok(api.post('/api/elements', { type: 'tq-patch-pg', anchor: ELEMENT('m1'), payload: { note: 'page type', shared: true } }), 'page-type write')).element;
+  const r = await ok(api.patch(`/api/elements/${pg.id}`, { anchor: arrow }), 'a page record on a type declaring page');
+  assert.deepStrictEqual(r.element.anchor, arrow, 'kept as given');
+});
+
+test('U690 (MOUNT@either-end, G2 a): GET /api/elements?mount=B lists an arrow from A to B, as ?mount=A does; a margin stroke beside A is listed under A only', async (t) => {
+  const d = await withServer(t);
+  const { api } = d;
+  approvePlugin(d, { name: 'tq-either-pack', type: 'tq-either', json: { anchors: ['element', 'page'], payload: { keys: ['anchor', 'shared', 'note'] } } });
+  for (const m of ['ea', 'eb', 'ec']) await render(api, m);
+  const arrow = (await ok(api.post('/api/elements', { type: 'tq-either', anchor: PAGE_ARROW('ea', 'eb'), payload: { note: 'arrow', shared: true } }), 'arrow')).element;
+  const margin = (await ok(api.post('/api/elements', { type: 'tq-either', anchor: PAGE_MARGIN('ea'), payload: { note: 'margin', shared: true } }), 'margin')).element;
+  const under = async (m) => (await ok(api.get(`/api/elements?type=tq-either&mount=${m}`), `?mount=${m}`)).elements.map((e) => e.id).sort();
+  assert.deepStrictEqual(await under('ea'), [arrow.id, margin.id].sort(), 'A: the arrow and the margin stroke');
+  assert.deepStrictEqual(await under('eb'), [arrow.id], 'B: the arrow, by its second item');
+  assert.deepStrictEqual(await under('ec'), [], 'a third pane: nothing');
+});

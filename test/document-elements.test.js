@@ -690,3 +690,23 @@ test('U624: a box type whose listing toolbar has composite \'multiply\' gets row
   assert.ok(!Object.hasOwn(rows['de-pin'], 'composite'), 'a glyph type: never, whatever the descriptor says');
   assert.ok(!Object.hasOwn(rows['de-plain'], 'composite'), 'a mode outside COMPOSITE_MODES: never');
 });
+
+// ── either end (RULED MOUNT@either-end, G2 a; U690) ─────────────────────────
+// documentElements' item cut (/preview/pane's case) reads either end of a
+// page record (element-refs anchorItems), so an arrow from pa to pb is kept
+// for pb as for pa; a preview of pane B alone then draws the arrow's B end as
+// the runtime clips it.
+test('U690 (G2 a): the item cut keeps an arrow from pa to pb for pb as for pa; a pane-anchored item stays under its own pane only', async (t) => {
+  const { d, node, ids, arrow, mine } = await pageScenario(t);
+  const aud = audiences(t, d.root);
+  const reader = readerOf(aud.none, REQ.browser);
+  for (const item of ['pa', 'pb']) {
+    const p = build(d, node, reader, { route: PANE, item });
+    assert.ok(p, `${item}: a payload`);
+    assert.equal(validatePayload(p), null, `${item}: ${JSON.stringify(p)}`);
+    assert.ok(idsOf(p).includes(arrow) && idsOf(p).includes(mine), `${item}: the arrow from pa to pb`);
+  }
+  assert.ok(idsOf(build(d, node, reader, { route: PANE, item: 'pb' })).includes(ids.mark), 'pb: its own de-mark');
+  assert.ok(!idsOf(build(d, node, reader, { route: PANE, item: 'pa' })).includes(ids.mark), 'pa: never pb\'s de-mark');
+  assert.equal(build(d, node, reader, { route: PANE, item: 'md-notes' }), null, 'an item neither end names: nothing');
+});
