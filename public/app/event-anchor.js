@@ -34,6 +34,17 @@
 // record whose JSON is over EVENT_ANCHOR_MAX bytes answers null, as does a
 // target outside the root or a recorder that throws.
 //
+// The cold count is split in two (BD6, DECISIONS.md K.2-257, PQ-EX-6), and
+// stats().cold stays their sum: cold_missing counts an event on a root with no
+// index (a first visit, a re-entry after the ENGAGED_MS expiry dropped it, or
+// a build that threw it away), cold_dirty an event that met a built index the
+// DOM moved under since (a pending record, a dirty mark, or no observer at
+// all). Which one is read from the index the entry already holds, before the
+// build, and counted only when the build succeeds; the warm path and engage()
+// count nothing new. cold_dirty / (warm + cold) is the dirty-index event rate
+// the 4D gate's F1 prints beside GT-19 — never a status. (stats().dirty is
+// something else: the entries dirty right now.)
+//
 // Nothing here resolves an anchor (A2 is deferred), sends anything, or reads
 // a store: the caller (mounts.js reportEvent) puts the record on the event
 // frame, and the daemon (lib/server/ws.js domEvent) checks it again.
@@ -74,7 +85,7 @@ export function createEventAnchors({
   }
   // root → { ix, dirty, mo, last }
   const entries = new Map();
-  const counts = { warm: 0, cold: 0, built: 0, idle: 0, expired: 0, released: 0, oversize: 0, none: 0 };
+  const counts = { warm: 0, cold: 0, cold_missing: 0, cold_dirty: 0, built: 0, idle: 0, expired: 0, released: 0, oversize: 0, none: 0 };
   let idlePending = false;
   let expiry = null;
 
@@ -188,8 +199,10 @@ export function createEventAnchors({
     const e = entryFor(root);
     if (pending(e)) e.dirty = true;
     if (e.dirty || !e.ix) {
+      const missing = !e.ix;
       try { build(root, e); } catch { e.ix = null; e.dirty = true; counts.none += 1; return null; }
       counts.cold += 1;
+      if (missing) counts.cold_missing += 1; else counts.cold_dirty += 1;
     } else {
       counts.warm += 1;
     }
