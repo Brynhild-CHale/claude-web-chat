@@ -136,6 +136,11 @@
 // nothing: the glyph is drawn back at its stored offset, and bus
 // 'overlay:glyph-refused' {id, hint: GLYPH_DROP_HINT} is emitted per element
 // (commitMove's shape) — the glyph drawn back is the feedback, no notice.
+// THE PHONE PIN (U629, plan 5B.7; RULED U614@phone-margin-pin H2 b). Below
+// 760 px a shared margin ('beside') stroke group whose picture is ready is
+// drawn as one glyph marker with the comment pin's look, and its tap opens the
+// picture with and without the ink; the full rules: its section below. Its
+// one read is GET picturePath(id) (and the pair's two <img>); it never posts.
 //
 // It makes no other network call, sends no report (U314's, through
 // onAnswers), and assigns `hidden` only through the probe seam (U303's). Previews are
@@ -309,6 +314,12 @@ const REFUSED_DROPS = new Set(['framed', 'clipped']);
 export const LEADER_PANE_MAX = 8;
 // The route a drop writes (lib/server/routes/element-glyph.js).
 export const glyphPath = (id) => `/api/elements/${encodeURIComponent(String(id))}/glyph`;
+// THE PHONE PIN (U629): the picture a pin opens (lib/server/routes/
+// element-picture.js GET, read only: the newest picture of the element's
+// stroke group, or with 'without' the same clip without its ink), and the
+// pin's words.
+export const picturePath = (id, which) => `/api/elements/${encodeURIComponent(String(id))}/picture${which === 'without' ? '?which=without' : ''}`;
+export const PIN_LABEL = 'Ink in the margin: open its picture, with and without the ink';
 
 // THE DRAW RULES: how an answer is drawn, first matching row wins. `how` and
 // `guess` null match anything. A section answer (re-resolved, how 'section')
@@ -453,6 +464,11 @@ let pageRowCount = 0;
 let typesApi = null;
 let typesLoading = false;
 const RAW_READ = Object.freeze({ raw: true });
+// THE PHONE PIN's state (U629): what the picture GET last answered per probe
+// key (`<id>@<v>` of a candidate group's newest member → {state: 'pending' |
+// 'ready' | 'none', type}), and the pair's look while one is open.
+const pictures = new Map();
+let pairLook = null;
 
 const totals = { frames: 0, longest_frame_ms: 0, box_reads: 0, box_ms: 0, well_resizes: 0, dom_refused: 0 };
 const lastPass = { drawn: 0, clipped: 0, guesses: 0, sections: 0, frame_hidden: 0 };   // the page host's
@@ -1207,6 +1223,9 @@ function buildPageArm(byKey) {
           failed: false, place: 'box', page: true, forceGuess: guess, drawn: false, boxW: 0, boxH: 0, members: [], endEls: [] };
         g.box = Object.freeze({ get w() { return g.boxW; }, get h() { return g.boxH; } });
         byKey.set(key, g);
+        // A margin stroke faded on a narrow screen (U629: its guess clamped
+        // into the well's width, and a phone pin's candidate).
+        if (how === 'page-narrow') g.narrowBeside = true;
       }
       g.members.push({ id: row.id, rec, fromEl, toEl });
       grouped.add(row.id);
@@ -1215,8 +1234,178 @@ function buildPageArm(byKey) {
       g.items.push({ id: row.id, v: row.v, type, row, state, how: how || 'page', answer: { state, how: how || 'page', guess } });
     }
   }
+  pinGroups(byKey);
   for (const id of [...pageViews.keys()]) if (!grouped.has(id)) pageViews.delete(id);
   orphansChanged();
+}
+// ── THE PHONE PIN (U629, plan 5B.7; RULED U614@phone-margin-pin H2 b,
+// REQ@page-stroke-phone a with the maintainer's note, PICTURE@when a, AD5/J2,
+// PHONE@gutter-guess G9 a; DECISIONS L.1 M4) ─────────────────────────────────
+// On a narrow screen a SHARED 'beside' group of the live scope — every member
+// row and stored record shared — whose picture is READY is drawn as ONE PIN in
+// place of its faded box marker: a glyph marker (MARKER_GLYPH, the comment
+// pin's .pin-marker look and app.css's tokens; nothing new) whose tip sits at
+// the centre of the group's guess, placed, clipped and kept off a frame by the
+// glyph rules, taking a press. An opting type's group.blend is never built for
+// it, so no blended ink paints beside the pin. A tap (its click) opens THE
+// PAIR: the picture with the ink and the same clip without it, two <img> of GET
+// picturePath(id) and picturePath(id, 'without') in a .popover.bg-look (the box
+// grab look's classes) registered through shell.js registerPopover; an image
+// that fails to load is taken out, and with none left the look closes. The
+// pin never asks for a picture (PICTURE@when: no POST, only a host renders
+// one), never drags (no stored offset is written), and is never a private
+// group's (G3) or a preview's. HOW THE CHROME LEARNS A PICTURE IS READY: the
+// picture GET itself — one GET of picturePath(id) for the newest member of a
+// candidate group, answered 200 (ready) or 404 'no picture' (a 403 below the
+// read floor, a network peer at basic, reads as none), kept per `<id>@<v>`:
+// asked again only when a frame of its type's elements arrives (element:<type>:
+// a Send to Claude's picture folds there), on a hello or a reset, or when the
+// group is a candidate again after it was not (the narrow flip) — never per
+// pass or per sample. A private or never-pictured group, an arrow, an
+// 'inside' stroke and the desktop keep U614's presentation; orphans() is
+// unchanged.
+function pinGroups(byKey) {
+  const wanted = new Set();
+  for (const [key, g] of [...byKey]) {
+    if (!g.page || !g.narrowBeside || g.scope !== 'live' || !g.members.length) continue;
+    if (!g.items.every((it) => it.row && it.row.shared === true) || !g.members.every((mb) => mb.rec.shared === true)) continue;
+    const it = g.items[g.items.length - 1];
+    const pk = `${it.id}@${it.v}`;
+    wanted.add(pk);
+    const st = pictures.get(pk);
+    if (!st) { probePicture(pk, it.id, g.type); continue; }
+    if (st.state !== 'ready') continue;
+    byKey.delete(key);
+    g.key = `${key}|pin`;
+    g.pin = Object.freeze({ id: String(it.id), pk });
+    g.kind = 'pin';
+    g.cls = 'el-hit';
+    g.glyph = MARKER_GLYPH;
+    byKey.set(g.key, g);
+  }
+  for (const [pk, st] of [...pictures]) if (!wanted.has(pk) && st.state !== 'pending') pictures.delete(pk);
+}
+// One GET of a candidate's picture; its answer asks for a draw.
+function probePicture(pk, id, type) {
+  pictures.set(pk, { state: 'pending', type });
+  Promise.resolve(request('GET', picturePath(id))).then((r) => {
+    // A ready picture is a PNG: a 2xx whose body is no JSON.
+    pictures.set(pk, { state: r && r.ok && r.body === null ? 'ready' : 'none', type });
+    requestDraw();
+  }, () => { pictures.set(pk, { state: 'none', type }); requestDraw(); });
+}
+// A frame of a type's elements: that type's unready answers are asked again.
+function repictureType(msg) {
+  const type = msg && typeof msg.type === 'string' ? msg.type.slice('element:'.length) : null;
+  let any = false;
+  for (const [pk, st] of [...pictures]) if (st.state === 'none' && st.type === type) { pictures.delete(pk); any = true; }
+  if (any) requestDraw();
+}
+// A hello or a reset: every settled answer is asked again.
+function repictureAll() {
+  for (const [pk, st] of [...pictures]) if (st.state !== 'pending') pictures.delete(pk);
+}
+const PIN_SVG = '<svg viewBox="0 0 16 16" width="26" height="26" aria-hidden="true">'
+  + '<path d="M8 1.4c-2.5 0-4.4 2-4.4 4.4 0 3.2 4.4 8.8 4.4 8.8s4.4-5.6 4.4-8.8C12.4 3.4 10.5 1.4 8 1.4z" fill="currentColor"/>'
+  + '<circle cx="8" cy="5.8" r="1.55" style="fill:var(--wc-panel-bg)"/></svg>';
+// The pin's own marker content (the overlay draws it: no type's draw runs).
+function drawPin(g, c) {
+  c.classList.add('pin-marker');
+  c.dataset.elPin = 'picture';
+  c.setAttribute('role', 'button');
+  c.setAttribute('aria-label', PIN_LABEL);
+  c.title = PIN_LABEL;
+  c.innerHTML = PIN_SVG + (g.items.length > 1 ? `<span class="pin-count">${g.items.length}</span>` : '');
+}
+// Measure a pin (measurePage's last step, READS ONLY): its tip at the centre
+// of the group's box, the glyph clipped to the well and never over a frame of
+// the page census (the glyph's never-draw rule).
+function measurePin(g, out, box, clip, fr, read) {
+  const x = box.left + box.w / 2;
+  const y = box.top + box.h / 2;
+  if (!(x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom)) return { ...out, res: 'clipped' };
+  const gl = g.glyph;
+  const gx = x + gl.dx;
+  const gy = y + gl.dy;
+  const top = Math.max(0, clip.top - gy);
+  const left = Math.max(0, clip.left - gx);
+  const right = Math.max(0, gx + gl.w - clip.right);
+  const bottom = Math.max(0, gy + gl.h - clip.bottom);
+  if (top + bottom >= gl.h || left + right >= gl.w) return { ...out, res: 'clipped' };
+  const painted = { left: gx + left, top: gy + top, right: gx + gl.w - right, bottom: gy + gl.h - bottom };
+  if (pageCensus(fr, read).some((b) => meets(painted, b))) return { ...out, res: 'framed' };
+  return { ...out, res: 'drawn', x, y, clip, inset: [top, right, bottom, left] };
+}
+// THE GUESS CLAMP (G9 a): the shift that puts [lo, hi] inside [L, R] (its left
+// edge at L when it is the wider).
+function clampShift(lo, hi, L, R) {
+  if (hi - lo >= R - L) return L - lo;
+  if (hi > R) return R - hi;
+  if (lo < L) return L - lo;
+  return 0;
+}
+// THE PAIR: the two pictures of the pin's element in the box grab look.
+function closePair() {
+  const l = pairLook;
+  pairLook = null;
+  if (!l) return;
+  try { l.unregister(); } catch { /* gone */ }
+  l.el.remove();
+}
+async function openPair(g) {
+  closePair();
+  const id = g.pin.id;
+  const el = document.createElement('div');
+  el.className = 'popover bg-look';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', 'Ink in the margin');
+  el.dataset.element = id;
+  const h = document.createElement('h4');
+  h.textContent = 'Ink in the margin — with and without it';
+  el.append(h);
+  const entry = { el, unregister: () => {} };
+  const frames = [];
+  for (const [which, alt] of [['with', 'The page with the ink'], ['without', 'The same place without the ink']]) {
+    const frame = document.createElement('div');
+    frame.className = 'bg-look-frame';
+    const img = document.createElement('img');
+    img.className = 'bg-look-img';
+    img.alt = alt;
+    img.decoding = 'async';
+    img.dataset.which = which;
+    // A GET that answers no picture (a 404, withdrawn since): not shown.
+    img.addEventListener('error', () => {
+      frame.remove();
+      if (pairLook !== entry || el.querySelector('img.bg-look-img')) return;
+      closePair();
+      // No picture left: the group is drawn faded again until it is asked again.
+      pictures.set(g.pin.pk, { state: 'none', type: g.type });
+      requestDraw();
+    }, { once: true });
+    img.src = picturePath(id, which);
+    frame.append(img);
+    frames.push(frame);
+  }
+  const acts = document.createElement('div');
+  acts.className = 'bg-look-acts';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'bg-close';
+  close.textContent = 'Close';
+  close.addEventListener('click', () => { if (pairLook === entry) closePair(); });
+  acts.append(close);
+  el.append(...frames, acts);
+  pairLook = entry;
+  let shell;
+  try { shell = await import('./shell.js'); } catch (err) {
+    console.error('[web-chat] overlay: the shell module did not load', err);
+    if (pairLook === entry) pairLook = null;
+    return null;
+  }
+  if (pairLook !== entry) return null;
+  document.body.appendChild(el);
+  entry.unregister = shell.registerPopover({ el, close: () => { if (pairLook === entry) closePair(); } });
+  return el;
 }
 // pageRecordView(type, rec) → what a draw's record(id) answers for rec
 // (element-types.js recordOf hands every plug-in record through here): a page
@@ -1335,6 +1524,8 @@ function sigOf(h, gs) {
 function onLayerClick(ev) {
   const m = ev.target && ev.target.closest ? ev.target.closest('.el-marker') : null;
   const g = m && m._group;
+  // A phone pin's tap (U629) opens its pair.
+  if (g && g.pin) { ev.stopPropagation(); openPair(g); return; }
   if (!g || (g.kind !== 'guess' && g.kind !== 'section')) return;
   ev.stopPropagation();
   for (const it of g.items) {
@@ -1446,6 +1637,19 @@ function rebuild(h, gs) {
     c.dataset.type = g.type;
     c.dataset.elIds = g.items.map((it) => it.id).join(' ');
     const t = types.get(g.type);
+    // THE PHONE PIN (U629): a glyph marker the overlay draws, taking a press.
+    if (g.pin) {
+      const gl = g.glyph;
+      c.style.width = gl.w + 'px';
+      c.style.height = gl.h + 'px';
+      c.style.transform = `translate(${gl.dx}px, ${gl.dy}px)`;
+      c.style.display = 'none';
+      c._group = g;
+      g.container = c;
+      drawPin(g, c);
+      layer.appendChild(c);
+      continue;
+    }
     if (g.place === 'box' && t) {
       // A box marker: applyGroup sizes and places it at each measure, and the
       // type's draw runs at its first drawn placement (so ctx.box is a real
@@ -1994,6 +2198,18 @@ function measurePage(g, fr, read) {
     y1 = Math.max(y1, mp.box.top + mp.box.h);
   }
   if (!maps.length) return { res: 'unplaced' };
+  // THE GUESS CLAMP (U629, G9 a): a margin stroke faded on a narrow screen is
+  // moved across into the well's visible width (a wide window's gutter is
+  // past a phone's well), every member by the same shift.
+  if (g.narrowBeside) {
+    const well = clipFrom(wrap, fr, read, wrap);
+    const dx = clampShift(x0, x1, well.left, well.right);
+    if (dx) {
+      x0 += dx;
+      x1 += dx;
+      for (const pair of maps) pair[1] = { ...pair[1], box: { ...pair[1].box, left: pair[1].box.left + dx } };
+    }
+  }
   const box = { left: x0, top: y0, w: x1 - x0, h: y1 - y0 };
   const views = new Map();
   const shape = [round3(box.w), round3(box.h)];
@@ -2008,6 +2224,7 @@ function measurePage(g, fr, read) {
   const out = { views, kind: guess ? 'guess' : 'hit', shape: JSON.stringify(shape), drift: round3(drift) };
   const target = { left: box.left, top: box.top, right: box.left + box.w, bottom: box.top + box.h };
   const clip = clipFrom(wrap, fr, read, wrap);
+  if (g.pin) return measurePin(g, out, box, clip, fr, read);
   const painted = intersect(target, clip);
   if (!(painted.right > painted.left && painted.bottom > painted.top)) return { ...out, res: 'clipped' };
   const frames = pageCensus(fr, read).filter((b) => meets(painted, b));
@@ -2033,7 +2250,7 @@ function applyPage(g, m) {
     const v = m.views && m.views.get(mb.id);
     if (v) pageViews.set(mb.id, v); else pageViews.delete(mb.id);
   }
-  if (!m.views) return;
+  if (!m.views || g.pin) return;
   const c = g.container;
   if (m.kind && m.kind !== g.kind) {
     g.kind = m.kind;
@@ -2085,7 +2302,7 @@ function applyGroup(g, m) {
   }
   c.style.display = '';
   if (g.detach) placeLeader(g, m);
-  if (t && t.move) {
+  if (t && t.move && !g.pin) {
     const before = stylesOf(g);
     try { t.move(g, { ...drawCtx(g), x: m.x, y: m.y, clip: m.clip }); } catch (err) {
       console.error(`[web-chat] overlay: the '${g.type}' move failed`, err);
@@ -3428,6 +3645,10 @@ export function initOverlay(opts = {}) {
   document.addEventListener('pointermove', onHoverMove, { capture: true, passive: true });
   onHello(takeLive);
   onFrame('reset', takeLive);
+  // THE PHONE PIN's re-asks (U629): a hello or a reset, and a type's frame.
+  onHello(repictureAll);
+  onFrame('reset', repictureAll);
+  onFrame('element:', repictureType);
   onFrame('markdown', scheduleSources);
   onFrame('markdown:remove', scheduleSources);
   bus.on('preview:node', takePreview);

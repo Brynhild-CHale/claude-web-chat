@@ -620,3 +620,245 @@ test('an arrow with one item removed is drawn faded at its guess and listed with
     assert.match(pop.querySelector(`.wc-orphan-row[data-el-id="${ARROW1.id}"] .wc-orphan-place`).textContent, /from pa to pb/);
   } finally { pop.remove(); }
 });
+
+// ── THE PHONE PIN (U629, plan 5B.7; RULED U614@phone-margin-pin H2 b,
+// PICTURE@when a, AD5/J2, PHONE@gutter-guess G9 a; DECISIONS L.1 M4) ─────────
+// Appended by U629. A second plug-in type, `scribble-hl`, is the fixture's
+// listing row opting into composite (the ink pack's highlighter shape, U624),
+// loaded through the same loader. The strokes below are SHARED: a margin
+// stroke under pane C (`s-share`) and a composite one beside pane B
+// (`s-hlpin`), each with a ready picture; a composite margin stroke under A
+// never pictured (`s-nopic`, its GET 404 'no picture'); a shared pictured
+// 'inside' stroke on B and a shared pictured arrow from B to C. The picture
+// GETs are the shell's route stubs: a ready picture answers PNG bytes.
+//   - at 390 px a shared pictured 'beside' group is ONE pin: a glyph marker
+//     (.el-marker.pin-marker, data-el-pin, no data-place) taking a press, no
+//     faded box marker; the composite one's group.blend is not displayed (the
+//     never-pictured composite group's is); a tap opens the pair — two <img>
+//     of GET …/picture and …/picture?which=without — in a registered popover
+//     (Escape closes it), and an image whose GET fails is taken out;
+//   - the pin's requests are GETs of …/picture only, one per group (none per
+//     pass), none for a private group; it never posts; its marker passes the
+//     marker allowlist with 0 removals;
+//   - a private group (s-under) and a never-pictured one keep the faded guess
+//     and the orphans listing (every 'beside' stroke still listed); the arrow
+//     and the 'inside' stroke draw as U614 draws them; at 1,280 px no pin;
+//   - an element frame of the type asks a never-pictured group again: its
+//     picture ready, it turns into a pin;
+//   - G9: at 390 px the gutter stroke's faded guess is clamped into the well's
+//     visible width: shown, faded, inside the viewport.
+const HL = 'scribble-hl';
+const HL_DRAW_URL = `/api/elements/types/${HL}/draw.js?d=${SHA}`;
+const HL_LISTING = { ...LISTING, type: HL, schema: `${HL}@1`, reads: [`${HL}@1`], toolbar: { ...LISTING.toolbar, composite: 'multiply' } };
+const PNG = () => respond('\x89PNG\r\n\x1a\n', { headers: { 'content-type': 'image/png' } });
+const NO_PIC = (id) => respond({ error: 'no picture', id, image: { state: 'none' } }, { status: 404 });
+const pic = (id, which) => `/api/elements/${id}/picture${which === 'without' ? '?which=without' : ''}`;
+const pinOf = (id) => [...W.document.querySelectorAll('#el-layer .el-marker[data-el-pin]')]
+  .find((m) => (m.dataset.elIds || '').split(' ').includes(id)) || null;
+const blendOf = (id) => [...W.document.querySelectorAll('#el-layer-blend .el-blend')]
+  .find((b) => (b.dataset.elIds || '').split(' ').includes(id)) || null;
+const picCalls = (from = 0) => shell.calls.slice(from).filter((c) => /^\/api\/elements\/[^/]+\/picture/.test(c.url));
+const P = {};
+const ready = new Set();
+let pinsSet = false;
+function asType(rec, type) { return { ...rec, type, schema: `${type}@1` }; }
+async function setupPins() {
+  if (pinsSet) return;
+  pinsSet = true;
+  // The surface back (the test above cleared A and B), at the desktop.
+  await shell.frame({ ...helloFrame({ active: 'n1', mounts: MOUNTS, order: ORDER, claude_order: ORDER, elements: [] }), type: 'reset' });
+  await waitUntil(() => hostOf('pa') && hostOf('pb') && hostOf('pc'), { timeout: 3000, what: 'the panes back' });
+  const sf = endOf('pc', 0.2, 1.05);
+  const st = endOf('pc', 0.7, 1.05);
+  P.share = { ...pageStroke('s-share', sf, st, arc(at(sf), at(st), 3)), shared: true };
+  const gB = itemRect('pb');
+  const hf = endOf('pb', (1235 - gB.left) / gB.width, 0.4);
+  const ht = endOf('pb', (1265 - gB.left) / gB.width, 0.7);
+  P.hlpin = { ...asType(pageStroke('s-hlpin', hf, ht, arc(at(hf), at(ht), 4)), HL), shared: true };
+  const nf = endOf('pa', 0.3, 1.05);
+  const nt = endOf('pa', 0.8, 1.05);
+  P.nopic = { ...asType(pageStroke('s-nopic', nf, nt, arc(at(nf), at(nt), 3)), HL), shared: true };
+  const inf = endOf('pb', 0.2, 0.3);
+  const int = endOf('pb', 0.6, 0.5);
+  P.inside = { ...pageStroke('s-inside', inf, int, arc(at(inf), at(int), 5)), shared: true };
+  const af = endOf('pb', 0.5, 0.8);
+  const aT = endOf('pc', 0.5, 0.2);
+  P.arrow = { ...pageStroke('s-arrows', af, aT, arc(at(af), at(aT), 10)), shared: true };
+  assert.equal(S.pageShape(P.share.anchor), 'beside');
+  assert.equal(S.pageShape(P.hlpin.anchor), 'beside');
+  assert.equal(S.pageShape(P.inside.anchor), 'inside');
+  assert.equal(S.pageShape(P.arrow.anchor), 'between');
+  for (const id of ['s-share', 's-hlpin', 's-inside', 's-arrows']) ready.add(id);
+  const all = [...records, P.share, P.hlpin, P.nopic, P.inside, P.arrow];
+  const routes = {
+    '/api/elements/types': () => ({ ...BASE_TYPES, types: [...BASE_TYPES.types, LISTING, HL_LISTING] }),
+    [HL_DRAW_URL]: () => respond(DRAW_SRC, { headers: { 'content-type': 'text/javascript; charset=utf-8' } }),
+    '/api/elements': (url, init) => {
+      if (String((init && init.method) || 'GET').toUpperCase() !== 'GET') return { ok: false, hint: 'not in this test' };
+      const type = new URL(url, 'http://x').searchParams.get('type');
+      return { elements: all.filter((r) => r.type === type), next_cursor: seq };
+    },
+  };
+  for (const r of all) routes[`/api/elements/${r.id}/picture`] = () => (ready.has(r.id) ? PNG() : NO_PIC(r.id));
+  shell.setRoutes(routes);
+  await shell.frame({ type: 'components' });
+  await waitUntil(() => ET.typeOf(HL), { timeout: 3000, what: 'the composite listing row' });
+  await ET.loadPluginTypes();
+  await shell.frame({ ...helloFrame({ active: 'n1', mounts: MOUNTS, order: ORDER, claude_order: ORDER, elements: all.map(lean) }), type: 'reset' });
+  await waitUntil(() => [P.share, P.hlpin, P.nopic, P.inside, P.arrow, UNDER].every((r) => shown(r.id)), { timeout: 6000, what: 'every new stroke drawn' });
+}
+async function atPhone(fn) {
+  shell.setViewport({ width: 390, height: 844, coarse: true });
+  try {
+    await waitUntil(() => itemRect('pb').top > itemRect('pa').top + 100, { timeout: 3000, what: 'stacked' });
+    await fn();
+  } finally {
+    shell.setViewport({ width: 1280, height: 800, coarse: false });
+  }
+}
+
+test('U629: at 390 px a shared pictured margin group is one pin (a glyph marker taking a press), a composite one\'s blend hidden; a tap opens the pair in a registered popover; GETs of the picture only', async () => {
+  await setupPins();
+  const n0 = shell.calls.length;
+  const refused0 = ov.stats().dom_refused;
+  await atPhone(async () => {
+    await waitUntil(() => pinOf(P.share.id) && shown(P.share.id) && pinOf(P.hlpin.id) && shown(P.hlpin.id),
+      { timeout: 5000, what: 'the two pins drawn' });
+    for (const r of [P.share, P.hlpin]) {
+      const ms = [...W.document.querySelectorAll('#el-layer .el-marker')].filter((m) => (m.dataset.elIds || '').split(' ').includes(r.id));
+      assert.equal(ms.length, 1, `${r.id}: one marker`);
+      const m = ms[0];
+      assert.ok(m.classList.contains('pin-marker') && m.classList.contains('el-marker'), `${r.id}: the pin look's classes`);
+      assert.equal(m.dataset.place, undefined, `${r.id}: no box marker`);
+      assert.ok(!m.classList.contains('el-guess'), `${r.id}: not the faded guess`);
+      assert.notEqual(m.style.pointerEvents, 'none', `${r.id}: it takes a press`);
+      assert.equal(m.style.width, '26px', `${r.id}: the glyph's box`);
+      assert.match(m.style.transform, /translate\(-13px, -26px\)/, `${r.id}: its tip at the guess`);
+      assert.ok(m.querySelector('svg path'), `${r.id}: the map pin`);
+      const before = m.outerHTML;
+      assert.equal(ov.allowlistWalk(m), 0, `${r.id}: the marker allowlist removes nothing`);
+      assert.equal(m.outerHTML, before);
+    }
+    const css = createCascade(CSS, { win: () => W });
+    assert.equal(css.value(pinOf(P.share.id), 'pointer-events'), 'auto', 'the glyph marker takes a press');
+    // The composite pin: no blended ink beside it; the never-pictured composite
+    // group (a faded box) keeps its blend.
+    const b = blendOf(P.hlpin.id);
+    assert.ok(!b || b.style.display === 'none', 'the pinned composite group paints no blend');
+    await waitUntil(() => blendOf(P.nopic.id) && blendOf(P.nopic.id).style.display !== 'none', { timeout: 4000, what: 'the faded composite group\'s blend' });
+    assert.ok(ov.stats().dom_refused === refused0, 'nothing refused by the walk after each draw');
+
+    const tapAt = shell.calls.length;
+    shell.press(pinOf(P.share.id));
+    await waitUntil(() => W.document.querySelector(`.popover.bg-look[data-element="${P.share.id}"]`), { timeout: 3000, what: 'the pair open' });
+    const pop = W.document.querySelector(`.popover.bg-look[data-element="${P.share.id}"]`);
+    assert.equal(pop.getAttribute('role'), 'dialog');
+    const imgs = [...pop.querySelectorAll('.bg-look-frame img.bg-look-img')];
+    assert.deepStrictEqual(imgs.map((i) => i.getAttribute('src')), [pic(P.share.id), pic(P.share.id, 'without')], 'with, then without the ink');
+    assert.ok(pop.querySelector('.bg-look-acts button'), 'the look\'s own actions row');
+    assert.deepStrictEqual(shell.calls.slice(tapAt).filter((c) => !(c.method === 'GET' && /\/picture(\?which=without)?$/.test(c.url))), [],
+      'the tap makes no request but the picture GETs');
+    // An image whose GET fails is taken out; the other stays.
+    imgs[1].dispatchEvent(new W.Event('error'));
+    assert.equal(pop.querySelectorAll('img.bg-look-img').length, 1, 'the failed image is not shown');
+    assert.ok(pop.isConnected, 'the look stays with one picture');
+    // Registered: the shell's Escape closes it.
+    shell.key('Escape');
+    await waitUntil(() => !pop.isConnected, { timeout: 2000, what: 'Escape closes the pair' });
+    // A second tap opens it again; a press outside closes it.
+    shell.press(pinOf(P.hlpin.id));
+    await waitUntil(() => W.document.querySelector(`.popover.bg-look[data-element="${P.hlpin.id}"]`), { timeout: 3000, what: 'the composite pin\'s pair' });
+    const pop2 = W.document.querySelector(`.popover.bg-look[data-element="${P.hlpin.id}"]`);
+    shell.press(W.document.getElementById('main'));
+    await waitUntil(() => !pop2.isConnected, { timeout: 2000, what: 'an outside press closes it' });
+
+    // Requests: picture GETs only, one per shared candidate group, none per pass.
+    const pc = picCalls(n0);
+    assert.ok(pc.every((c) => c.method === 'GET'), 'only GETs');
+    assert.ok(pc.every((c) => [P.share, P.hlpin, P.nopic].some((r) => c.url === pic(r.id))), `only the candidates' pictures: ${pc.map((c) => c.url)}`);
+    const n1 = picCalls().length;
+    for (let i = 0; i < 4; i++) { ov.requestDraw(); await shell.tick(); }
+    W.dispatchEvent(new W.Event('resize'));
+    await shell.tick(3);
+    assert.equal(picCalls().length, n1, 'no GET per pass');
+    assert.equal(shell.calls.slice(n0).filter((c) => c.method !== 'GET' && /\/api\/elements\/[^/]+\/picture/.test(c.url)).length, 0, 'no POST of a render');
+    for (const r of [UNDER, GUTTER, ARROW1, ARROW2]) assert.equal(shell.calls.filter((c) => c.url.startsWith(`/api/elements/${r.id}/picture`)).length, 0, `${r.id}: a private group is never asked`);
+  });
+});
+
+test('U629: a private and a never-pictured margin group keep the faded guess and the orphans listing; the arrow and the inside stroke draw as U614 draws them; at 1,280 px no pin', async () => {
+  await setupPins();
+  await atPhone(async () => {
+    await waitUntil(() => picCalls().some((c) => c.url === pic(P.nopic.id)), { timeout: 4000, what: 'the never-pictured group asked' });
+    await shell.tick(3);
+    for (const r of [UNDER, P.nopic]) {
+      await waitUntil(() => shown(r.id) && markerOf(r.id).classList.contains('el-guess'), { timeout: 4000, what: `${r.id} faded at its guess` });
+      const m = markerOf(r.id);
+      assert.equal(m.dataset.place, 'box', `${r.id}: the box marker`);
+      assert.equal(pinOf(r.id), null, `${r.id}: no pin`);
+      assert.ok(!m.classList.contains('pin-marker'));
+      assert.equal(m.querySelector('svg').getAttribute('opacity'), '0.4', `${r.id}: the type draws it faded`);
+    }
+    // The listing is U614's: every margin stroke, pinned or not, page-narrow.
+    for (const r of [UNDER, GUTTER, P.nopic, P.share, P.hlpin]) {
+      const o = ov.orphans().find((x) => x.id === r.id);
+      assert.ok(o, `${r.id} listed`);
+      assert.deepStrictEqual({ kind: o.kind, guess: o.guess, how: o.how }, { kind: 'page', guess: true, how: 'page-narrow' }, r.id);
+    }
+    const pop = ORPH.openOrphanList();
+    try {
+      for (const r of [UNDER, P.nopic, P.share]) assert.ok(pop.querySelector(`.wc-orphan-row[data-el-id="${r.id}"]`), `${r.id} in the card`);
+    } finally { pop.remove(); }
+    // The arrow (between) and the inside stroke: box markers, not faded, no pin.
+    for (const r of [P.arrow, P.inside]) {
+      await waitUntil(() => shown(r.id), { timeout: 4000, what: `${r.id} drawn` });
+      const m = markerOf(r.id);
+      assert.equal(m.dataset.place, 'box', `${r.id}: a box marker`);
+      assert.ok(m.classList.contains('el-hit'), `${r.id}: drawn where it is`);
+      assert.equal(pinOf(r.id), null, `${r.id}: no pin`);
+      assert.ok(!ov.orphans().some((x) => x.id === r.id), `${r.id}: no orphan`);
+    }
+    await endsFollow(P.arrow, 'the shared arrow at 390 px');
+    assert.ok(!picCalls().some((c) => c.url === pic(P.arrow.id) || c.url === pic(P.inside.id)), 'neither is asked for a picture');
+  });
+  await waitUntil(() => !W.document.querySelector('#el-layer .el-marker[data-el-pin]'), { timeout: 4000, what: 'no pin on the desktop' });
+  for (const r of [P.share, P.hlpin]) {
+    await waitUntil(() => shown(r.id) && markerOf(r.id).classList.contains('el-hit'), { timeout: 4000, what: `${r.id} drawn on the desktop` });
+    assert.equal(markerOf(r.id).dataset.place, 'box', `${r.id}: its box marker`);
+  }
+  assert.ok(!ov.orphans().some((x) => x.id === P.share.id), 'unlisted on the desktop');
+});
+
+test('U629: an element frame of its type asks a never-pictured group again; its picture ready, it turns into a pin', async () => {
+  await setupPins();
+  await atPhone(async () => {
+    await waitUntil(() => shown(P.nopic.id) && markerOf(P.nopic.id).classList.contains('el-guess'), { timeout: 4000, what: 'faded' });
+    const c0 = shell.calls.length;
+    // Another frame type asks nothing.
+    await shell.frame({ type: 'element:comment', elements: [] });
+    await shell.tick(3);
+    assert.equal(picCalls(c0).length, 0, 'another type\'s frame: no GET');
+    ready.add(P.nopic.id);
+    await shell.frame({ type: `element:${HL}`, elements: [P.hlpin, P.nopic] });
+    await waitUntil(() => pinOf(P.nopic.id) && shown(P.nopic.id), { timeout: 4000, what: 'the pin once its picture is ready' });
+    assert.deepStrictEqual(picCalls(c0).map((c) => c.url), [pic(P.nopic.id)], 'one GET, of the group that had none');
+    const b = blendOf(P.nopic.id);
+    assert.ok(!b || b.style.display === 'none', 'its blend goes with the box marker');
+  });
+});
+
+test('U629 (G9): at 390 px a gutter stroke\'s faded guess is clamped into the well\'s visible width: shown, faded, on screen', async () => {
+  await setupPins();
+  await atPhone(async () => {
+    await waitUntil(() => shown(GUTTER.id) && markerOf(GUTTER.id).classList.contains('el-guess'), { timeout: 4000, what: 'the gutter stroke drawn faded' });
+    const b = boxOfMarker(markerOf(GUTTER.id));
+    assert.ok(b.left >= 0 && b.left + b.w <= 390 + 1e-6, `inside the well's width (${b.left}, ${b.w})`);
+    assert.ok(ov.orphans().some((x) => x.id === GUTTER.id && x.how === 'page-narrow'), 'still listed');
+    // The pinned gutter stroke sits where its clamped guess is: on screen.
+    const m = pinOf(P.hlpin.id);
+    assert.ok(m && shown(P.hlpin.id));
+    const x = px(m.style.left);
+    assert.ok(x >= 0 && x <= 390, `the pin's tip on screen (${x})`);
+  });
+  await endsFollow(GUTTER, 'back on the desktop');
+});
