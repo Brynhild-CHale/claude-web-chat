@@ -538,14 +538,21 @@ test('(5) U632: the surface page answers Content-Security-Policy-Report-Only and
   await ok(d.api.post('/api/store', { patch: { wcu690: 1 } }), 'a store write');
   const store = await ok(d.anonApi.get('/api/store?keys=wcu690'), 'a pane\'s fetch of the store');
   assert.deepStrictEqual(store, { wcu690: 1 });
+  // The image the surface page itself loads in every project (its favicon,
+  // public/favicon.png, through the same static middleware), and a theme's
+  // own image where /api/themes lists one (a fresh project lists none: the
+  // Fable review found the branch alone left this half unexercised).
+  const icon = await d.anonApi.raw('/favicon.png');
+  assert.equal(icon.status, 200, 'the page\'s own icon');
+  assert.match(icon.headers.get('content-type') || '', /^image\/png/, 'served as an image');
+  assert.equal(icon.headers.get('content-security-policy-report-only'), null, 'an image carries no policy: index.html alone does');
+  assert.ok((await icon.arrayBuffer()).byteLength > 8, 'with its bytes');
   const themes = await ok(d.anonApi.get('/api/themes'), 'themes');
   const logo = JSON.stringify(themes).match(/"(\/api\/[^"]*?\.(?:svg|png|webp))"/);
   if (logo) {
     const img = await d.anonApi.raw(logo[1]);
     assert.equal(img.status, 200, `the theme image ${logo[1]}`);
-    assert.equal(img.headers.get('content-security-policy-report-only'), null, 'an image carries no policy');
-  } else {
-    t.diagnostic('no theme image URL listed by /api/themes in a fresh project: the policy\'s img-src covers \'self\'');
+    assert.equal(img.headers.get('content-security-policy-report-only'), null, 'a theme image carries no policy');
   }
   const img = /img-src ([^;]*)/.exec(SURFACE_CSP_REPORT_ONLY)[1].split(/\s+/);
   const connect = /connect-src ([^;]*)/.exec(SURFACE_CSP_REPORT_ONLY)[1].split(/\s+/);
@@ -564,7 +571,7 @@ test('(6) U642: createEventAnchors over a jsdom pane — a first visit counts co
     host.dataset.mountId = 'p1';
     win.document.body.appendChild(host);
     const root = win.__wcMount.attachAndExtract(host, '<section><ul><li><b>first</b><button id="b1">Run</button></li></ul></section>').root;
-    let now = 1000;
+    const now = 1000;
     const ea = createEventAnchors({ anchors, MutationObserver: win.MutationObserver, schedule: () => {}, now: () => now, setTimer: () => 0, clearTimer: () => {} });
     const btn = root.getElementById('b1');
     const cold = () => { const s = ea.stats(); return [s.cold_missing, s.cold_dirty, s.cold]; };
@@ -578,7 +585,6 @@ test('(6) U642: createEventAnchors over a jsdom pane — a first visit counts co
     assert.deepStrictEqual(cold(), [1, 1, 2], 'a mutation then an event: cold_dirty');
     const s = ea.stats();
     assert.equal(s.cold, s.cold_missing + s.cold_dirty, 'cold is their sum');
-    now += 1;
   } finally { dom.window.close(); }
 });
 
