@@ -862,3 +862,33 @@ test('U629 (G9): at 390 px a gutter stroke\'s faded guess is clamped into the we
   });
   await endsFollow(GUTTER, 'back on the desktop');
 });
+
+// HAND FOLD 8 (3) (DECISIONS.md K.2-285, from U629's review, U629@overlay.js:
+// 1270, U690): U629's deviation (b) stands — a previewed node's margin stroke
+// keeps the faded guess, since the picture route serves the newest picture,
+// not the node's. pinGroups' scope guard (g.scope !== 'live') is what keeps it
+// so: on bus preview:node at 390 px a node whose lean_elements carry a shared
+// 'beside' group with a ready picture draws no pin for it and asks no picture.
+test('U690 (HAND FOLD 8): at 390 px a previewed node\'s shared pictured \'beside\' group keeps the faded guess: no pin, no new picture GET', async () => {
+  await setupPins();
+  const st = await shell.importApp('state.js');
+  const { bus } = await shell.importApp('bus.js');
+  await atPhone(async () => {
+    await waitUntil(() => pinOf(P.share.id) && shown(P.share.id), { timeout: 5000, what: 'the live pin first' });
+    const c0 = shell.calls.length;
+    st.view.previewing = true;
+    bus.emit('preview:node', { id: 'n0', node: { lean_elements: [lean(P.share)] } });
+    try {
+      await waitUntil(() => shown(P.share.id) && markerOf(P.share.id).classList.contains('el-guess'), { timeout: 4000, what: 'the previewed group drawn faded' });
+      await shell.tick(3);
+      assert.equal(pinOf(P.share.id), null, 'no pin for the previewed group');
+      assert.equal(W.document.querySelectorAll('#el-layer .el-marker[data-el-pin]').length, 0, 'no pin at all in the preview');
+      assert.equal(markerOf(P.share.id).dataset.place, 'box', 'its box marker, faded');
+      assert.deepStrictEqual(picCalls(c0).map((c) => c.url), [], 'no picture GET while previewing');
+    } finally {
+      st.view.previewing = false;
+      bus.emit('preview:node', { id: null, node: null });
+    }
+    await waitUntil(() => pinOf(P.share.id) && shown(P.share.id), { timeout: 4000, what: 'the live pin back after the preview' });
+  });
+});
