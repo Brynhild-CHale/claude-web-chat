@@ -199,6 +199,107 @@ test('a clean entry answers on the warm path, a dirty one on the cold path', asy
   assert.deepStrictEqual([ea.stats().cold, ea.stats().warm], [2, 2]);
 });
 
+// BD6 (DECISIONS.md K.2-257, PQ-EX-6): the cold count split into an event on a
+// missing index and an event on a dirty one; cold stays their sum.
+const coldOf = (st) => [st.cold_missing, st.cold_dirty, st.cold];
+
+test('BD6: a first event counts cold_missing, an event over a built index the DOM moved under counts cold_dirty', async () => {
+  const { createEventAnchors } = await engine();
+  const win = newWindow();
+  const root = mount(win, LIST, 'p1');
+  const ea = createEventAnchors(harness(win).opts);
+  const btn = root.getElementById('b1');
+  assert.deepStrictEqual(coldOf(ea.stats()), [0, 0, 0]);
+  ea.anchorAt(root, btn, 'p1');   // a fresh root: no index yet
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 0, 1]);
+  ea.anchorAt(root, btn, 'p1');   // warm: neither moves
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 0, 1]);
+  btn.setAttribute('data-x', '1');   // a pending record over the built index
+  ea.anchorAt(root, btn, 'p1');
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 1, 2]);
+  // a dirty mark delivered by the observer (no pending record left) is dirty too
+  btn.setAttribute('data-y', '1');
+  await flush();
+  assert.equal(ea.stats().dirty, 1);
+  ea.anchorAt(root, btn, 'p1');
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 2, 3]);
+  assert.equal(ea.stats().warm, 1);
+});
+
+test('BD6: an event after the ENGAGED_MS expiry dropped the index counts cold_missing', async () => {
+  const { createEventAnchors, ENGAGED_MS } = await engine();
+  const win = newWindow();
+  const root = mount(win, LIST, 'p1');
+  const h = harness(win);
+  const ea = createEventAnchors(h.opts);
+  const btn = root.getElementById('b2');
+  ea.anchorAt(root, btn, 'p1');
+  h.advance(ENGAGED_MS);
+  assert.deepStrictEqual([ea.stats().entries, ea.stats().expired], [0, 1], 'precondition: the entry expired');
+  ea.anchorAt(root, btn, 'p1');
+  assert.deepStrictEqual(coldOf(ea.stats()), [2, 0, 2]);
+});
+
+test('BD6: with no MutationObserver every event after the first counts cold_dirty', async () => {
+  const { createEventAnchors } = await engine();
+  const win = newWindow();
+  const root = mount(win, LIST, 'p1');
+  const ea = createEventAnchors({ ...harness(win).opts, MutationObserver: null });
+  const btn = root.getElementById('b1');
+  for (let k = 0; k < 4; k++) ea.anchorAt(root, btn, 'p1');
+  assert.equal(ea.stats().observing, 0);
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 3, 4]);
+  assert.equal(ea.stats().warm, 0);
+});
+
+test('BD6: the split adds no work — a warm event builds no index, a cold one builds one; engage and the idle rebuild count no event', async () => {
+  const { createEventAnchors } = await engine();
+  const win = newWindow();
+  const root = mount(win, LIST, 'p1');
+  const h = harness(win);
+  let builds = 0;
+  let fail = 0;
+  const spy = {
+    index: (r) => { builds += 1; if (fail > 0) { fail -= 1; throw new Error('boom'); } return anchors.index(r); },
+    record: anchors.record,
+  };
+  const ea = createEventAnchors({ ...h.opts, anchors: spy });
+  const btn = root.getElementById('b1');
+  const step = (fn) => { const b = builds; fn(); return builds - b; };
+  assert.equal(step(() => ea.anchorAt(root, btn, 'p1')), 1, 'a cold event builds once');
+  assert.equal(step(() => ea.anchorAt(root, btn, 'p1')), 0, 'a warm event builds nothing');
+  btn.setAttribute('data-a', '1');
+  assert.equal(step(() => ea.anchorAt(root, btn, 'p1')), 1, 'a cold (dirty) event builds once');
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 1, 2]);
+  // engage over a dirty index, and the idle rebuild, build without counting an event
+  btn.setAttribute('data-b', '1');
+  assert.equal(step(() => ea.engage(root)), 1);
+  btn.setAttribute('data-c', '1');
+  await flush();
+  assert.equal(ea.stats().dirty, 1, 'stats().dirty: the entries dirty now');
+  h.runIdle();
+  assert.equal(ea.stats().dirty, 0);
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 1, 2], 'neither engage nor the idle rebuild is an event');
+  // a build that throws counts no cold; the index it threw away makes the next event missing
+  btn.setAttribute('data-d', '1');
+  fail = 1;
+  const none = ea.stats().none;
+  assert.equal(ea.anchorAt(root, btn, 'p1'), null);
+  assert.equal(ea.stats().none, none + 1);
+  assert.deepStrictEqual(coldOf(ea.stats()), [1, 1, 2]);
+  ea.anchorAt(root, btn, 'p1');
+  assert.deepStrictEqual(coldOf(ea.stats()), [2, 1, 3]);
+  // a mixed sequence keeps cold their sum
+  for (let k = 0; k < 6; k++) {
+    if (k % 2) btn.setAttribute('data-k', String(k));
+    ea.anchorAt(root, btn, 'p1');
+  }
+  const st = ea.stats();
+  assert.equal(st.cold, st.cold_missing + st.cold_dirty);
+  assert.deepStrictEqual(coldOf(st), [2, 4, 6]);
+  assert.equal(st.warm, 4);
+});
+
 // ── domEvent ────────────────────────────────────────────────────────────────
 
 const REC = Object.freeze({
