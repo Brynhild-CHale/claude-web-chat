@@ -53,9 +53,12 @@ test('the nine elements the docs name are the overlay\'s MARKER_ALLOWLIST', () =
 
 test('the draw ctx carries no layer in either realm, and the docs say so', () => {
   const overlay = read('public/app/overlay.js');
-  const drawCtx = overlay.slice(overlay.indexOf('function drawCtx('));
-  assert.ok(drawCtx.length > 0, 'overlay.js no longer has drawCtx — re-point this check');
-  assert.doesNotMatch(drawCtx.slice(0, drawCtx.indexOf('\n}\n')), /\blayer\s*[:,]/, 'the live draw ctx hands no layer');
+  const at = overlay.indexOf('function drawCtx(');
+  assert.ok(at >= 0, 'overlay.js no longer has drawCtx — re-point this check');
+  const drawCtx = overlay.slice(at);
+  // Any spelling of a layer in the ctx's body: a literal key, a shorthand or
+  // a later `ctx.layer = …` assignment.
+  assert.doesNotMatch(drawCtx.slice(0, drawCtx.indexOf('\n}\n')), /\blayer\b/i, 'the live draw ctx hands no layer');
   assert.doesNotMatch(read('lib/server/runtime/elements-doc-src.js'), /layer: layer/, 'the document ctx hands no layer');
   const ext = flat(read('docs/extending.md'));
   assert.ok(ext.includes('The draw and move ctx carry no `layer` in either realm'), 'extending.md\'s pack author\'s note');
