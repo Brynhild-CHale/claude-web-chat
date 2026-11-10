@@ -16,7 +16,7 @@ const os = require('os');
 const path = require('path');
 
 const {
-  CONTRACTS_DIR, createValidator, checkCopy, lockValidation, lockOrder, loadContracts,
+  CONTRACTS_DIR, createValidator, checkCopy, lockValidation, lockOrder, loadContracts, schemaFor,
 } = require('../test-support/contracts-loader');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -63,6 +63,13 @@ test('a copy with one byte changed in a schema and in an example fails the same 
   const r = checkCopy(tmp);
   assert.equal(r.ok, false);
   assert.deepStrictEqual(r.failures.map((f) => f.path).sort(), ['examples/05-heartbeat.json', 'schemas/05-heartbeat.json']);
+
+  // A contract-08 draft is held to its MANIFEST.json sha256 the same way.
+  const draft = manifest.unlocked_present[0].path;
+  flip(draft);
+  const drafted = checkCopy(tmp).failures.find((f) => f.path === draft);
+  assert.ok(drafted, `${draft} changed and the check did not name it`);
+  assert.match(drafted.why, /unlocked_present/);
 
   // A file with no row and no manifest entry fails naming its path; so does a
   // LOCK.md that is not the one MANIFEST.json names.
@@ -133,6 +140,18 @@ test('the combined overlay, every locked folder in lock order, validates every e
   const reversed = loadContracts({ folders: [...lockOrder()].reverse() });
   assert.equal(reversed.schemas.get('03-activity-entry').file, 'amendments/03-5/schemas/03-activity-entry.json');
   assert.throws(() => loadContracts({ folders: ['99-1'] }), /99-1/);
+});
+
+test('an example goes to the longest schema name equal to it or prefixing it before \'-\' or \'.\'', () => {
+  // No example at the lock has two candidate schemas, so the rule is pinned on
+  // a synthetic view (tools/validate.js's rule: the longest such name wins).
+  const view = { schemas: new Map([['05-a', {}], ['05-a-b', {}], ['05-ab', {}]]) };
+  assert.equal(schemaFor(view, '05-a-b-c.json'), '05-a-b');
+  assert.equal(schemaFor(view, '05-a-b.x'), '05-a-b');
+  assert.equal(schemaFor(view, '05-a.y'), '05-a');
+  assert.equal(schemaFor(view, '05-abc'), null);
+  const reversed = { schemas: new Map([...view.schemas].reverse()) };
+  assert.equal(schemaFor(reversed, '05-a-b-c'), '05-a-b');
 });
 
 test('validateFrame maps every (ch, kind) of the 05 schemas to exactly one def', () => {

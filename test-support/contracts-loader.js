@@ -25,9 +25,13 @@
 // the lock (the rule LOCK.md's counts were computed with): an example goes to
 // the schema whose name equals its own or prefixes it followed by '-' or '.',
 // the longest such; when the schema's root refuses it, each $defs entry compiled
-// standalone gets a try. The one difference is that a def's compiled validator
-// is kept and reused, where the tool compiled it again per example (a second
-// compile of one $id throws inside ajv, which the tool's try swallowed).
+// standalone gets a try. That try is kept for the rule's sake, but at the lock
+// it admits nothing: the standalone def's `$id` is the schema's `$id` plus
+// `#def-<key>`, and ajv's draft 2020-12 meta-schema refuses an `$id` with a
+// fragment, so every such compile throws (254 of 254 defs over the combined
+// overlay, measured with ajv 8.20.0), in the tool and here alike; every example
+// passes at its schema's root. A def's compile result (a validator or null) is
+// cached here, where the tool compiled it again per example.
 //
 // validateFrame maps a contract-05 link frame to the one 05 schema $def whose
 // properties.ch.const and properties.kind.const are the frame's; validatePairing
