@@ -377,7 +377,7 @@ test('the ack is sent only after the daemon answered: none while the POST is hel
 });
 
 // ── exactly once (C-07.29) ─────────────────────────────────────────────────
-test('a replayed hub_msg_id against the echoing daemon: the daemon answers the second POST duplicate, the ack reads duplicate with dedupe daemon, and the queue holds it once', async (t) => {
+test('a replayed hub_msg_id against the echoing daemon: the ledger answers it duplicate with dedupe daemon (the first answer echoed the key), no second POST, and the queue holds it once', async (t) => {
   const c = await setup(t, { wrapLink: losingFirstAck });
   const held = c.fake.queue.hold(c.label, { message: { text: TEXT, send: 'hold' } });
   await waitUntil(() => c.ackLink.lost.length === 1, { timeout: 5000, what: 'the first (lost) ack' });
@@ -392,10 +392,36 @@ test('a replayed hub_msg_id against the echoing daemon: the daemon answers the s
   assert.strictEqual(ack.outcome, 'duplicate');
   assert.strictEqual(ack.dedupe, 'daemon');
   assert.strictEqual(ack.daemon.msg_id, first.daemon.msg_id, 'the first msg_id');
-  assert.strictEqual(messagePosts(c.d.seen).length, 2, 'the daemon deduplicated the second POST');
+  assert.strictEqual(messagePosts(c.d.seen).length, 1, 'the ledger answered the replay: no second POST');
   const items = (await c.d.api.get('/api/queue')).json.items.filter((it) => it.msg_id === first.daemon.msg_id);
   assert.strictEqual(items.length, 1, 'enqueued once');
   assert.strictEqual((await c.d.api.get('/api/queue')).json.items.length, 1);
+});
+
+test('a ledger hit whose first answer the daemon echoed is duplicate with dedupe daemon even when a re-POST could not succeed: a replay under a read decision, and one with the chat stopped (C-07.27 row 2)', async (t) => {
+  const c = await setup(t);
+  const f = c.frame();
+  const first = await c.delivery.deliver(f, ackSink());
+  ajvSays(QUEUE_ACK, first, 'the first ack');
+  assert.deepStrictEqual([first.outcome, first.dedupe], ['accepted', 'daemon']);
+  const hub = f.delivery.hub_msg_id;
+  const want = (ack, attempt, what) => {
+    ajvSays(QUEUE_ACK, ack, what);
+    assert.deepStrictEqual([ack.outcome, ack.dedupe, ack.attempt], ['duplicate', 'daemon', attempt], what);
+    const { boot, msg_id: msgId, item_id: itemId } = first.daemon;
+    assert.deepStrictEqual(ack.daemon, { boot, msg_id: msgId, item_id: itemId }, `${what}: the first msg_id`);
+    assert.strictEqual(ack.refused, undefined, what);
+    assert.strictEqual(ack.retry_after_ms, undefined, what);
+  };
+  // Attempt 2 under a decision at daemon_level read: the relay's gate would refuse a POST.
+  want(await c.delivery.deliver(c.frame({ hub, attempt: 2, decision: c.decision({ daemon_level: 'read' }) }), ackSink()), 2, 'the replay under a read decision');
+  // Attempt 3 with the chat stopped: the relay's gate would answer not running.
+  c.running = false;
+  want(await c.delivery.deliver(c.frame({ hub, attempt: 3 }), ackSink()), 3, 'the replay with the chat stopped');
+  assert.strictEqual(messagePosts(c.d.seen).length, 1, 'one POST');
+  assert.strictEqual(c.calls.length, 1, 'one relay.request');
+  c.running = true;
+  assert.strictEqual((await c.d.api.get('/api/queue')).json.items.filter((it) => it.msg_id === first.daemon.msg_id).length, 1);
 });
 
 test('a replayed hub_msg_id against a daemon that does not echo: the ledger answers duplicate with dedupe connector and no second POST', async (t) => {
