@@ -31,22 +31,27 @@ function assertOutsideBand(port) {
 }
 
 // A supervisor stand-in. `order` is shared with the stub client so a test can
-// read the sequence of forget, shutdown, ensure and subscribe.
+// read the sequence of forget, shutdown, ensure and subscribe. Like the real
+// supervisor, startedBy answers null until ensureRunning has answered and again
+// after forget (lib/connector/supervisor.js drop), so a lifecycle that read
+// started_by after its forget would post no `now` shutdown and fail here.
 function stubSupervisor({ port = STUB_PORT, pid = 111, startedBy = 'connector', order = [] } = {}) {
   const s = {
     order,
     port,
     pid,
     sb: startedBy,
+    current: null,
     ensures: 0,
     forgets: [],
     async ensureRunning(chat) {
       s.ensures++;
       order.push('ensure');
+      s.current = s.sb;
       return { state: 'running', port: s.port, pid: s.pid, started_by: s.sb, chat: chat.id };
     },
-    startedBy: () => s.sb,
-    forget(id) { s.forgets.push(id); order.push('forget'); },
+    startedBy: () => s.current,
+    forget(id) { s.forgets.push(id); s.current = null; order.push('forget'); },
   };
   return s;
 }
