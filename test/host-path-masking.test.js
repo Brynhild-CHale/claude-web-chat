@@ -146,7 +146,7 @@ test('maskHostText: the root and the home masked in every string, pass-through c
 
 test('hostMaskBelowLocal: a local request passes; any other level, or none, is masked; outside its prefixes nothing is', () => {
   const home = '/home/someone';
-  const run = (level, url) => {
+  const runBody = (level, url, body) => {
     let sent = null;
     const res = { json(b) { sent = b; return this; } };
     const audience = { levelOf: () => { if (level === 'throw') throw new Error('x'); return level; } };
@@ -154,9 +154,10 @@ test('hostMaskBelowLocal: a local request passes; any other level, or none, is m
     let nexted = false;
     mw({ originalUrl: url, url, headers: {} }, res, () => { nexted = true; });
     assert.ok(nexted);
-    res.json({ text: `${home}/a` });
-    return sent.text;
+    res.json(body);
+    return sent;
   };
+  const run = (level, url) => runBody(level, url, { text: `${home}/a` }).text;
   const prev = process.env.HOME;
   process.env.HOME = home;
   try {
@@ -174,7 +175,20 @@ test('hostMaskBelowLocal: a local request passes; any other level, or none, is m
       assert.strictEqual(run(level, '/api/mounts/pane-a/restore'), `${home}/a`, 'only the history under /api/mounts');
       assert.strictEqual(run(level, '/api/queue'), '~/a', level);
       assert.strictEqual(run(level, '/api/queued'), `${home}/a`, 'outside the prefixes');
+      // Express routes case-insensitively and the portal's classify lowercases
+      // a path, so a prefix is matched in any case (U752@host-mask.js:66).
+      assert.strictEqual(run(level, '/API/graph'), '~/a', `${level} /API/graph`);
+      assert.strictEqual(run(level, '/api/Health'), '~/a', `${level} /api/Health`);
+      assert.strictEqual(run(level, '/Api/graph/NODE/n1?X=1'), '~/a', `${level} /Api/graph/NODE/n1`);
+      assert.strictEqual(run(level, '/api/MOUNTS/pane-a/HISTORY'), '~/a', `${level} /api/MOUNTS/pane-a/HISTORY`);
+      assert.strictEqual(run(level, '/API/GRAPHICAL'), `${home}/a`, 'a prefix is a whole segment in any case');
+      // The queue rule takes the same case rule: /API/queue's body goes
+      // through maskQueueBody (a message item's text verbatim, the rest masked).
+      const q = runBody(level, '/API/queue', { items: [{ kind: 'message', text: `${home}/m` }], note: `${home}/n` });
+      assert.strictEqual(q.note, '~/n', `${level} /API/queue: the body masked`);
+      assert.strictEqual(q.items[0].text, `${home}/m`, `${level} /API/queue: the queue item rule (a message item verbatim)`);
     }
+    assert.strictEqual(run('local', '/API/graph'), `${home}/a`, 'local: /API/graph whole');
   } finally { process.env.HOME = prev; }
 });
 
@@ -216,6 +230,19 @@ test('graph text, health\'s lock and element text: masked for a remote request a
     const gb = await graph(h);
     assert.strictEqual(gb.lock.message, p.masked('prompt'), `${who}: the graph's lock masked`);
     assert.deepStrictEqual(rawIn(p, gb), [], `${who}: no raw host path in the graph`);
+  }
+  // The same routes spelled in another case: Express answers them, and so must
+  // the mask (U752@host-mask.js:66).
+  for (const url of ['/API/health', '/Api/graph', '/api/Health', '/API/queue']) {
+    const lr = await api.get(url);
+    assert.strictEqual(lr.status, 200, `local ${url}: ${lr.text.slice(0, 200)}`);
+    assert.ok(lr.text.includes(path.join(p.home, 'proj', 'x')), `local ${url}: whole`);
+    for (const [who, h] of [['remote read', REMOTE], ['relayed read', RELAYED('read')]]) {
+      const r = await api.get(url, h);
+      assert.strictEqual(r.status, 200, `${who} ${url}: ${r.text.slice(0, 200)}`);
+      assert.ok(r.text.includes('~/proj/x'), `${who} ${url}: masked: ${r.text.slice(0, 300)}`);
+      assert.deepStrictEqual(rawIn(p, r.text), [], `${who} ${url}: no raw host path`);
+    }
   }
 
   const te = await api.post('/api/turn-end', { author: 'claude', reply: p.text('reply'), ended: 'stop' });
@@ -262,6 +289,19 @@ test('graph text, health\'s lock and element text: masked for a remote request a
     assert.deepStrictEqual(rawIn(p, outsideSurface(pv.text)), [], `${who}: the node preview holds no raw host path outside its pane html and store`);
   }
   assert.ok((await api.get('/api/replay/path')).text.includes(path.join(p.home, 'proj', 'x')), 'local: the replay path whole');
+  // The node read spelled in another case (U752@host-mask.js:66).
+  {
+    const url = `/api/GRAPH/node/${id}`;
+    const lr = await api.get(url);
+    assert.strictEqual(lr.status, 200, `local ${url}: ${lr.text.slice(0, 200)}`);
+    assert.strictEqual(lr.json.trigger.message, p.text('prompt'), `local ${url}: whole`);
+    for (const [who, h] of [['relayed read', RELAYED('read')], ['remote read', REMOTE]]) {
+      const r = await api.get(url, h);
+      assert.strictEqual(r.status, 200, `${who} ${url}: ${r.text.slice(0, 200)}`);
+      assert.strictEqual(r.json.trigger.message, p.masked('prompt'), `${who} ${url}: the trigger masked`);
+      assert.deepStrictEqual(rawIn(p, lessSurface(r.json)), [], `${who} ${url}: no raw host path outside its surface`);
+    }
+  }
   // The files on disk keep the host's history whole.
   const nodeFile = fs.readdirSync(path.join(d.webChatDir, 'graph')).find((f) => f.startsWith(id));
   assert.ok(nodeFile, 'the node file');
@@ -366,9 +406,31 @@ test('a wipe and a new graph named with a host path: the ring events carry the l
   const p = planted(d.root);
   const { api } = d;
   await api.post('/api/render', { id: 'pane-a', html: '<p>a</p>' });
-  await api.post('/api/commit', { message: 'base' });
+  const base = await api.post('/api/commit', { message: 'base' });
+  assert.ok(base.json && base.json.node_id, base.text);
   const sse = await d.sse();
   t.after(() => sse.close());
+
+  // A bookmark named with a host path (U752@bookmark-frame-name): the
+  // `bookmark` frame carries the name masked to a read socket and as typed to
+  // a local one, as GET /api/graph serves it.
+  const local = collect(t, d.port);
+  const remote = collect(t, d.port, REMOTE);
+  const relayed = collect(t, d.port, RELAYED('read'));
+  await Promise.all([local.opened, remote.opened, relayed.opened]);
+  for (const s of [local, remote, relayed]) await waitUntil(() => s.of('hello').length, { timeout: 5000, interval: 10, what: 'hello' });
+  const bm = await api.post('/api/graph/bookmark', { id: base.json.node_id, name: p.text('mark') });
+  assert.strictEqual(bm.status, 200, bm.text);
+  assert.strictEqual(bm.json.name, p.text('mark'), 'the local answer names the bookmark as typed');
+  for (const s of [local, remote, relayed]) await waitUntil(() => s.of('bookmark').length, { timeout: 5000, interval: 10, what: 'the bookmark frame' });
+  assert.strictEqual(local.of('bookmark')[0].name, p.text('mark'), 'local: the bookmark frame names it as typed');
+  for (const [who, s] of [['remote read', remote], ['relayed read', relayed]]) {
+    assert.strictEqual(s.of('bookmark')[0].name, p.masked('mark'), `${who}: the bookmark frame's name masked`);
+    assert.deepStrictEqual(rawIn(p, s.of('bookmark')), [], `${who}: no raw host path on the bookmark frame`);
+  }
+  const remoteGraph = (await api.get('/api/graph', REMOTE)).json;
+  assert.ok(remoteGraph.nodes.some((x) => x.name === p.masked('mark')), 'GET /api/graph serves the same name masked');
+  assert.strictEqual((await api.get(`/api/graph/node/${base.json.node_id}`)).json.name, p.text('mark'), 'the node keeps the name as typed');
 
   const w = await api.post('/api/graph/wipe', { name: p.text('wipe') });
   assert.strictEqual(w.status, 200, w.text);
