@@ -494,6 +494,7 @@ const HOME_ALLOW = [
 // when its corrective lands.
 const PLANT_RESIDUALS = [
   { route: '/replay', reason: 'the replay document\'s captions (include_prompts: the trigger\'s prompt) are built by lib/server/replay/document.js buildReplay, outside U752\'s cell — ready patch in _logs/ae-t6/U752/handoff.md' },
+  { route: '/api/export/:ref', reason: 'the downloaded page export embeds the node\'s elements (a comment pinned on a pane, its text) through lib/server/routes/export.js buildExportHtml and lib/server/document-elements.js, outside U752\'s cell — a grant asked for in _logs/ae-t6/U752/handoff.md' },
   { route: '/api/replay/html', reason: 'the downloaded replay document, the same buildReplay captions as /replay — ready patch in _logs/ae-t6/U752/handoff.md' },
 ];
 
@@ -829,11 +830,6 @@ async function runScenario(t, teardown) {
   cap.notes.heldId = held.body.id;
   cap.notes.heldText = heldText;
 
-  // ── a shared comment naming a file under the home (C-11.25's comment, U752) ──
-  const pinned = await client.request(port, 'POST', '/api/elements',
-    { type: 'comment', payload: { text: `see ${PLANT.comment()} for the notes`, shared: true } }, { headers: LOCAL_ORIGIN, timeout: CALL_TIMEOUT_MS });
-  assert.equal(pinned.status, 200, JSON.stringify(pinned.body));
-
   // ── S1: a restore of p1 and its undo, through the answer origin ──
   const pv = await get('/api/code/preview?turn=p1');
   assert.equal(pv.ok, true, JSON.stringify(pv));
@@ -1124,6 +1120,20 @@ async function runScenario(t, teardown) {
     await waitUntil(() => sk.level === 'read', { timeout: 20000, interval: 20, what: `${sk.name} told it is read` });
   }
   await shortTurn('p3', fake('x-api-key-json').text);
+
+  // ── a shared comment naming a file under the home (C-11.25's comment, U752) ──
+  // Pinned on a rendered pane, as every comment the browser pins is: it then
+  // queues an item whose summary quotes it, so the queue's carriers (GET
+  // /api/queue and the `queue` frame) hold the planted path too. Pinned here,
+  // with the remote sockets at read, so the item is still queued when they
+  // and the read sweep reach it (a message sent now in S1 releases the queue).
+  const pinned = await client.request(port, 'POST', '/api/elements',
+    { type: 'comment', anchor: { mount: 'sweep-p1' }, payload: { text: `see ${PLANT.comment()} for the notes`, shared: true } }, { headers: LOCAL_ORIGIN, timeout: CALL_TIMEOUT_MS });
+  assert.equal(pinned.status, 200, JSON.stringify(pinned.body));
+  const queuedComment = (frames) => frames.some((x) => x.frame.type === 'queue' && x.frame.item && x.frame.item.kind !== 'message' && x.frame.item.type === 'comment');
+  for (const sk of [local, ...sockets.filter((x) => x.name.startsWith('remote'))]) {
+    await waitUntil(() => queuedComment(sk.frames), { ...WAIT, what: `the pinned comment's queue frame on ${sk.name}` });
+  }
   await sweep('read');
 
   // ── phase full ──
@@ -1363,7 +1373,7 @@ async function clauses(t, cap) {
     assert.deepEqual(staleResidual, [], `seed ${SEED}: the planted-path residuals may only shrink — these excused nothing (its corrective landed? remove it): ${staleResidual.join('; ')}`);
   });
 
-  await t.test('(4) the planted home paths (C-11.25, U752): kept whole by a local read, masked below local on the graph, the node read and the element read', () => {
+  await t.test('(4) the planted home paths (C-11.25, U752): kept whole by a local read, masked below local on the graph, the node read, the element read and the queue', () => {
     const masked = (f) => `~${f.slice(process.env.HOME.length)}`;
     const reads = (who, re) => cap.responses.filter((r) => r.who === who && re.test(r.url) && r.status === 200);
     const checks = [
@@ -1383,6 +1393,22 @@ async function clauses(t, cap) {
     }
     const q = cap.responses.find((r) => r.who === 'local' && r.url === '/api/queue');
     if (!q || !q.text.includes(PLANT.queued())) bad.push('the queued message: the local GET /api/queue does not hold it as typed');
+    // The comment pinned on a pane queues an item quoting it: the local
+    // socket's `queue` frame holds it as typed; a remote socket at read and
+    // the read sweep's GET /api/queue hold it masked, and never raw.
+    const comment = PLANT.comment();
+    const commentFrames = (sk, level) => cap.frames.filter((f) => f.socket === sk && f.type === 'queue' && (!level || f.level === level)
+      && f.frame.item && f.frame.item.kind !== 'message' && f.frame.item.type === 'comment');
+    if (!commentFrames('local').some((f) => f.text.includes(comment))) bad.push('the comment\'s queue item: no local queue frame holds it as typed');
+    // The sockets open while it was pinned (the third opens after it, at full).
+    for (const sk of ['remote (opened at basic)', 'remote (opened at read)']) {
+      const at = commentFrames(sk, 'read');
+      if (!at.some((f) => f.text.includes(masked(comment)))) bad.push(`the comment\'s queue item: no queue frame at read on ${sk} holds it masked as ${masked(comment)} (${at.length} frames)`);
+      if (commentFrames(sk).some((f) => f.text.includes(comment))) bad.push(`the comment\'s queue item: a queue frame on ${sk} holds it raw`);
+    }
+    const qr = reads('read', /^\/api\/queue$/).filter((r) => r.portal);
+    if (!qr.some((r) => r.text.includes(masked(comment)))) bad.push(`the comment\'s queue item: no read GET /api/queue holds it masked as ${masked(comment)} (${qr.length} read)`);
+    if (cap.responses.some((r) => r.who !== 'local' && r.portal && /^\/api\/queue(?:[/?]|$)/.test(r.url) && r.text.includes(comment))) bad.push('the comment\'s queue item: a remote read of the queue holds it raw');
     assert.equal(bad.length, 0, `seed ${SEED}: ${report(bad)}`);
   });
 

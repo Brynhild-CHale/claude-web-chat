@@ -28,7 +28,7 @@ const { userPaths, realpath } = require('../lib/core/paths');
 const { LEVEL_HEADER, REMOTE_HEADER } = require('../lib/core/cors');
 const { RELAY_HEADER } = require('../lib/core/writer-token');
 const { createServer } = require('../lib/server');
-const { maskHostText, maskFrameText, hostMaskBelowLocal, HOST_MASK_PREFIXES } = require('../lib/server/host-mask');
+const { maskHostText, maskFrameText, maskQueueItem, maskQueueBody, hostMaskBelowLocal, HOST_MASK_PREFIXES } = require('../lib/server/host-mask');
 
 const SECRET = crypto.randomBytes(32).toString('hex');
 
@@ -121,6 +121,27 @@ test('maskHostText: the root and the home masked in every string, pass-through c
   assert.strictEqual(el.pin.text, '~/a', 'an element frame masked whole');
   const store = { type: 'store:patch', patch: { k: `${home}/a` } };
   assert.strictEqual(maskFrameText(store, { root, home }), store, 'a frame with no text fields is returned as it is');
+
+  // The queue item rule: a message item keeps its text (C-11.14); a comment
+  // or element item has its TEXT_RULES.items fields masked, nothing else.
+  const msg = { kind: 'message', text: `see ${home}/a`, summary: 'message · 9 chars' };
+  const pin = { kind: 'element', type: 'comment', summary: `pane-a · "${home}/a"`, members: [{ id: 'c1', words: `${home}/a` }], excerpt: `${home}/a`, origin_mount: 'pane-a', why_wake: `${home}/kept` };
+  assert.strictEqual(maskQueueItem(msg, { root, home }), msg, 'a message item as it is');
+  const mp = maskQueueItem(pin, { root, home });
+  assert.strictEqual(mp.summary, 'pane-a · "~/a"');
+  assert.strictEqual(mp.members[0].words, '~/a');
+  assert.strictEqual(mp.excerpt, '~/a');
+  assert.strictEqual(mp.why_wake, `${home}/kept`, 'a field TEXT_RULES.items does not name is untouched');
+  const qf = maskFrameText({ type: 'queue', op: 'add', item: pin }, { root, home });
+  assert.strictEqual(qf.item.summary, 'pane-a · "~/a"', 'the queue frame\'s item');
+  const qm = { type: 'queue', op: 'add', item: msg };
+  assert.strictEqual(maskFrameText(qm, { root, home }), qm, 'a queue frame with a message item as it is');
+  const qb = maskQueueBody({ items: [msg, pin], pending: { items: [pin], note: `${home}/n` } }, { root, home });
+  assert.strictEqual(qb.items[0], msg, 'GET /api/queue: the message item as it is');
+  assert.strictEqual(qb.items[1].summary, 'pane-a · "~/a"');
+  assert.strictEqual(qb.items[1].why_wake, `${home}/kept`);
+  assert.strictEqual(qb.pending.items[0].summary, 'pane-a · "~/a"', 'the park\'s items');
+  assert.strictEqual(qb.pending.note, '~/n', 'the rest of the body masked');
 });
 
 test('hostMaskBelowLocal: a local request passes; any other level, or none, is masked; outside its prefixes nothing is', () => {
@@ -151,7 +172,8 @@ test('hostMaskBelowLocal: a local request passes; any other level, or none, is m
       assert.strictEqual(run(level, '/api/graphical'), `${home}/a`, 'a prefix is a whole segment');
       assert.strictEqual(run(level, '/api/mounts'), `${home}/a`, 'the live mounts are the surface');
       assert.strictEqual(run(level, '/api/mounts/pane-a/restore'), `${home}/a`, 'only the history under /api/mounts');
-      assert.strictEqual(run(level, '/api/queue'), `${home}/a`, 'outside the prefixes');
+      assert.strictEqual(run(level, '/api/queue'), '~/a', level);
+      assert.strictEqual(run(level, '/api/queued'), `${home}/a`, 'outside the prefixes');
     }
   } finally { process.env.HOME = prev; }
 });
@@ -168,6 +190,19 @@ test('graph text, health\'s lock and element text: masked for a remote request a
   assert.strictEqual(tb.status, 200, tb.text);
   const c = await api.post('/api/elements', commentBody({ text: p.text('comment'), shared: true, anchor: { mount: 'pane-a' } }));
   assert.strictEqual(c.status, 200, c.text);
+
+  // The comment pinned on pane-a queues an item whose summary quotes it: GET
+  // /api/queue serves it masked below local and whole to a local read.
+  const queueItem = (body) => ((body && body.items) || []).find((it) => it.kind !== 'message' && JSON.stringify(it).includes('proj/x'));
+  const lq = await waitUntil(async () => queueItem((await api.get('/api/queue')).json), { timeout: 5000, interval: 20, what: 'the comment\'s queue item' });
+  assert.ok(JSON.stringify(lq).includes(path.join(p.home, 'proj', 'x')), `local: the queue item quotes the comment as typed: ${JSON.stringify(lq)}`);
+  for (const [who, h] of [['remote read', REMOTE], ['relayed read', RELAYED('read')]]) {
+    const q = await api.get('/api/queue', h);
+    assert.strictEqual(q.status, 200, q.text);
+    const it = queueItem(q.json);
+    assert.ok(it && JSON.stringify(it).includes('~/proj/x'), `${who}: the comment's queue item masked: ${q.text.slice(0, 400)}`);
+    assert.deepStrictEqual(rawIn(p, q.text), [], `${who}: no raw host path on GET /api/queue`);
+  }
 
   // While the turn runs: the lock on health and the graph.
   const health = async (h) => (await api.get('/api/health', h)).json;
@@ -290,6 +325,18 @@ test('the /ws hello and a lock frame: masked for a read socket, whole for a loca
   assert.strictEqual(JSON.stringify(rh.mounts), JSON.stringify(lh.mounts), 'pane html byte-identical');
   assert.strictEqual(JSON.stringify(rh.store), JSON.stringify(lh.store), 'the store byte-identical');
   assert.ok(JSON.stringify(rh.mounts).includes(p.text('pane')), 'the pane html as rendered');
+
+  // A comment pinned on pane-a queues an item quoting it: the `queue` frame's
+  // item is masked for a read socket and whole for a local one.
+  const c = await api.post('/api/elements', commentBody({ text: p.text('comment'), shared: true, anchor: { mount: 'pane-a' } }));
+  assert.strictEqual(c.status, 200, c.text);
+  const queuedAdd = (s) => s.of('queue').find((f) => f.op === 'add' && f.item && f.item.kind !== 'message' && JSON.stringify(f.item).includes('proj/x'));
+  for (const s of [local, remote, relayed]) await waitUntil(() => queuedAdd(s), { timeout: 5000, interval: 10, what: 'the queue frame' });
+  assert.ok(JSON.stringify(queuedAdd(local).item).includes(path.join(p.home, 'proj', 'x')), 'local: the queue item as typed');
+  for (const [who, s] of [['remote read', remote], ['relayed read', relayed]]) {
+    assert.ok(JSON.stringify(queuedAdd(s).item).includes('~/proj/x'), `${who}: the queue item masked: ${JSON.stringify(queuedAdd(s).item)}`);
+    assert.deepStrictEqual(rawIn(p, queuedAdd(s)), [], `${who}: no raw host path on the queue frame`);
+  }
 
   // A wipe asked for while the turn holds the lock queues: its reaim:pending
   // frame names the label, masked for a socket that is not local.
