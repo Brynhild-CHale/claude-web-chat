@@ -291,6 +291,14 @@ test('the /ws hello and a lock frame: masked for a read socket, whole for a loca
   assert.strictEqual(JSON.stringify(rh.store), JSON.stringify(lh.store), 'the store byte-identical');
   assert.ok(JSON.stringify(rh.mounts).includes(p.text('pane')), 'the pane html as rendered');
 
+  // A wipe asked for while the turn holds the lock queues: its reaim:pending
+  // frame names the label, masked for a socket that is not local.
+  const queued = await api.post('/api/graph/wipe', { name: p.text('queued wipe') });
+  assert.strictEqual(queued.json && queued.json.pending, true, queued.text);
+  for (const s of [local, remote]) await waitUntil(() => s.of('reaim:pending').length, { timeout: 5000, interval: 10, what: 'reaim:pending' });
+  assert.strictEqual(local.of('reaim:pending')[0].intent.name, p.text('queued wipe'), 'local: the queued label whole');
+  assert.strictEqual(remote.of('reaim:pending')[0].intent.name, p.masked('queued wipe'), 'read: the queued label masked');
+
   // The node-added frame after the turn ends; and no raw host path on any
   // frame a non-local socket received outside the surface carriers.
   await api.post('/api/turn-end', { author: 'claude', reply: p.text('reply'), ended: 'stop' });
