@@ -115,6 +115,12 @@ const BASELINE = {
   'lib/cli/commands/portal.js => lib/portal/index.js':
     'the portal subcommand runs the portal in-process',
 
+  // `connect run` is the CLI face of the connector process, the portal.js =>
+  // portal/index.js shape (contract 06 C-06.1). Required lazily, inside the
+  // command, and from no other CLI file.
+  'lib/cli/commands/connect.js => lib/connector/index.js':
+    'connect run is the CLI face of the connector process',
+
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
   // through the same spawn-injecting shim the 24 tools use.
   'lib/hooks/turn-begin.js => lib/mcp/client.js':
