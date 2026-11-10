@@ -318,8 +318,9 @@ test('a pen stroke on the svg: the wet layer begins over it and drops at pen-up;
   tools.arm(null);
   const { body } = posts()[n0];
   assert.deepEqual([body.type, body.anchor.kind, body.payload.shared], [TYPE, 'element', false], 'private by default');
-  // The create ctx (contract (c)).
-  assert.deepStrictEqual([...createCtxKeys].sort(), [...ov.CREATE_CTX_KEYS, ...W.__u590BootMembers].sort(), 'the own keys and the boot members, exactly');
+  // The create ctx (contract (c)), and a plug-in type's private_allowed
+  // (U757: element-types.js adds it to a plug-in type's create ctx).
+  assert.deepStrictEqual([...createCtxKeys].sort(), [...ov.CREATE_CTX_KEYS, ...W.__u590BootMembers, 'private_allowed'].sort(), 'the own keys, the boot members and private_allowed, exactly');
   // The dry marker, from the add's frame.
   await shell.frame({ type: `element:${TYPE}`, elements: strokes });
   const rec = strokes.at(-1);

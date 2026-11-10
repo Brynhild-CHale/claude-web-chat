@@ -114,7 +114,8 @@ test('a listed plug-in row: one import of exactly its draw.js URL; default draw 
   const url = `/api/elements/types/sticker/draw.js?d=${SHA}`;
   assert.equal(ET.drawPath('sticker', SHA), url);
   let drew = 0;
-  const create = () => {};
+  const created = [];
+  const create = (input, ctx) => { created.push({ input, ctx }); };
   const draw = (g, ctx) => {
     drew++;
     assert.equal(typeof ctx.record, 'function', 'the plug-in ctx carries record');
@@ -126,7 +127,15 @@ test('a listed plug-in row: one import of exactly its draw.js URL; default draw 
   assert.deepStrictEqual(imported, [url], 'one import, of exactly the route');
   const spec = regs.get('sticker');
   assert.ok(spec, 'registered with the overlay');
-  assert.equal(spec.create, create, 'the named create');
+  // The named create, behind element-types.js's plug-in create ctx (U757: it
+  // adds the frozen private_allowed and passes the input and ctx through).
+  assert.equal(typeof spec.create, 'function', 'the named create');
+  const input = { phase: 'click' };
+  spec.create(input, { probe: 1 });
+  assert.equal(created.length, 1, 'the named create ran');
+  assert.strictEqual(created[0].input, input);
+  assert.equal(created[0].ctx.probe, 1);
+  assert.equal(typeof created[0].ctx.private_allowed, 'boolean');
   assert.equal(spec.input, 'taps', 'the listing row\'s toolbar input, not the module\'s');
   assert.equal(spec.place, undefined, 'the listing names no place: the module\'s is ignored');
   assert.equal(spec.host, undefined, 'any other export is ignored');
