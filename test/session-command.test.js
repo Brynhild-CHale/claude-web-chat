@@ -73,27 +73,27 @@ function callerEnv(stubDir) {
 
 // A paired record (06-connector-state's example shape) whose one chat, LABEL,
 // has `root`; manual_attach_at null unless given.
-function writePaired(root, { manualAttachAt = null } = {}) {
+function writePaired(root, { manualAttachAt = null, hubId = HUB, state = 'paired', chatId = LABEL } = {}) {
   setup.writeRecord({
     v: 1,
-    hub: { id: HUB, origin: 'https://hub.example.com', name: 'Test hub' },
+    hub: { id: hubId, origin: 'https://hub.example.com', name: 'Test hub' },
     machine: { id: 'mch_01jbz3k9q4w8r2t6v0x5m7n8p1', name: 'studio-mbp' },
     credential: {
-      state: 'paired',
+      state,
       algorithm: 'ed25519',
-      key_file: userPaths().connectorKey(HUB),
+      key_file: userPaths().connectorKey(hubId),
       key_id: 'mky_y4881352x9v335ap1wtpd4q6ef',
       public_key: 'kTCi0MViCOcU8LqIYhIzSR1xC7jW0kmKgaBHqjV2eo4',
       fingerprint: 'SHA256:8RCAjKLqdjGVVg81ZpLmc+7/fOPgiDSG8BRyRVXXMGs',
       paired_at: 1793177460000,
-      revoked_at: null,
+      revoked_at: state === 'revoked' ? 1793177900000 : null,
     },
-    workdir: userPaths().defaultWorkdir(HUB),
+    workdir: userPaths().defaultWorkdir(hubId),
     ceiling: 'full',
     settings: { agents_at_once: 2, local_cap: null, accept_new_chats: true, let_home_start_agents: false, paused: false, rev: 4 },
     folders: [],
     chats: [{
-      chat_id: LABEL, rev: 3, scope_kind: 'space', root, instance: null, owned_root: true,
+      chat_id: chatId, rev: 3, scope_kind: 'space', root, instance: null, owned_root: true,
       desired: 'running', manual_attach_at: manualAttachAt, assigned_at: 1793177700000,
     }],
     service: null,
@@ -253,6 +253,35 @@ test('connect attach: an unknown label answers 1 and runs nothing', async (t) =>
   assert.match(r.err, /no chat 01jbz9a1b2c3d4e5f6g7h8j9zz on this machine/);
   assert.equal(r.runs.length, 0);
   assert.equal(chatOf().manual_attach_at, null, 'nothing recorded');
+});
+
+test('connect attach: a label is the whole chat_id, never a prefix of one', async (t) => {
+  withTempHome(t);
+  const { dir } = stubClaude(t, {});
+  const root = tmpDir(t, 'wc-u732-root-');
+  writePaired(root);
+  const r = await connect([LABEL.slice(0, 8)], { env: callerEnv(dir) });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /no chat 01jbz9a1 on this machine/);
+  assert.equal(r.runs.length, 0);
+  assert.equal(chatOf().manual_attach_at, null, 'nothing recorded');
+});
+
+test('connect attach: a chat only a revoked record holds is no chat here, beside a paired record', async (t) => {
+  withTempHome(t);
+  const { dir } = stubClaude(t, {});
+  const root = tmpDir(t, 'wc-u732-root-');
+  // 'aaa-hub' sorts before HUB, so a reader that skipped the paired test would
+  // find LABEL there first.
+  writePaired(root, { hubId: 'aaa-hub', state: 'revoked' });
+  writePaired(root, { chatId: '01jbz9a1b2c3d4e5f6g7h8j9zz' });
+  const r = await connect([LABEL], { env: callerEnv(dir) });
+  assert.equal(r.code, 1);
+  assert.match(r.err, new RegExp(`no chat ${LABEL} on this machine`));
+  assert.equal(r.runs.length, 0);
+  const revoked = setup.readRecord('aaa-hub');
+  assert.ok(revoked.ok);
+  assert.equal(revoked.value.chats[0].manual_attach_at, null, 'the revoked record is not written');
 });
 
 test('connect attach: a mapped root that no longer exists answers 1 and runs nothing', async (t) => {
