@@ -610,6 +610,79 @@ test('flow control: 256 streams per link and 64 per chat; credit waits for relay
   assert.strictEqual(link.batchSlot(ringChat), false);
 });
 
+test("hello.ack's values are checked by the link: windows capped at 256 streams per link and 64 per chat (C-05.23)", async (t) => {
+  const fake = await withFakeHub(t, {
+    windows: {
+      relay_stream_bytes: 256 * 1024, relay_streams_max: 100000, relay_streams_per_chat: 100000,
+      signals_unacked: 256, batches_unacked_per_chat: 4, frame_bytes_max: MiB,
+    },
+  });
+  const { link } = openLink(t, fake);
+  const up = ready(link);
+  link.start();
+  const info = (await up)[0];
+  assert.strictEqual(info.windows.relay_streams_max, 256);
+  assert.strictEqual(info.windows.relay_streams_per_chat, 64);
+  let id = 1;
+  for (let chat = 0; chat < 4; chat++) for (let i = 0; i < 64; i++) assert.ok(link.streams.open(id++, `chat-${chat}`).ok);
+  assert.deepStrictEqual(link.streams.open(id++, 'chat-z'), { ok: false, reason: 'link_full' }, 'the 257th stream');
+  for (let i = 1; i < 257; i++) link.streams.close(i);
+  for (let i = 0; i < 64; i++) assert.ok(link.streams.open(id++, 'chat-one').ok);
+  assert.deepStrictEqual(link.streams.open(id++, 'chat-one'), { ok: false, reason: 'chat_full' }, 'the 65th on one chat');
+});
+
+test('a hello.ack out of 05-hello.json\'s bounds (heartbeat_ms 1) is bad_frame: control.error fatal, close 4400, no heartbeat faster than 5 s', async (t) => {
+  const fake = await withFakeHub(t, {
+    heartbeatMs: 1,
+    // The fake's own pings would follow heartbeat_ms on real timers: hold them at 15 s.
+    timers: { setTimeout, clearTimeout, setInterval: (fn, ms) => setInterval(fn, Math.max(ms, 15000)), clearInterval },
+  });
+  const { link, vt } = openLink(t, fake);
+  link.start();
+  await fake.waitFor('hello.ack', { dir: 'out' });
+  await waitUntil(() => link.state !== 'hello', { what: 'the hello.ack handled' });
+  vt.advance(4999);
+  await new Promise((r) => setTimeout(r, 50));   // what the link wrote reaches the fake
+  assert.strictEqual(fake.find('heartbeat', { dir: 'in' }).length, 0, 'no heartbeat within 5 s');
+  const err = await fake.waitFor('control.error');
+  assert.deepStrictEqual([err.frame.code, err.frame.fatal], ['bad_frame', true]);
+  assert.strictEqual((await fake.links[0].closed).code, 4400);
+  await waitUntil(() => link.nextRetry, { what: 'the link closed' });
+  assert.deepStrictEqual([link.nextRetry.code, link.nextRetry.action], [4400, 'normal']);
+  assert.strictEqual(link.compat, null, 'nothing from the refused hello.ack is kept');
+  const taken = fake.takeErrors((e) => e.dir === 'out' && e.kind === 'hello.ack');
+  assert.ok(taken.length >= 1, 'the fake sent a hello.ack its own schema refuses');
+});
+
+test('the outbound queues are written in priority: control, queue, ring batches, derived signals, relay (C-05.21)', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link } = openLink(t, fake);
+  const strip = (name) => {
+    const { ch, kind, id, seq, at, re, ...body } = JSON.parse(JSON.stringify(validator.view.examples.get(name).data));
+    return { ch, kind, re, body };
+  };
+  link.start();
+  // The fake answers hello with hello.ack in the same tick; the link reads it
+  // only on a later one, so frames sent now wait in the queues until it does.
+  await fake.waitFor('hello');
+  assert.strictEqual(link.state, 'hello');
+  const sent = [];
+  for (const name of ['05-relay-http.window', '05-event.turn-begun', '05-event', '05-queue-deliver.ack']) {
+    const { ch, kind, re, body } = strip(name);
+    assert.ok(link.send(ch, kind, body, { re }), name);
+    sent.push(kind);
+  }
+  assert.deepStrictEqual(sent, ['relay.window', 'turn.begun', 'events.batch', 'queue.ack'], 'queued in reverse priority');
+  await fake.waitFor('relay.window');
+  const order = fake.frames.filter((e) => e.dir === 'in' && sent.includes(e.kind)).map((e) => e.kind);
+  assert.deepStrictEqual(order, ['queue.ack', 'events.batch', 'turn.begun', 'relay.window']);
+  const facts = fake.frames.findIndex((e) => e.dir === 'in' && e.kind === 'machine.facts');
+  const first = fake.frames.findIndex((e) => e.dir === 'in' && e.kind === 'queue.ack');
+  assert.ok(facts >= 0 && facts < first, 'the link\'s own control frame goes first');
+  await new Promise((r) => setTimeout(r, 50));
+  fake.takeErrors((e) => sent.includes(e.kind));   // the fake has none of these chats or streams
+});
+
 // ── what never leaves ──────────────────────────────────────────────────────
 test('send() refuses a frame past 1 MiB encoded; a frame holding a registered secret or the key is dropped, logged by code only', async (t) => {
   const fake = await withFakeHub(t);
