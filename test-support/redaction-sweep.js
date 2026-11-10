@@ -48,8 +48,8 @@
 //
 // WHAT MUST HOLD (§11.10, one subtest per clause; every failure names the
 // seed, the carrier and the rule): (1) no generated value and no 8-character
-// window of one anywhere, local included; (2) the planted email and
-// organisation id nowhere; (3) the composer marker in nothing delivered below
+// window of one anywhere, local included; (2) the planted email,
+// organisation id and relay secret nowhere; (3) the composer marker in nothing delivered below
 // read, the queue there showing `message · N chars`, and the transported
 // message's lock and node 'web message m-…' at every level; (4) no raw home
 // path in the carriers ruling E6 (a) lists — every other local response and
@@ -78,6 +78,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const { withServer, waitUntil, wsConnect, openSSE, fakeBin } = require('../test-support/helpers');
@@ -88,6 +89,7 @@ const { agentFixtures } = require('../test-support/agent-fixtures');
 const { treesnapRepo } = require('../test-support/treesnap-fixture');
 const { fakeMod } = require('../test-support/fake-mod');
 const { fakeSecrets, findLeaks } = require('../test-support/fake-secrets');
+const { MASK } = require('../lib/core/redact');
 const client = require('../lib/client');
 const { createServer } = require('../lib/server');
 const { hookEnvelope } = require('../lib/hooks/envelope');
@@ -125,9 +127,19 @@ const SCAN = FAKES.map((f) => {
   if (f.id === 'env-dotenv') return { ...f, secrets: f.secrets.filter((s) => !/\.example\.org$/.test(s)) };
   return f;
 });
+// The relay secret (03 C-03.22; 11 C-11.7, C-11.25's counted value; U741):
+// the sweep's daemon is built with it, as a connector-spawned daemon is handed
+// one, and the first prompt carries it, as a transcript might after Claude ran
+// `ps eww`. A known value of the redactor ('relay-secret') from boot: it and
+// every 8-character window of it (the hex allowance above: a hex window counts
+// at 12) must be nowhere, at every level. The relayed run with a real
+// connector is U790's.
+const RELAY_SECRET = crypto.createHash('sha256').update(`relay-secret-${SEED}`).digest('hex');
+SCAN.push({ id: 'planted-relay-secret', rule: 'known', secrets: [RELAY_SECRET] });
 const PLANTED = [
   { id: 'planted-email', rule: 'known', secrets: [EMAIL, EMAIL.split('@')[0]] },
   { id: 'planted-org', rule: 'known', secrets: [ORG] },
+  { id: 'planted-relay-secret', rule: 'known', secrets: [RELAY_SECRET] },
 ];
 
 // Non-secret marker phrases: where each must never be is the clause's.
@@ -539,7 +551,7 @@ async function runScenario(t, teardown) {
 
   const ctx = await withServer(t, {
     root, writePortfile: true, home: false,
-    createServer: (o) => createServer({ ...o, modPermissionWait: RAISED_WAIT_MS }),
+    createServer: (o) => createServer({ ...o, modPermissionWait: RAISED_WAIT_MS, relaySecret: RELAY_SECRET }),
   });
   await ctx.srv.controlStarted;
   t.after(stubPeers(ctx.server));
@@ -651,7 +663,7 @@ async function runScenario(t, teardown) {
   // With the head read, the known values are registered (§5.5).
 
   // ── S1 · p1: a turn whose every carrier holds a fake ──
-  const PROMPT1 = `${PROMPT_MARK} deploy as ${EMAIL} for org ${ORG} with ${fake('sk-anthropic-api').text} and ${fake('github-ghp').text}`;
+  const PROMPT1 = `${PROMPT_MARK} deploy as ${EMAIL} for org ${ORG} with ${fake('sk-anthropic-api').text} and ${fake('github-ghp').text} relay ${RELAY_SECRET}`;
   const seen = await snapshots();
   const b1 = await turnBegin('p1', PROMPT1);
   assert.equal(b1.ok, true, JSON.stringify(b1));
@@ -1178,11 +1190,14 @@ async function clauses(t, cap) {
     assert.ok(taskResp.some((r) => r.text.includes(TOOLOUT_MARK)), `seed ${SEED}: the task output reached GET /api/mirror/tasks/${TASK2}/output`);
   });
 
-  await t.test('(2) the planted email and organisation id appear nowhere, index files included', () => {
+  await t.test('(2) the planted email, organisation id and relay secret appear nowhere, index files included', () => {
     const bad = [];
     for (const c of all) for (const id of plantedIn(c.text)) bad.push(say(c.carrier, c.level, 'known value (§2.11)', id));
     for (const id of plantedIn(cap.gitObjects)) bad.push(say('the shadow store\'s objects', 'file', 'known value', id));
     assert.equal(bad.length, 0, report(bad));
+    // The relay secret did reach the daemon's texts (so its absence above
+    // means something): the prompt that carried it is shown masked.
+    assert.ok(all.some((c) => c.text.includes(MASK('relay-secret'))), `seed ${SEED}: the relay secret's mask appears in some carrier`);
   });
 
   await t.test('(3) the composer marker reaches nothing below read; the queue there says `message · N chars`', () => {

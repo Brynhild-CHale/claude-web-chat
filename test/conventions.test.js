@@ -1026,6 +1026,11 @@ const PATTERNS = [
     re: /\bremoteAddress\b/g,
     baseline: {
       'lib/server/audience.js': 1,
+      // The relay credential's own peer check (U741; 03 C-03.21: "the peer is
+      // loopback"), beside the remote label and the relay secret. A credential
+      // check, not a classification: audience's peerOf will read valid(req)
+      // for its relayed kind (U742), so valid cannot read peerOf back.
+      'lib/server/relay-credential.js': 1,
     },
   },
   {
@@ -1034,16 +1039,22 @@ const PATTERNS = [
     // fetch with the pane header (U214c). Both names live in one module; a
     // second spelling is a second idea of which header carries a credential —
     // a route reading it past resolveWriter, or a client sending it past
-    // lib/mcp/client.
-    name: 'X-WC-Writer / X-WC-Pane (the writer-identity headers)',
-    home: 'lib/core/writer-token.js — `WRITER_HEADER` / `PANE_HEADER`',
-    what: 'spelling a writer-identity header',
+    // lib/mcp/client. The relay credential pair (tranche 6 U741; 03 C-03.19 to
+    // C-03.21) joins them: the connector sends the relay secret and the actor,
+    // the daemon judges them in lib/server/relay-credential.js, and both read
+    // the names from writer-token — a second spelling is a second idea of
+    // which header carries the relay secret.
+    name: 'X-WC-Writer / X-WC-Pane / X-WC-Relay / X-WC-Actor (the writer-identity and relay-credential headers)',
+    home: 'lib/core/writer-token.js — `WRITER_HEADER` / `PANE_HEADER` / `RELAY_HEADER` / `ACTOR_HEADER`',
+    what: 'spelling a writer-identity or relay-credential header',
     roots: ['lib', 'public', 'bin', 'scripts'],
     exts: ['.js', '.html'],
-    re: /X-WC-(Writer|Pane)/gi,
+    re: /X-WC-(Writer|Pane|Relay|Actor)/gi,
     baseline: {
-      // The two constants.
-      'lib/core/writer-token.js': 2,
+      // The four constants: WRITER_HEADER and PANE_HEADER, and (U741) the
+      // relay credential's RELAY_HEADER and ACTOR_HEADER, which the connector
+      // (U717) and lib/server/relay-credential.js import from here.
+      'lib/core/writer-token.js': 4,
       // The realm stamp (U214c): the runtime is spliced verbatim into
       // documents and served to the browser, so it cannot require
       // writer-token; it spells PANE_HEADER once, as its own PANE_HEADER, and
