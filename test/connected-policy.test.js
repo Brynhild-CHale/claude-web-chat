@@ -11,11 +11,13 @@
 //     become remote-policy's `mirror` or `destructive`; first match wins and a
 //     malformed path is refused;
 //   * a sample of rows answering at their level, GET / at read;
-//   * a pending route — one the code grew after the table's derivation, with
-//     no row (test/remote-policy.test.js's pending list: GET /api/forms/shifts)
-//     — falls to the default deny at the connector, and the daemon refuses a
-//     remote request for it 403 host only by its own gate (the daemon never
-//     reads this table, C-04.21);
+//   * a pending route — one the code grew after the table's derivation
+//     (test/remote-policy.test.js's pending list) — with no row (GET
+//     /api/forms/shifts) falls to the default deny at the connector; one a v1
+//     wildcard row admits (POST /api/elements/:id/picture under POST|PATCH|
+//     DELETE /api/elements/*, I3 (a)) is let through by the connector; the
+//     daemon refuses a remote request for either 403 host only by its own gate
+//     (the daemon never reads this table, C-04.21);
 //   * wsInboundLevel: the seven types at their levels, null for anything else.
 // The ratchet that holds the table to the code (C-04.19's checks, the pending
 // list) is the appended block of test/remote-policy.test.js.
@@ -195,12 +197,16 @@ test('verdicts: first match wins, default deny, malformed refused, the two origi
   assert.equal(classifySession('HEAD', '/api/graph').allow, true);
 });
 
-test('a pending route (GET /api/forms/shifts, no row in table_version 1) falls to the default deny at the connector; the daemon refuses it 403 host only', async (t) => {
+test('pending routes: one with no v1 row (GET /api/forms/shifts) falls to the default deny at the connector; one a v1 wildcard admits (POST /api/elements/:id/picture) passes it; the daemon refuses both 403 host only', async (t) => {
   const v = classifySession('GET', '/api/forms/shifts');
   assert.deepStrictEqual([v.allow, v.key, v.reason, v.row], [false, null, 'unknown', null], 'the runtime is C-04.13\'s default deny, whatever the test\'s pending list says');
-  // A wildcard-admitted route is not pending: the type's draw.js (U511) hits
-  // the locked GET /api/elements/* row at read, as the portal's element floor
-  // does, and the daemon checks its own read level.
+  // A pending route a v1 wildcard row admits (I3 (a), hand fold 3): the
+  // connector lets it through at the wildcard's level. The ink picture's POST
+  // (U564) is host only at the daemon; the type's draw.js (U511), also
+  // pending, is served at the daemon's own read level (element-files.js), so
+  // it shows only the connector's half.
+  const pic = classifySession('POST', '/api/elements/e1/picture');
+  assert.deepStrictEqual([pic.allow, pic.key, pic.row.level], [true, 'POST|PATCH|DELETE /api/elements/*', 'write_page']);
   const draw = classifySession('GET', '/api/elements/types/ink/draw.js');
   assert.deepStrictEqual([draw.allow, draw.key, draw.row.level], [true, 'GET /api/elements/*', 'read']);
   // The daemon never reads the connected table (C-04.21): its own gate.
@@ -208,6 +214,12 @@ test('a pending route (GET /api/forms/shifts, no row in table_version 1) falls t
   const remote = await client.request(d.port, 'GET', '/api/forms/shifts', null, { headers: { 'X-WC-Remote': '1' } });
   assert.equal(remote.status, 403, JSON.stringify(remote.body));
   assert.equal((await client.request(d.port, 'GET', '/api/forms/shifts')).status, 200, 'the host\'s own read');
+  const remotePic = await client.request(d.port, 'POST', '/api/elements/e1/picture', {}, { headers: { 'X-WC-Remote': '1' } });
+  assert.equal(remotePic.status, 403, JSON.stringify(remotePic.body));
+  assert.equal(remotePic.body.ok, false);
+  assert.match(String(remotePic.body.hint), /host|terminal|machine/i, JSON.stringify(remotePic.body));
+  const hostPic = await client.request(d.port, 'POST', '/api/elements/e1/picture', {});
+  assert.notEqual(hostPic.status, 403, 'the host passes the daemon\'s own gate: ' + JSON.stringify(hostPic.body));
 });
 
 test('wsInboundLevel: the seven types at their levels; null for any other type (the connector drops it)', () => {

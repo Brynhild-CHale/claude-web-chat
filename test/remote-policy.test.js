@@ -2484,8 +2484,16 @@ test('U424a (Y5 = b): a comment group\'s members from the real producer are text
 // GET /api/elements/*) says so with `admitted_by` (the wildcard row's key); it
 // is stale once another row decides the route.
 //
-// Derived at this unit's base (ae/int 0fbfcd07) by running these checks
-// against table_version 1 with an empty list: one route and its one RULES key.
+// Derived at this unit's base (ae/int 0fbfcd07): every `app.<verb>(` route the
+// code has grown since 826442d6 (ROUTES@table-version (a): "every route the
+// code has grown since 826442d6 named in a pending list"), measured by diffing
+// the route scan at 826442d6 against the base. Running the checks against
+// table_version 1 with an empty list finds one route and its one RULES key
+// (GET /api/forms/shifts, * /api/forms/*), which no row decides; the other
+// eight a v1 wildcard row admits at the connector, so each says so with
+// `admitted_by` (GET /api/elements/search, also grown, has its own v1 row and
+// is not pending). The daemon's own gate still decides each one (C-04.21):
+// POST /api/elements/:id/picture is host only there, the rest read or send.
 const connectedPolicy = require('../lib/core/connected-policy');
 
 const CONNECTED_TABLE_SHA256 = Object.freeze({
@@ -2493,8 +2501,16 @@ const CONNECTED_TABLE_SHA256 = Object.freeze({
 });
 const AWAITS_V2 = 'table_version 2';
 const CONNECTED_PENDING = Object.freeze([
-  Object.freeze({ route: 'GET /api/forms/shifts', added_by: 'c930c0d1 (the form-shift counter, DECISIONS.md C4; host only)', awaits: AWAITS_V2 }),
-  Object.freeze({ rule: '* /api/forms/*', added_by: 'c930c0d1 (the form-shift counter, DECISIONS.md C4; a host-only RULES row)', awaits: AWAITS_V2 }),
+  Object.freeze({ route: 'GET /api/forms/shifts', added_by: 'c930c0d1 (U541, the form-shift counter, DECISIONS.md C4; host only)', awaits: AWAITS_V2 }),
+  Object.freeze({ rule: '* /api/forms/*', added_by: 'c930c0d1 (U541, the form-shift counter, DECISIONS.md C4; a host-only RULES row)', awaits: AWAITS_V2 }),
+  Object.freeze({ route: 'GET /api/elements/types/:type/draw.js', added_by: 'b367af32 (U511, the element-type file route; read)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
+  Object.freeze({ route: 'GET /api/elements/types/:type/assets/*', added_by: 'b367af32 (U511, the element-type file route; read)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
+  Object.freeze({ route: 'POST /api/elements/:id/glyph', added_by: 'd3efa425 (U587, the detachable glyph; send floor)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
+  Object.freeze({ route: 'GET /api/elements/:id/picture', added_by: '912cd349 (U564, INK@picture; see floor)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
+  Object.freeze({ route: 'POST /api/elements/:id/picture', added_by: '912cd349 (U564, INK@picture; host only at the daemon)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
+  Object.freeze({ route: 'POST /api/elements/undo', added_by: '67b74017 (U518, the engine\'s undo; send floor)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
+  Object.freeze({ route: 'GET /app/strokes.js', added_by: 'a2b6baf8 (U561, the stroke frame; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
+  Object.freeze({ route: 'GET /app/element-assets.js', added_by: 'a439d3f1 (U512a, mediaOf served to the chrome; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
 ]);
 
 const CONNECTED_FILE = path.join(REPO_ROOT, 'lib/core/connected-routes.json');
@@ -2673,6 +2689,20 @@ test('connected ratchet: each check fails on its own mutation (a–h)', () => {
   const action = mutate({ actions: [...base.actions, 'fixture-act'] });
   assert.deepStrictEqual(checksOf(action), ['d'], fmtProblems(action));
   assert.equal(action.length, 2, 'both the document and the action rows');
+  // ...and a wildcard answer row is not an action's row: each action needs its own literal rows.
+  const fixtureTable = (fn) => {
+    const t = JSON.parse(base.tableBytes.toString('utf8'));
+    fn(t);
+    const bytes = Buffer.from(JSON.stringify(t, null, 2), 'utf8');
+    return { tableBytes: bytes, lockedBytes: bytes, pinned: { [t.table_version]: connectedPolicy.tableSha256(t) } };
+  };
+  const wild = fixtureTable((t) => t.answer.push(
+    { methods: ['GET'], path: '/answer/control/:action', level: 'message', from_rule: 'GET /answer/control/:action' },
+    { methods: ['POST'], path: '/answer/api/control/:action', level: 'message', from_rule: 'POST /answer/api/control/:action' }));
+  assert.deepStrictEqual(mutate(wild), [], 'the wildcard rows alone change nothing for the real actions');
+  const wildAction = mutate({ ...wild, actions: [...base.actions, 'fixture-act'] });
+  assert.deepStrictEqual(checksOf(wildAction), ['d'], fmtProblems(wildAction));
+  assert.equal(wildAction.length, 2, 'admitted by a wildcard row is not having the action\'s rows');
   // ...found by the scan in a fixture source, too.
   const scanned = controlActionNames({ ...controlSources(), 'fixture.js': "control.action('fixture-act', {});\nconst ACTION = 'fixture-two';\ncontrol.action(ACTION, {});" });
   assert.ok(scanned.includes('fixture-act') && scanned.includes('fixture-two'), String(scanned));
@@ -2711,9 +2741,17 @@ test('connected ratchet: each check fails on its own mutation (a–h)', () => {
   const ruleGone = mutate({ pending: [...CONNECTED_PENDING, { rule: 'GET /api/no-such-rule', added_by: 'fixture', awaits: AWAITS_V2 }] });
   assert.deepStrictEqual(checksOf(ruleGone), ['h'], fmtProblems(ruleGone));
   // (h) the wildcard form (U761's shape): admitted by the named row is not stale; by another row it is.
-  const draw = { route: 'GET /api/elements/types/:type/draw.js', added_by: 'fixture', awaits: AWAITS_V2 };
-  assert.deepStrictEqual(mutate({ pending: [...CONNECTED_PENDING, { ...draw, admitted_by: 'GET /api/elements/*' }] }), []);
-  assert.deepStrictEqual(checksOf(mutate({ pending: [...CONNECTED_PENDING, { ...draw, admitted_by: 'GET /api/elements/search' }] })), ['h']);
+  const DRAW = 'GET /api/elements/types/:type/draw.js';
+  assert.ok(CONNECTED_PENDING.some((p) => p.route === DRAW && p.admitted_by === 'GET /api/elements/*'), 'the list names it, admitted by the wildcard');
+  const withDraw = (patch) => CONNECTED_PENDING.map((p) => (p.route === DRAW ? { ...p, ...patch } : p));
+  assert.deepStrictEqual(checksOf(mutate({ pending: withDraw({ admitted_by: 'GET /api/elements/search' }) })), ['h']);
+  assert.deepStrictEqual(checksOf(mutate({ pending: withDraw({ admitted_by: undefined }) })), ['h'], 'a row decides it: not a default-deny entry');
+  // A table_version 2 row of its own makes the entry stale, as for the forms route.
+  const drawRow = fixtureTable((t) => t.session.unshift(
+    { methods: ['GET'], path: '/api/elements/types/:type/draw.js', level: 'read', from_rule: 'GET /api/elements/*' }));
+  const drawStale = mutate(drawRow);
+  assert.deepStrictEqual(checksOf(drawStale), ['h'], fmtProblems(drawStale));
+  assert.equal(drawStale.length, 1, fmtProblems(drawStale));
 });
 
 test('connected ratchet: the pending list is test-only — the runtime default-denies every pending route, and RULES never learns of the table', () => {
