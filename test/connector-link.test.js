@@ -266,6 +266,46 @@ test('the fake goes silent: after dead_after_ms of virtual time the link closes 
   assert.strictEqual(fake.links.length, 3);
 });
 
+test('any inbound frame resets the dead timer: a frame 30 s in keeps the link up past 45 s from hello.ack', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link, vt, settings } = openLink(t, fake);
+  const up = ready(link);
+  link.start();
+  await up;
+  await waitUntil(() => settings.length === 1, { what: 'the settings after hello.ack' });
+  vt.advance(30000);
+  const applied = settings.length;
+  fake.settings({ paused: false });
+  await waitUntil(() => settings.length > applied, { what: 'a frame 30 s after hello.ack' });
+  vt.advance(30000);
+  assert.strictEqual(link.state, 'up', '60 s after hello.ack, 30 s after the last frame: not dead');
+  fake.silence(true);
+  const shut = closed(link);
+  vt.advance(15000);
+  const c = await shut;
+  assert.deepStrictEqual([c.code, c.action], [4408, 'redial']);
+});
+
+test('4429 waits at least 60 s before the next dial', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link, vt } = openLink(t, fake);
+  let up = ready(link);
+  link.start();
+  await up;
+  const shut = closed(link);
+  fake.close(4429);
+  const c = await shut;
+  assert.strictEqual(c.action, 'rate');
+  assert.ok(c.delayMs >= 60000, String(c.delayMs));
+  vt.advance(59999);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(fake.links.length, 1, 'no dial before 60 s');
+  up = ready(link);
+  vt.advance(c.delayMs - 59999);
+  await up;
+  assert.strictEqual(fake.links.length, 2);
+});
+
 test('a dropped socket (1006) takes normal backoff with full jitter under min(60 s, 2^n s); an unnamed code too', async (t) => {
   const fake = await withFakeHub(t);
   const { link, vt } = openLink(t, fake, { random: () => 0.999 });
