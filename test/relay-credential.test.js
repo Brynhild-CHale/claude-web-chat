@@ -42,6 +42,7 @@ const { createControl } = require('../lib/server/control');
 const { createBus } = require('../lib/core/bus');
 const { writeJsonAtomic } = require('../lib/core/fsjson');
 const { userPaths } = require('../lib/core/paths');
+const { LEVEL_HEADER } = require('../lib/core/cors');
 const start = require('../lib/cli/commands/start');
 
 const MODULE = path.join(__dirname, '..', 'lib', 'server', 'relay-credential.js');
@@ -434,19 +435,26 @@ test('withServer({relaySecret}): a relayed element write stays remote and unveri
   for (const k of Object.keys(real)) console[k] = (...a) => { logs.push(a.map(String).join(' ')); };
   t.after(() => { Object.assign(console, real); });
   const root = tmpRoot('wc-relay-');
+  // U742: a relayed request is read at the lesser of its X-WC-Level stamp and
+  // the machine's ceiling (04 C-04.10, C-04.11), so the write below carries a
+  // full stamp and the daemon is handed a record with a full ceiling.
+  const record = () => path.join(userPaths().connectorDir, 'hub-test.json');
   const d = await withServer(t, {
     root,
-    seed: () => writeJsonAtomic(userPaths().tunnelConfig, {
-      hostname: 'wc.example.test', style: 'flat',
-      access: { team: 'testteam', aud: 'test-aud-0123456789' }, allow: { emails: ['me@example.com'], domains: [] },
-      remote: { mirror: { [path.resolve(root)]: 'full' } },
-    }),
-    createServer: (o) => createServer({ ...o, relaySecret: SECRET, relaySecretVia: 'fd' }),
+    seed: () => {
+      writeJsonAtomic(userPaths().tunnelConfig, {
+        hostname: 'wc.example.test', style: 'flat',
+        access: { team: 'testteam', aud: 'test-aud-0123456789' }, allow: { emails: ['me@example.com'], domains: [] },
+        remote: { mirror: { [path.resolve(root)]: 'full' } },
+      });
+      writeJsonAtomic(record(), { ceiling: 'full' });
+    },
+    createServer: (o) => createServer({ ...o, relaySecret: SECRET, relaySecretVia: 'fd', connectorRecord: record() }),
   });
   assert.equal(d.srv.relay.connected, true);
   const r1 = await d.api.post('/api/render', { id: 'm1', html: '<p class="lead">Hello world</p>' });
   assert.equal(r1.status, 200, r1.text);
-  const RELAYED = { 'X-WC-Remote': '1', [RELAY_HEADER]: SECRET, [ACTOR_HEADER]: JSON.stringify(NAMED) };
+  const RELAYED = { 'X-WC-Remote': '1', [RELAY_HEADER]: SECRET, [ACTOR_HEADER]: JSON.stringify(NAMED), [LEVEL_HEADER]: 'full' };
   const w = await d.anonApi.post('/api/elements', {
     type: 'highlight',
     anchor: { v: 1, kind: 'range', mount: 'm1', quote: { exact: 'Hello', prefix: '', suffix: '' }, pos: { start: 0, end: 5 } },
