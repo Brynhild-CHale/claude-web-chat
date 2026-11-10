@@ -1820,6 +1820,21 @@ const PATTERNS = [
       'lib/setup/connector.js': 2,
     },
   },
+  {
+    // Running Tailscale's CLI (tranche 6, U725; 05 C-05.18 as A-05.2 replaces
+    // it). lib/connector/exec.js is the connector's one program runner: an
+    // argument list over a program findProgram resolved on the PATH captured
+    // at install, never a shell, a timeout and an output cap. A literal
+    // 'tailscale' program runs whatever this process's PATH says, with no
+    // timeout and no cap. Zero everywhere: exec.js runs a resolved variable,
+    // as the 'claude' row's baseline is empty for the same reason.
+    name: "'tailscale' as a literal program (execFile/execFileSync/spawn/spawnSync)",
+    home: 'lib/connector/exec.js — `run` over `findProgram`',
+    what: 'running Tailscale\'s CLI',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*['"`]tailscale['"`]/g,
+    baseline: {},
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
