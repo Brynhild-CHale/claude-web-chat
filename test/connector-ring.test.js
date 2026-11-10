@@ -546,6 +546,90 @@ test('the unacknowledged buffer: what the cap dropped is re-read from the hub\'s
   assert.strictEqual(ring.stats(CHAT).reread, false);
 });
 
+test('the re-read of a dropped hole reports what the ring evicted meanwhile as one evicted gap, and invents nothing', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false });
+  const total = UNACKED_MAX_ENTRIES + 600;
+  const all = Array.from({ length: total }, (_, i) => ({ seq: i + 1, ts: i + 1, kind: 'store', patch: { a: i + 1 } }));
+  // The daemon's ring has since evicted 1..1300: the hole (1001..1600) is
+  // only partly there when the re-read runs.
+  const client = recordsClient({ ring: all.filter((e) => e.seq > 1300), boot: 'boot-a' });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  for (const e of all) lc.emit({ type: 'entry', entry: e });
+  await settle();
+  assert.strictEqual(ring.stats(CHAT).dropped, 600);
+  let acked = 0;
+  for (let i = 0; i < 400 && link.entries().length < total - 300; i++) {
+    const sent = link.batches();
+    if (acked < sent.length) link.ack(sent[acked++]);
+    else await settle(5);
+  }
+  await settle();
+  link.batches().forEach(assertSchema);
+  const seqs = link.entries().map((e) => e.seq);
+  const want = all.map((e) => e.seq).filter((s) => s <= 1000 || s > 1300);
+  assert.deepStrictEqual(seqs, want, 'what the ring still holds, once, in order; nothing below its oldest invented');
+  const gaps = link.batches().filter((b) => b.gap);
+  assert.strictEqual(gaps.length, 1, 'one evicted gap');
+  assert.deepStrictEqual(gaps[0].gap, { gap: true, dropped: 300, oldest: 1301 });
+  assert.strictEqual(gaps[0].entries[0].seq, 1301);
+  assert.strictEqual(gaps[0].contiguous, false);
+});
+
+test('a gap read while earlier entries still wait for the window opens a batch of its own: it is never folded into a batch that claims to continue', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false, window: 1 });
+  const ring = rootedRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  lc.emit({ type: 'entry', entry: { seq: 1, ts: 1, kind: 'store', patch: { a: 1 } } });
+  await settle(10);
+  lc.emit({ type: 'entry', entry: { seq: 2, ts: 2, kind: 'store', patch: { a: 2 } } });
+  lc.emit({ type: 'entry', entry: { seq: 3, ts: 3, kind: 'store', patch: { a: 3 } } });
+  lc.emit({ type: 'close' });
+  // The hold reopens past an eviction; 2 and 3 are still waiting for the slot.
+  assert.strictEqual(lc.open(), 3);
+  lc.emit({ type: 'gap', gap: { gap: true, dropped: 5, oldest: 9, since: 3 } });
+  lc.emit({ type: 'entry', entry: { seq: 9, ts: 9, kind: 'store', patch: { a: 9 } } });
+  lc.emit({ type: 'entry', entry: { seq: 10, ts: 10, kind: 'store', patch: { a: 10 } } });
+  await settle(10);
+  assert.strictEqual(link.batches().length, 1, 'the window holds one');
+  link.ack(link.batches()[0]);
+  await waitUntil(() => link.batches().length >= 2, { what: 'the batch after the ack' });
+  link.ack(link.batches()[1]);
+  await waitUntil(() => link.batches().length >= 3, { what: 'the gap batch' });
+  link.batches().forEach(assertSchema);
+  const [, b2, b3] = link.batches();
+  assert.deepStrictEqual(b2.entries.map((e) => e.seq), [2, 3]);
+  assert.strictEqual(b2.contiguous, true);
+  assert.deepStrictEqual(b3.entries.map((e) => e.seq), [9, 10]);
+  assert.strictEqual(b3.contiguous, false);
+  assert.deepStrictEqual(b3.gap, { gap: true, dropped: 5, oldest: 9 });
+});
+
+test('first attach over a ring whose oldest is above 1: not contiguous with no gap object (the hub records unknown), and the non-contiguous batch starts the reconcile', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink();
+  const client = recordsClient({ captures: [{ id: 'cap3', seq: 3, ts: 1, source: 'ext:tab-stream', url: 'https://x.test/s' }], captureNext: 3 });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  assert.strictEqual(lc.open(), 0, 'no cursor: since 0');
+  lc.emit({ type: 'entry', entry: { seq: 5, ts: 5, kind: 'store', patch: { a: 5 } } });
+  lc.emit({ type: 'entry', entry: { seq: 6, ts: 6, kind: 'store', patch: { a: 6 } } });
+  await waitUntil(() => link.batches().some((b) => (b.reconciled || []).length), { what: 'the reconcile after the break' });
+  link.batches().forEach(assertSchema);
+  const [b] = link.batches();
+  assert.strictEqual(b.since, 0);
+  assert.strictEqual(b.contiguous, false);
+  assert.ok(!('gap' in b), 'no gap object: the hub records one unknown with dropped null');
+  assert.ok(client.reads.includes('/api/captures?since=0') && client.reads.includes('/api/elements?since=0'), 'both routes read after the non-contiguous batch');
+  assert.deepStrictEqual(link.batches().flatMap((x) => x.reconciled || []), [{ kind: 'capture', capture_id: 'cap3', seq: 3, ts: 1, source: 'ext:tab-stream' }]);
+});
+
 // ── the root: nothing is projected before it is known ──────────────────────
 
 test('the root: a label holding the chat\'s root leaves as <project>, never the path', async () => {
