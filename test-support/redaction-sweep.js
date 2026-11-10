@@ -175,6 +175,25 @@ const TUNNEL = Object.freeze({
 // The home directory, both spellings (macOS tmp dirs answer /private/var/…).
 const HOMES = () => [...new Set([process.env.HOME, realpath(process.env.HOME)].filter(Boolean))];
 
+// The planted home paths (C-11.25; tranche 6 U752): the user's own words that
+// name a file under the home — in a prompt (the lock's message, then the
+// node's trigger), in a comment (a shared one, so a remote viewer at read
+// reaches it) and in a queued message (the held composer message). Below
+// local each must reach no carrier raw: the daemon serves graph and element
+// text host-path masked (lib/server/host-mask). A local carrier and the files
+// keep them as typed (the host's history stays whole), so the home search sets
+// each aside there (localHay) and still finds any other home path. The held
+// message's own text is served verbatim at read and above (C-11.14 keeps it
+// so by design): the one allowance below local (heldQueueText), named, never
+// widened.
+const PLANT_DIR = () => path.join(process.env.HOME, 'sweep-planted');
+const PLANT = {
+  prompt: () => path.join(PLANT_DIR(), 'prompt-v3x8.md'),
+  comment: () => path.join(PLANT_DIR(), 'comment-r5k2.md'),
+  queued: () => path.join(PLANT_DIR(), 'queued-t9m4.md'),
+};
+const PLANTS = () => Object.values(PLANT).map((f) => f());
+
 // ── the stub claude ──────────────────────────────────────────────────────────
 
 const FAKE_CLAUDE = `
@@ -304,6 +323,23 @@ const homeIn = (hay) => {
   let h = typeof hay === 'string' ? hay : JSON.stringify(hay);
   for (const d of STANDINS) h = h.split(d).join('<claude-tmp>');
   return HOMES().filter((d) => h.includes(d));
+};
+// A local carrier's text with the planted home paths set aside (the host keeps
+// the user's words as typed); every other home path in it is still found.
+const localHay = (hay) => {
+  let h = typeof hay === 'string' ? hay : JSON.stringify(hay);
+  for (const d of PLANTS()) h = h.split(d).join('<planted>');
+  return h;
+};
+// C-11.14's one allowance below local: the held composer message's own text,
+// served verbatim at read and above on the queue's carriers (the `queue`
+// frame, GET /api/queue and what is under it), set aside in those carriers
+// alone, its exact text only (a JSON string's escapes as the carrier holds them).
+const QUEUE_CARRIER = /^\/api\/queue(?:[/?]|$)/;
+const heldQueueText = (c, heldText) => {
+  if (!heldText) return c.text;
+  const isQueue = (c.kind === 'frame' && c.f.type === 'queue') || ((c.kind === 'response') && QUEUE_CARRIER.test(c.r.url));
+  return isQueue ? c.text.split(JSON.stringify(heldText).slice(1, -1)).join('<held message text>') : c.text;
 };
 const say = (carrier, level, rule, detail) => `seed ${SEED} · ${carrier} · level ${level} · rule ${rule}: ${detail}`;
 
@@ -450,6 +486,18 @@ const HOME_ALLOW = [
   { kind: 'file', match: 'server.json', teardown: 'stop', reason: 'the portfile (pre-0.8.5): the daemon\'s discovery record names its root, which the CLI, the hooks and the portal read to find it' },
 ];
 
+// The carriers below local where a PLANTED home path (and only a planted one:
+// every other home path in them is still found) is not masked yet, because
+// the text is drawn by a file outside tranche 6 U752's cell. Each names the
+// file and the corrective the U752 hand-off carries as a ready patch; an entry
+// that excuses nothing in a run fails as stale. It may only shrink, and goes
+// when its corrective lands.
+const PLANT_RESIDUALS = [
+  { route: '/replay', reason: 'the replay document\'s captions (include_prompts: the trigger\'s prompt) are built by lib/server/replay/document.js buildReplay, outside U752\'s cell — ready patch in _logs/ae-t6/U752/handoff.md' },
+  { route: '/api/export/:ref', reason: 'the downloaded page export embeds the node\'s elements (a comment pinned on a pane, its text) through lib/server/routes/export.js buildExportHtml and lib/server/document-elements.js, outside U752\'s cell — a grant asked for in _logs/ae-t6/U752/handoff.md' },
+  { route: '/api/replay/html', reason: 'the downloaded replay document, the same buildReplay captions as /replay — ready patch in _logs/ae-t6/U752/handoff.md' },
+];
+
 // ── the scenario ─────────────────────────────────────────────────────────────
 
 // A socket that records every frame, each tagged with the level the socket
@@ -568,9 +616,12 @@ async function runScenario(t, teardown) {
   const fire = async (event, extra, sid = S1) => {
     assert.equal(await postEnvelope(envelope(event, extra, sid), { root, timeout: CALL_TIMEOUT_MS }), 'posted', `${event} (${sid})`);
   };
-  const turnBegin = (promptId, text, sid = S1) => {
+  // `lock`: the lock's message when it differs from the hook's prompt (the
+  // planted home path rides the lock and the node's trigger, not the
+  // transcript: C-11.25's prompt).
+  const turnBegin = (promptId, text, sid = S1, { lock = null } = {}) => {
     const e = envelope('UserPromptSubmit', { prompt: text, prompt_id: promptId }, sid);
-    return post('/api/turn-begin', { message: text, author: 'user', ...sessionFields(e), prompt: e.prompt });
+    return post('/api/turn-begin', { message: lock || text, author: 'user', ...sessionFields(e), prompt: e.prompt });
   };
   const turnEnd = (reply, sid = S1) => {
     const e = envelope('Stop', { last_assistant_message: reply }, sid);
@@ -770,11 +821,14 @@ async function runScenario(t, teardown) {
   cap.notes.elicitOut = elOut.stdout;
 
   // ── S1: a composer message (held), its marker and an @ file ──
+  // Its text names a file under the home (C-11.25's queued message, U752).
+  const heldText = `${MSG_MARK} @src/app.js and ${PLANT.queued()}`;
   const held = await client.request(port, 'POST', '/api/queue/message',
-    { text: `${MSG_MARK} @src/app.js`, files: ['src/app.js'], send: 'hold', conversation_id: S1 }, { headers: LOCAL_ORIGIN, timeout: CALL_TIMEOUT_MS });
+    { text: heldText, files: ['src/app.js'], send: 'hold', conversation_id: S1 }, { headers: LOCAL_ORIGIN, timeout: CALL_TIMEOUT_MS });
   assert.equal(held.status, 200, JSON.stringify(held.body));
   assert.equal(held.body.ok, true, JSON.stringify(held.body));
   cap.notes.heldId = held.body.id;
+  cap.notes.heldText = heldText;
 
   // ── S1: a restore of p1 and its undo, through the answer origin ──
   const pv = await get('/api/code/preview?turn=p1');
@@ -1066,6 +1120,20 @@ async function runScenario(t, teardown) {
     await waitUntil(() => sk.level === 'read', { timeout: 20000, interval: 20, what: `${sk.name} told it is read` });
   }
   await shortTurn('p3', fake('x-api-key-json').text);
+
+  // ── a shared comment naming a file under the home (C-11.25's comment, U752) ──
+  // Pinned on a rendered pane, as every comment the browser pins is: it then
+  // queues an item whose summary quotes it, so the queue's carriers (GET
+  // /api/queue and the `queue` frame) hold the planted path too. Pinned here,
+  // with the remote sockets at read, so the item is still queued when they
+  // and the read sweep reach it (a message sent now in S1 releases the queue).
+  const pinned = await client.request(port, 'POST', '/api/elements',
+    { type: 'comment', anchor: { mount: 'sweep-p1' }, payload: { text: `see ${PLANT.comment()} for the notes`, shared: true } }, { headers: LOCAL_ORIGIN, timeout: CALL_TIMEOUT_MS });
+  assert.equal(pinned.status, 200, JSON.stringify(pinned.body));
+  const queuedComment = (frames) => frames.some((x) => x.frame.type === 'queue' && x.frame.item && x.frame.item.kind !== 'message' && x.frame.item.type === 'comment');
+  for (const sk of [local, ...sockets.filter((x) => x.name.startsWith('remote'))]) {
+    await waitUntil(() => queuedComment(sk.frames), { ...WAIT, what: `the pinned comment's queue frame on ${sk.name}` });
+  }
   await sweep('read');
 
   // ── phase full ──
@@ -1084,7 +1152,8 @@ async function runScenario(t, teardown) {
 
   async function shortTurn(promptId, secretText) {
     const prompt = `${PROMPT_MARK} ${promptId}: ${secretText}`;
-    const r = await turnBegin(promptId, prompt);
+    // The lock names a file under the home (C-11.25's prompt, U752).
+    const r = await turnBegin(promptId, prompt, S1, { lock: `${PLANT.prompt()} — ${prompt}` });
     assert.equal(r.ok, true, JSON.stringify(r));
     const n = r1.records.length;
     r1.prompt(prompt, { promptId });
@@ -1253,8 +1322,19 @@ async function clauses(t, cap) {
       if (e) used.add(e);
       return !!e;
     };
+    const residualUsed = new Set();
     for (const c of all) {
-      const hits = homeIn(c.text);
+      // A local carrier and the files keep the planted paths as typed; below
+      // local they are found like any home path, but for C-11.14's held text
+      // and the named residuals' planted paths.
+      const local = c.level === 'local' || c.level === 'file';
+      let hay = local ? localHay(c.text) : heldQueueText(c, cap.notes.heldText);
+      const residual = !local && c.kind === 'response' && PLANT_RESIDUALS.find((x) => x.route === c.r.route);
+      if (residual && homeIn(hay).length && !homeIn(localHay(hay)).length) {
+        residualUsed.add(residual);
+        hay = localHay(hay);
+      }
+      const hits = homeIn(hay);
       if (!hits.length) continue;
       if (c.kind === 'frame') {
         const mirror = String(c.f.type).startsWith('mirror:');
@@ -1288,6 +1368,48 @@ async function clauses(t, cap) {
     const stale = HOME_ALLOW.filter((e) => !used.has(e) && !e.optional && (!e.teardown || e.teardown === cap.teardown)).map((e) => `${e.kind} ${e.match} (${e.reason})`);
     assert.equal(bad.length, 0, report(bad));
     assert.deepEqual(stale, [], `seed ${SEED}: the home-path allowlist may only shrink — these entries excused nothing: ${stale.join('; ')}`);
+    for (const e of PLANT_RESIDUALS) assert.ok(typeof e.reason === 'string' && e.reason.length > 20, `seed ${SEED}: every planted-path residual carries its reason: ${JSON.stringify(e)}`);
+    const staleResidual = PLANT_RESIDUALS.filter((e) => !residualUsed.has(e)).map((e) => `${e.route} (${e.reason})`);
+    assert.deepEqual(staleResidual, [], `seed ${SEED}: the planted-path residuals may only shrink — these excused nothing (its corrective landed? remove it): ${staleResidual.join('; ')}`);
+  });
+
+  await t.test('(4) the planted home paths (C-11.25, U752): kept whole by a local read, masked below local on the graph, the node read, the element read and the queue', () => {
+    const masked = (f) => `~${f.slice(process.env.HOME.length)}`;
+    const reads = (who, re) => cap.responses.filter((r) => r.who === who && re.test(r.url) && r.status === 200);
+    const checks = [
+      ['the prompt (the lock\'s message, the node trigger)', PLANT.prompt(), /^\/api\/graph\/node\//],
+      ['the prompt on GET /api/graph (the trigger summary)', PLANT.prompt().slice(0, 40), /^\/api\/graph$/],
+      ['the comment on GET /api/elements', PLANT.comment(), /^\/api\/elements(?:\?|$)/],
+    ];
+    const bad = [];
+    for (const [what, value, re] of checks) {
+      const local = reads('local', re);
+      if (!local.some((r) => r.text.includes(value))) bad.push(`${what}: no local read holds it as typed (${local.length} read)`);
+      for (const who of ['read', 'full']) {
+        const remote = reads(who, re).filter((r) => r.portal);
+        if (value.length > 40 && !remote.some((r) => r.text.includes(masked(value)))) bad.push(`${what}: no ${who} read holds it masked as ${masked(value)} (${remote.length} read)`);
+        if (remote.some((r) => r.text.includes(value))) bad.push(`${what}: a ${who} read holds it raw`);
+      }
+    }
+    const q = cap.responses.find((r) => r.who === 'local' && r.url === '/api/queue');
+    if (!q || !q.text.includes(PLANT.queued())) bad.push('the queued message: the local GET /api/queue does not hold it as typed');
+    // The comment pinned on a pane queues an item quoting it: the local
+    // socket's `queue` frame holds it as typed; a remote socket at read and
+    // the read sweep's GET /api/queue hold it masked, and never raw.
+    const comment = PLANT.comment();
+    const commentFrames = (sk, level) => cap.frames.filter((f) => f.socket === sk && f.type === 'queue' && (!level || f.level === level)
+      && f.frame.item && f.frame.item.kind !== 'message' && f.frame.item.type === 'comment');
+    if (!commentFrames('local').some((f) => f.text.includes(comment))) bad.push('the comment\'s queue item: no local queue frame holds it as typed');
+    // The sockets open while it was pinned (the third opens after it, at full).
+    for (const sk of ['remote (opened at basic)', 'remote (opened at read)']) {
+      const at = commentFrames(sk, 'read');
+      if (!at.some((f) => f.text.includes(masked(comment)))) bad.push(`the comment\'s queue item: no queue frame at read on ${sk} holds it masked as ${masked(comment)} (${at.length} frames)`);
+      if (commentFrames(sk).some((f) => f.text.includes(comment))) bad.push(`the comment\'s queue item: a queue frame on ${sk} holds it raw`);
+    }
+    const qr = reads('read', /^\/api\/queue$/).filter((r) => r.portal);
+    if (!qr.some((r) => r.text.includes(masked(comment)))) bad.push(`the comment\'s queue item: no read GET /api/queue holds it masked as ${masked(comment)} (${qr.length} read)`);
+    if (cap.responses.some((r) => r.who !== 'local' && r.portal && /^\/api\/queue(?:[/?]|$)/.test(r.url) && r.text.includes(comment))) bad.push('the comment\'s queue item: a remote read of the queue holds it raw');
+    assert.equal(bad.length, 0, `seed ${SEED}: ${report(bad)}`);
   });
 
   await t.test('(4) /api/health\'s instance is the registry id, never a path (U105)', () => {
