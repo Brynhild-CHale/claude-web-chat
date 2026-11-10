@@ -90,7 +90,7 @@ import { request } from './http.js';
 import { onFrame, onHello } from './ws.js';
 import { settingsOf } from './toolbar-state.js';
 import { registerPopover, registerQueueCard } from './shell.js';
-import { showReaimNote, READONLY_HINT } from './topbar.js';
+import { showReaimNote, readOnlyHint } from './topbar.js';
 import { bus } from './bus.js';
 import { view, $ } from './state.js';
 
@@ -631,7 +631,7 @@ export function openNote(container) {
   p.appendChild(head);
   if (readOnly) {
     p.appendChild(el('p', 'hl-pop-note', rec.note ? String(rec.note) : 'No note.'));
-    p.appendChild(el('p', 'hl-pop-hint', READONLY_HINT));
+    p.appendChild(el('p', 'hl-pop-hint', readOnlyHint()));
   } else {
     const ta = el('textarea', 'hl-note');
     ta.value = rec.note ? String(rec.note) : '';

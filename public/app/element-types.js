@@ -125,8 +125,11 @@
 // gesture, Send to Claude, and a plug-in type's tray (tranche 4) — runs
 // through trayAction: while a committed node is previewed (mounts.js
 // contentReadOnly(), D2) it refuses with READONLY_HINT (topbar.js) and sends
-// nothing — one rule, one hint. trayReadOnly() is the same rule for drawing a
-// tray's read-only branch. No tray checks the preview itself
+// nothing — one rule, one hint. A stamped read (mounts.js readLevel,
+// C-04.18b; U757) is the same rule, worded by topbar.js readOnlyHint() with
+// READ_LEVEL_HINT, which names no host command; TRAY_REFUSAL's `hint` reads
+// that chooser, so it is still one frozen object. trayReadOnly() is the same
+// rule for drawing a tray's read-only branch. No tray checks the preview itself
 // (test/conventions.test.js holds `contentReadOnly(` to its homes).
 //
 // SEND TO CLAUDE (F.5; RULED REQ@highlight-send-to-claude M2 (a), J2 (a)).
@@ -156,7 +159,10 @@
 // type made it: the engine never adds or defaults `shared` (PRIVATE@create —
 // the type's create sends shared: false; the route's own default is the
 // daemon's, not this module's). The built-in trays keep their own code, on
-// trayAction already; none of them goes through ctx.tray.
+// trayAction already; none of them goes through ctx.tray. A plug-in type's
+// create ctx also says whether private is offered here: `private_allowed`,
+// frozen, false on a remote or embedded chrome (pluginCreateCtx, U757), so a
+// type sends shared: true there — still the type's own payload.
 //
 // THE PLUG-IN SETTINGS (U512c; the U566 builder's contract). A pack's type
 // reads its own element.json settings through `ctx.settings()` — on its draw
@@ -179,7 +185,8 @@ import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
 import { isPhone } from './viewport.js';
-import { READONLY_HINT, showReaimNote } from './topbar.js';
+import { readOnlyHint, showReaimNote } from './topbar.js';
+import { remoteKnown, remoteNow, isEmbedded } from './remote.js';
 import { toolbarState, settingsOf, onToolbarChange, settingsSnapshot, defaultSettings } from './toolbar-state.js';
 import { mediaOf as assetMediaOf } from './element-assets.js';
 
@@ -439,7 +446,30 @@ function reregister(type) {
     ...(detach ? { detach } : {}),
     draw: (group, ctx) => gatedDraw(type, spec, group, ctx),
     ...(typeof spec.move === 'function' ? { move: (group, ctx) => gatedMove(spec, group, ctx) } : {}),
+    ...(spec[PLUGIN] && typeof spec.create === 'function'
+      ? { create: (input, ctx) => spec.create(input, pluginCreateCtx(ctx)) } : {}),
   }) || (() => {});
+}
+
+// PRIVATE ON A REMOTE OR EMBEDDED CHROME (contract 04 C-04.25; RULED
+// U743-U757@remote-private-create-vs-ink (b); U757). privateAllowed() — true
+// only on a local chrome: a remote page (remote.js, once its health answer
+// settled — false until then) and the embedded chrome (L.8 V1's one flag)
+// offer no private element. A plug-in type's create ctx carries it as ONE
+// frozen field, `private_allowed` (non-writable, non-configurable: an
+// assignment leaves it unchanged), so a type sends shared: true where private
+// is not offered. The type decides (AF2): nothing here forces `shared` or
+// rewrites a payload, and the daemon's create refusal stays U743's.
+export const PRIVATE_ALLOWED_KEY = 'private_allowed';
+export function privateAllowed() {
+  try { return remoteKnown() === true && remoteNow() !== true && isEmbedded() !== true; } catch { return false; }
+}
+function pluginCreateCtx(ctx) {
+  const out = { ...(ctx || {}) };
+  Object.defineProperty(out, PRIVATE_ALLOWED_KEY, {
+    value: privateAllowed(), enumerable: true, writable: false, configurable: false,
+  });
+  return out;
 }
 
 function gatedDraw(type, spec, group, ctx) {
@@ -724,18 +754,21 @@ function settingsFor(type) {
 export function trayReadOnly() { return contentReadOnly(); }
 
 // The guard's refusal: what trayAction answers in place of the action's own.
-export const TRAY_REFUSAL = Object.freeze({ ok: false, refused: 'read-only', hint: READONLY_HINT });
+// Its `hint` is readOnlyHint() at the read: READONLY_HINT in a preview, the
+// read level's words at a stamped read (a caller compares the object itself).
+export const TRAY_REFUSAL = Object.freeze({ ok: false, refused: 'read-only', get hint() { return readOnlyHint(); } });
 
 function showNote(text) {
   try { showReaimNote(text); } catch { /* the note is a courtesy */ }
 }
 
 // trayAction(run, {note}) — run a tray's write action, or, while a preview is
-// up, refuse it: `note` (the tray's own, else the topbar's) shows READONLY_HINT
-// and TRAY_REFUSAL is answered; run is never called, so nothing is sent.
+// up (or at a stamped read), refuse it: `note` (the tray's own, else the
+// topbar's) shows readOnlyHint() and TRAY_REFUSAL is answered; run is never
+// called, so nothing is sent.
 export function trayAction(run, { note } = {}) {
   if (contentReadOnly()) {
-    (typeof note === 'function' ? note : showNote)(READONLY_HINT);
+    (typeof note === 'function' ? note : showNote)(readOnlyHint());
     return TRAY_REFUSAL;
   }
   return run();

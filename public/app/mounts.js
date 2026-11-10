@@ -14,6 +14,7 @@ import { send, isOpen } from './ws.js';
 import { applyPaneTheme } from './theme.js';
 import { isPhone } from './viewport.js';
 import { bus } from './bus.js';
+import { mirror } from './chat-state.js';
 import { togglePaneHistory } from './pane-history.js';
 import anchors from './anchors.js';
 import { createEventAnchors } from './event-anchor.js';
@@ -1267,7 +1268,18 @@ export function applyRemotePaneState(id, pane_state) {
 // its script. They read the predicate at event time — a kept pane re-attached
 // by leavePreview is editable again with no remount. Synthetic rehydrate events
 // (applyFormState's input/change) are not gestures and are never blocked.
-export const contentReadOnly = () => !!view.previewing;
+//
+// A STAMPED READ (contract 04 C-04.18b; U757, tranche 6): a page whose mirror
+// level is `read` — a relayed viewer the hub stamped read, or a tunnel viewer
+// at a read-only opt-in — is content read-only too, and so layout-locked. The
+// level is chat-state.js's mirror.access (GET /api/mirror's access, then the
+// mirror:access frame), read at event time like the preview, so a level move
+// re-marks the panes (syncReadonly on the chrome bus's `mirror`) with no
+// remount. Only `read` arms it: basic, full and local are unchanged. The
+// daemon is the second lock (U742 drops a read socket's writes); the topbar
+// words the refusal (readOnlyHint: the preview's hint, else the read one).
+export const readLevel = () => mirror.access.level === 'read';
+export const contentReadOnly = () => !!view.previewing || readLevel();
 export const layoutLocked = () => contentReadOnly() || isPhone();
 
 // A layout gesture refused: the topbar words the note (a preview's D2 hint, or
@@ -1343,6 +1355,15 @@ export function syncReadonly() {
   layoutPage();
 }
 bus.on('viewport', syncReadonly);
+// The stamped read's gate flips with the mirror level: re-mark only on a move
+// across `read` (the bus's `mirror` fires on every mirror change).
+let wasRead = readLevel();
+bus.on('mirror', () => {
+  const now = readLevel();
+  if (now === wasRead) return;
+  wasRead = now;
+  syncReadonly();
+});
 
 // The one event-time anchor engine (public/app/event-anchor.js) over the
 // served anchors module, made at its first use; and each event's anchor, as
