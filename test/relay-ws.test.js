@@ -221,6 +221,23 @@ test('relay ws: a stamp that names x-wc-remote, or anything but a lowercase x-wc
   assert.equal(s.requests.length, 0, 'nothing was dialled');
 });
 
+test('relay ws: the stamp rule is headers.js checkStamp — ws-upstream.js keeps no copy of it', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { checkStamp } = require('../lib/relay/headers');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'relay', 'ws-upstream.js'), 'utf8');
+  assert.equal(/STAMP_KEY_RE/.test(src), false, 'no STAMP_KEY_RE in ws-upstream.js');
+  assert.equal(src.includes('/^x-wc-'), false, 'no x-wc-* name pattern in ws-upstream.js');
+  assert.match(src, /require\('\.\/headers'\)/, 'ws-upstream.js requires ./headers');
+  // The refusal openUpstream throws is checkStamp's own, for each kind of bad stamp.
+  for (const stamp of [{ 'x-wc-remote': '0' }, { 'X-WC-Test': '1' }, { 'x-wc-test': 1 }, ['x-wc-test']]) {
+    let theirs = null;
+    try { checkStamp(stamp); } catch (err) { theirs = err; }
+    assert.ok(theirs instanceof TypeError, `checkStamp refuses ${JSON.stringify(stamp)}`);
+    assert.throws(() => upstreamOptions({ port: 4000, stamp }), { name: 'TypeError', message: theirs.message });
+  }
+});
+
 test('relay ws: an HTTP answer to the upgrade is \'refused\' with its status, and its body only when asked', async (t) => {
   const body = '{"ok":false,"error":"forbidden","code":"no"}';
   const s = await stub(t, {
