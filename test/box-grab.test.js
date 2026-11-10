@@ -383,7 +383,10 @@ test('POST /api/capture after createCapture: the record, the tab_capture signal,
   assert.deepEqual(srv.state.store.tab_capture, { seq: rec.seq, capture_id: rec.id, url: 'https://example.com/a', title: 'A', profile: rec.profile });
   await waitUntil(() => srv.state.queue.some((it) => it.kind === 'capture' && it.capture_id === rec.id), { timeout: 5000, what: 'the capture item' });
   const ev = (await api.get('/api/events?since=0')).json.events.find((e) => e.kind === 'capture');
-  assert.deepEqual(Object.keys(ev).filter((k) => k !== 'seq' && k !== 'ts'), ['kind', 'capture_id', 'url', 'profile', 'source']);
+  // U750 (contract 07 C-07.12): the entry carries the counter as capture_seq;
+  // its own seq is its ring position, no longer the counter.
+  assert.deepEqual(Object.keys(ev).filter((k) => k !== 'seq' && k !== 'ts'), ['kind', 'capture_id', 'capture_seq', 'url', 'profile', 'source']);
+  assert.equal(ev.capture_seq, rec.seq);
 });
 
 // ── the element item kind (K.2-10) ──────────────────────────────────────────
