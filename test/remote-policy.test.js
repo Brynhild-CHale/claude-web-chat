@@ -2511,6 +2511,8 @@ const CONNECTED_PENDING = Object.freeze([
   Object.freeze({ route: 'POST /api/elements/undo', added_by: '67b74017 (U518, the engine\'s undo; send floor)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
   Object.freeze({ route: 'GET /app/strokes.js', added_by: 'a2b6baf8 (U561, the stroke frame; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
   Object.freeze({ route: 'GET /app/element-assets.js', added_by: 'a439d3f1 (U512a, mediaOf served to the chrome; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
+  // Tranche 6's own (ROUTES@new-routes-pending; U744-U761@pending-list-home (a)).
+  Object.freeze({ route: 'GET /api/elements/anchor-stats', added_by: 'U761 (the event-anchor stats exposure, 6C.1; host only at the daemon — proposed host_only for table_version 2)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
 ]);
 
 const CONNECTED_FILE = path.join(REPO_ROOT, 'lib/core/connected-routes.json');
@@ -2769,4 +2771,21 @@ test('connected ratchet: the pending list is test-only — the runtime default-d
   for (const r of [...RULES, ...ANSWER_RULES]) {
     for (const k of ['level', 'requires', 'from_rule', 'daemon_mirror', 'table_version']) assert.equal(r[k], undefined, `${keyOf(r)}.${k}`);
   }
+});
+
+// U761 (6C.1): the event-anchor stats route sits on the pending list, admitted
+// at the connector by the v1 wildcard GET /api/elements/* (a read row) while
+// the daemon serves it host only (requireHost refuses a relayed request 403:
+// test/anchor-stats.test.js). RULES classifies it by its GET /api/elements/*
+// row, so no RULES row was added.
+test('connected ratchet: U761\'s GET /api/elements/anchor-stats awaits table_version 2, admitted by the v1 wildcard; RULES classifies it by its element row', () => {
+  const p = CONNECTED_PENDING.find((x) => x.route === 'GET /api/elements/anchor-stats');
+  assert.ok(p, 'the pending list names the route');
+  assert.match(p.added_by, /^U761 /);
+  assert.equal(p.awaits, AWAITS_V2);
+  assert.equal(p.admitted_by, 'GET /api/elements/*');
+  const v = connectedPolicy.classifySession('GET', '/api/elements/anchor-stats');
+  assert.equal(v.key, 'GET /api/elements/*', 'the connector admits it by the wildcard row');
+  assert.equal(classify('GET', '/api/elements/anchor-stats').key, 'GET /api/elements/*', 'RULES\' element row decides it at the portal');
+  assert.ok(daemonRoutes().some((r) => r.method === 'GET' && r.path === '/api/elements/anchor-stats'), 'the route scan finds it');
 });
