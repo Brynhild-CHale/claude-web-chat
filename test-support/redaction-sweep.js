@@ -493,9 +493,6 @@ const HOME_ALLOW = [
 // that excuses nothing in a run fails as stale. It may only shrink, and goes
 // when its corrective lands.
 const PLANT_RESIDUALS = [
-  { route: '/replay', reason: 'the replay document\'s captions (include_prompts: the trigger\'s prompt) are built by lib/server/replay/document.js buildReplay, outside U752\'s cell — ready patch in _logs/ae-t6/U752/handoff.md' },
-  { route: '/api/export/:ref', reason: 'the downloaded page export embeds the node\'s elements (a comment pinned on a pane, its text) through lib/server/routes/export.js buildExportHtml and lib/server/document-elements.js, outside U752\'s cell — a grant asked for in _logs/ae-t6/U752/handoff.md' },
-  { route: '/api/replay/html', reason: 'the downloaded replay document, the same buildReplay captions as /replay — ready patch in _logs/ae-t6/U752/handoff.md' },
 ];
 
 // ── the scenario ─────────────────────────────────────────────────────────────
