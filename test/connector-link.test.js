@@ -468,6 +468,10 @@ test('rotation with the default writer: the key file atomically at 0600, then th
   assert.strictEqual(rec.value.credential.public_key, raw.toString('base64url'));
   assert.strictEqual(rec.value.credential.fingerprint, fingerprintOf(raw));
   assert.strictEqual(rec.value.credential.state, 'paired');
+  // The writer is lib/setup/connector.js writeMachineKey (U716b): it names the
+  // key file in the record as it moves the key fields, under the record's lock.
+  assert.strictEqual(rec.value.credential.key_file, file);
+  assert.ok(!fs.existsSync(userPaths().connectorRecordLock('hub-test')), 'the record\'s lock released');
 });
 
 // ── frames ─────────────────────────────────────────────────────────────────
