@@ -11,7 +11,9 @@ const {
 // ── classify: captures ───────────────────────────────────────────────────────
 
 test('classify: a capture event enqueues (never immediate)', () => {
-  const r = classify({ kind: 'capture', capture_id: 'cap4', seq: 12, url: 'https://app.trimble.com/flow/7', profile: 'trimble-flow', source: 'ext:tab-stream' });
+  // A capture ring entry as the bus serves it (U750, contract 07 C-07.12): its
+  // `seq` is its ring position, the capture counter rides as `capture_seq`.
+  const r = classify({ seq: 40, kind: 'capture', capture_id: 'cap4', capture_seq: 12, url: 'https://app.trimble.com/flow/7', profile: 'trimble-flow', source: 'ext:tab-stream' });
   assert.equal(r.action, 'enqueue');
   assert.equal(r.item.kind, 'capture');
   assert.equal(r.item.capture_id, 'cap4');
@@ -21,6 +23,19 @@ test('classify: a capture event enqueues (never immediate)', () => {
   assert.match(r.item.summary, /app\.trimble\.com/);
   assert.match(r.item.summary, /trimble-flow/);
   assert.match(r.item.summary, /cap4/);
+});
+
+test('classify: captureItem copies capture_seq to the item\'s seq, not the ring position', () => {
+  const r = classify({ seq: 7, kind: 'capture', capture_id: 'cap1', capture_seq: 1, url: 'https://x/a', source: 'ext:tab-stream' });
+  assert.equal(r.item.seq, 1, 'the item\'s seq is the capture counter');
+  assert.equal('capture_seq' in r.item, false, 'no new field on the queue item');
+  // capture_seq 0 is a counter value, not an absence (?? not ||)
+  assert.equal(classify({ seq: 9, kind: 'capture', capture_id: 'cap0', capture_seq: 0 }).item.seq, 0);
+});
+
+test('classify: an older capture entry with only seq (its counter, pre-U750) still yields the item\'s seq', () => {
+  const r = classify({ kind: 'capture', capture_id: 'cap3', seq: 3, url: 'https://x/b', source: 'ext:tab-stream' });
+  assert.equal(r.item.seq, 3);
 });
 
 // ── classify: source-gating (self-wake safety) ───────────────────────────────

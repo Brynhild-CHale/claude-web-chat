@@ -11,7 +11,12 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 // frame shapes/order AND the event log — is unchanged by the migration.
 //
 // Frozen quirks this pins (all preserved verbatim, NOT bugs to fix here):
-//  - the capture event's own `seq:1` overrides the ring seq (spread-after-seq).
+//  - U750 (reviewed golden edit, contract 07 C-07.12, Q-07.2's answer): the
+//    capture entry carries the capture counter as `capture_seq: 1` and its `seq`
+//    is its ring position (6), like every other entry. It used to carry the
+//    counter as its own `seq:1`, overriding the ring seq by the bus's spread
+//    order. Every later seq is unchanged (nextSeq advanced either way), and the
+//    queue item's `seq` is still the capture counter, 1.
 //  - render's WS frame carries `html`; its event carries `bytes` and no html.
 //  - the golden captures a TABLE page → the builtin `tables` distiller, whose pane
 //    is the compact feedbackCard. (`default`/`article` render a reader-lite
@@ -153,7 +158,7 @@ const GOLDEN = {
     { seq: 3, ts: '<v>', kind: 'theme', scope: 'global', clear: false },
     { seq: 4, ts: '<v>', kind: 'brand', op: 'theme', theme: '_unnamed' },
     { seq: 5, ts: '<v>', kind: 'graph', op: 'turn-begin', base: null, stole_stale_lock: false },
-    { seq: 1, ts: '<v>', kind: 'capture', capture_id: 'cap1', url: 'https://example.com/page', profile: 'tables', source: 'ext:tab-stream' },
+    { seq: 6, ts: '<v>', kind: 'capture', capture_id: 'cap1', capture_seq: 1, url: 'https://example.com/page', profile: 'tables', source: 'ext:tab-stream' },
     {
       seq: 7, ts: '<v>', kind: 'queue', op: 'add', id: 'q1',
       item: {

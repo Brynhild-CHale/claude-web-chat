@@ -197,6 +197,90 @@ test('capture: sets the tab_capture signal and emits the capture event', async (
   assert.equal(cap.capture_id, 'cap1');
 });
 
+// ── U750: the ring entry carries the counter as capture_seq ─────────────────
+// Contract 07 C-07.12 (Q-07.2's answer): a capture ring entry carries the
+// capture counter as `capture_seq`, and its `seq` is its ring position like
+// every other entry's. The record, the graph and the store signal keep `seq`.
+
+// The ring entry just before `e` in a full /api/events read, or null.
+function previousEntry(events, e) {
+  const i = events.indexOf(e);
+  return i > 0 ? events[i - 1] : null;
+}
+
+test('capture: the ring entry carries capture_seq = the record\'s seq, and its seq is its ring position', async (t) => {
+  const { api } = await withServer(t);
+  // Move the ring past the counter so the two numbers differ.
+  await api.post('/api/store', { patch: { a: 1 } });
+  await api.post('/api/store', { patch: { b: 2 } });
+  const r = await api.post('/api/capture', { url: 'https://x/doc', html: TEXT_HTML });
+  assert.equal(r.json.capture_id, 'cap1');
+
+  const ev = (await api.get('/api/events')).json;
+  const cap = ev.events.find((e) => e.kind === 'capture');
+  assert.ok(cap, 'a capture entry landed in the ring');
+  const rec = (await api.get('/api/captures')).json.captures.find((c) => c.id === 'cap1');
+  assert.equal(rec.seq, 1, 'the record keeps its own seq (the counter)');
+  assert.equal(cap.capture_seq, rec.seq, 'the entry carries the counter as capture_seq');
+  const prev = previousEntry(ev.events, cap);
+  assert.ok(prev, 'the capture is not the ring\'s first entry');
+  assert.equal(cap.seq, prev.seq + 1, 'its seq is its ring position: one more than the previous entry');
+  assert.notEqual(cap.seq, cap.capture_seq);
+  // Every entry's seq is its position: strictly ascending by one, captures included.
+  ev.events.forEach((e, i) => { if (i) assert.equal(e.seq, ev.events[i - 1].seq + 1); });
+  assert.equal(ev.latest, ev.events[ev.events.length - 1].seq);
+
+  // The store signal keeps its own seq (the counter), unchanged.
+  const store = (await api.get('/api/store')).json;
+  assert.equal(store.tab_capture.seq, 1);
+  assert.equal('capture_seq' in store.tab_capture, false);
+});
+
+test('capture: after a restart the counter stays above the graph\'s max while the ring seq restarts with the boot', async (t) => {
+  const { api, root, graceful } = await withServer(t);
+  for (let i = 0; i < 3; i++) await api.post('/api/store', { patch: { pad: i } });
+  await api.post('/api/capture', { url: 'https://x/a', html: TEXT_HTML });
+  await api.post('/api/turn-begin', {});
+  const end = await api.post('/api/turn-end', { summary: 't' });
+  assert.ok(end.json.node_id);
+  const first = (await api.get('/api/events')).json;
+  const firstCap = first.events.find((e) => e.kind === 'capture');
+  assert.equal(firstCap.capture_seq, 1);
+  await graceful();
+
+  const { api: api2 } = await withServer(t, { root });
+  const r = await api2.post('/api/capture', { url: 'https://x/b', html: TEXT_HTML });
+  assert.equal(r.json.capture_id, 'cap2', 'the counter is seeded past the graph\'s captures');
+
+  const ev = (await api2.get('/api/events')).json;
+  const cap = ev.events.find((e) => e.kind === 'capture');
+  assert.ok(cap);
+  assert.equal(cap.capture_seq, 2, 'capture_seq is above the graph\'s max (1)');
+  const prev = previousEntry(ev.events, cap);
+  assert.equal(cap.seq, prev ? prev.seq + 1 : 1, 'the ring seq is this boot\'s ring position');
+  assert.equal(ev.events[0].seq, 1, 'this boot\'s ring starts at 1');
+  assert.ok(cap.seq <= firstCap.seq,'a position in the new boot\'s ring, not carried from the old one');
+});
+
+test('capture: POST /api/wait {event_kind: capture, since_seq} matches a capture whose counter is below the cursor', async (t) => {
+  // Before U750 the capture entry's seq WAS its counter (1 here), so a cursor
+  // at the ring's latest position skipped it silently. Now it matches by its
+  // ring position; routes/events.js is unchanged.
+  const { api } = await withServer(t);
+  for (let i = 0; i < 4; i++) await api.post('/api/store', { patch: { pad: i } });
+  const cursor = (await api.get('/api/events')).json.latest;
+  assert.ok(cursor >= 4);
+  await api.post('/api/capture', { url: 'https://x/doc', html: TEXT_HTML });
+
+  const w = await api.post('/api/wait', { predicate: { event_kind: 'capture', since_seq: cursor }, timeout_ms: 1000 });
+  assert.equal(w.json.ok, true, 'the capture matched');
+  assert.equal(w.json.matched, 'event');
+  assert.equal(w.json.event.capture_id, 'cap1');
+  assert.equal(w.json.event.capture_seq, 1, 'its counter is below the cursor');
+  assert.ok(w.json.event.capture_seq < cursor);
+  assert.ok(w.json.event.seq > cursor, 'it matched by its ring position');
+});
+
 test('capture: capture id stays globally unique after navigating to an earlier node', async (t) => {
   const { api } = await withServer(t);
 
