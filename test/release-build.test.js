@@ -18,7 +18,9 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
-const { buildRelease, collectEntries, splitName, packageDirsFromTree } = require('../scripts/build-release');
+const {
+  buildRelease, collectEntries, splitName, packageDirsFromTree, shipsForProduction,
+} = require('../scripts/build-release');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
@@ -47,11 +49,26 @@ test('the artifact carries production dependencies and no devDependencies', () =
       `runtime dependency ${dep} is missing — the CLI would die on "Cannot find module '${dep}'"`,
     );
   }
+  // A devDependency a shipped package's `dependencies` declares ships with it
+  // (ajv and ajv-formats: the MCP SDK requires them, and contract 12 C-12.21
+  // pins them as exact devDependencies); every other devDependency must not.
+  const shippedDirs = names
+    .filter((n) => n.endsWith('/package.json'))
+    .map((n) => n.slice(prefix.length + 1, -'/package.json'.length))
+    .filter((rel) => /(^|\/)node_modules\/(@[^/]+\/)?[^/@]+$/.test(rel))
+    .map((rel) => path.join(REPO_ROOT, rel));
+  const exempt = shipsForProduction(pkg, shippedDirs);
   for (const dev of Object.keys(pkg.devDependencies || {})) {
+    if (exempt.includes(dev)) continue;
     assert.ok(
       !names.some((n) => n.startsWith(`${prefix}/node_modules/${dev}/`)),
       `devDependency ${dev} must not ship in a release`,
     );
+  }
+  assert.ok(!exempt.includes('jsdom'), 'jsdom is test-only and never ships');
+  for (const shared of ['ajv', 'ajv-formats']) {
+    assert.ok(exempt.includes(shared), `${shared} is a production dependency of the MCP SDK`);
+    assert.ok(names.includes(`${prefix}/node_modules/${shared}/package.json`), `${shared} ships for the SDK`);
   }
   // Every entry sits under the single version prefix — no tarbomb, and
   // `--strip-components 1` therefore always means the same thing.
@@ -293,6 +310,42 @@ test('collectEntries builds from a UUID-named checkout with the real npm (no "re
     'p/node_modules/@s/c/package.json',
   ]) assert.ok(names.includes(want), `${want} missing from ${JSON.stringify(names)}`);
   assert.ok(!names.some((n) => n.startsWith('p/node_modules/d/')), 'a devDependency must not ship');
+});
+
+// The devDependency guard refuses what production does not need. A
+// devDependency a production package's `dependencies` declares ships with it;
+// one only a production package's peerDependencies reaches (npm still lists it
+// in the --omit=dev tree) is a devDependency no production package declares,
+// and the build refuses it.
+function sharedDevProject({ peerOnly }) {
+  const root = path.join(tmpDir('wc-npm-dev-'), 'proj');
+  const put = (rel, json) => {
+    fs.mkdirSync(path.join(root, rel), { recursive: true });
+    fs.writeFileSync(path.join(root, rel, 'package.json'), JSON.stringify(json));
+  };
+  put('.', {
+    name: 'proj', version: '1.0.0', files: [],
+    dependencies: { a: '1.0.0' }, devDependencies: { e: '1.0.0', ...(peerOnly ? { d: '1.0.0' } : {}) },
+  });
+  put('node_modules/a', {
+    name: 'a', version: '1.0.0', dependencies: { e: '1.0.0' }, ...(peerOnly ? { peerDependencies: { d: '1.0.0' } } : {}),
+  });
+  put('node_modules/e', { name: 'e', version: '1.0.0' });
+  if (peerOnly) put('node_modules/d', { name: 'd', version: '1.0.0' });
+  return root;
+}
+
+test('a devDependency a production package declares ships; one it does not declare still fails the build', () => {
+  const root = sharedDevProject({ peerOnly: false });
+  const names = collectEntries(root, 'p').map((e) => e.name);
+  assert.ok(names.includes('p/node_modules/e/package.json'), 'e ships: production package a requires it');
+  assert.deepEqual(
+    shipsForProduction(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')), [path.join(root, 'node_modules/a')]),
+    ['e'],
+  );
+
+  const refused = sharedDevProject({ peerOnly: true });
+  assert.throws(() => collectEntries(refused, 'p'), /devDependency d appeared in the production tree — it must not ship/);
 });
 
 // A `.gitkeep` exists to make git track an EMPTY directory. Seven of them

@@ -206,6 +206,20 @@ function productionPackageDirs(root) {
   return packageDirsFromTree(root, tree);
 }
 
+// The devDependencies production needs too: the names in `pkg.devDependencies`
+// that the root's own `dependencies`, or some production package's package.json
+// `dependencies`, declares. Those ship with the package that requires them; a
+// devDependency outside this set must never ship (jsdom). Sorted. Pure but for
+// reading each production directory's package.json.
+function shipsForProduction(pkg, prodDirs) {
+  const declared = new Set(Object.keys(pkg.dependencies || {}));
+  for (const dir of prodDirs) {
+    const deps = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).dependencies || {};
+    for (const name of Object.keys(deps)) declared.add(name);
+  }
+  return Object.keys(pkg.devDependencies || {}).filter((name) => declared.has(name)).sort();
+}
+
 // `version` (optional) overrides the version the artefact's package.json
 // carries — the --dev stamp. The file is rewritten in memory only.
 function collectEntries(root, prefix, { version = null } = {}) {
@@ -244,14 +258,20 @@ function collectEntries(root, prefix, { version = null } = {}) {
   // 3. Production node_modules, one package at a time (each package's own
   //    nested node_modules is listed separately by npm, so it is skipped here
   //    and added by its own entry).
+  //    A devDependency ships only when production needs it as well (a
+  //    production package's `dependencies` declares it: ajv and ajv-formats,
+  //    which the MCP SDK requires and contract 12 C-12.21 pins as exact
+  //    devDependencies); any other devDependency in the tree fails the build.
   const devNames = Object.keys(pkg.devDependencies || {});
-  for (const dir of productionPackageDirs(root)) {
+  const prodDirs = productionPackageDirs(root);
+  const shared = shipsForProduction(pkg, prodDirs);
+  for (const dir of prodDirs) {
     const rel = path.relative(root, dir).split(path.sep).join('/');
     if (!rel.startsWith('node_modules/')) {
       throw new Error(`production dependency resolved outside node_modules: ${dir}`);
     }
     const name = rel.replace(/^.*node_modules\//, '');
-    if (devNames.includes(name)) {
+    if (devNames.includes(name) && !shared.includes(name)) {
       throw new Error(`devDependency ${name} appeared in the production tree — it must not ship`);
     }
     add(dir, true);
@@ -376,5 +396,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, packageDirsFromTree, REPO_ROOT,
+  buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, packageDirsFromTree, shipsForProduction,
+  REPO_ROOT,
 };
