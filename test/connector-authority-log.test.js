@@ -546,3 +546,33 @@ test('a record in flight at three 4400 closes is dropped from the queue and told
   assert.strictEqual(readLines(file).length, 1, 'it stays in the file');
   assert.strictEqual(link.sent.length, 5 + POISON_CLOSES, 'resent after each reconnect until dropped');
 });
+
+test('a record whose principal is valid but whose line breaks 04-deny-record\'s grammar is written and not shipped', (t) => {
+  const vc = virtualClock();
+  const link = stubLink();
+  const logs = [];
+  const file = path.join(tmpDir(t), 'authority.log');
+  const alog = createAuthorityLog({ file, link, now: vc.now, timers: vc.timers, log: (l) => logs.push(l) });
+  t.after(() => alog.stop());
+  alog.record(deny({ origin: 'elsewhere' }));
+  alog.record(deny({ chat_id: 'not-a-label' }));
+  alog.record(deny({ status: 200 }));
+  alog.flush();
+  vc.advance(0);
+  assert.strictEqual(readLines(file).length, 3, 'every line is written');
+  assert.strictEqual(link.sent.length, 0, 'none is shipped');
+  assert.strictEqual(alog.stats().local_only, 3);
+  assert.strictEqual(alog.stats().pending, 0);
+  assert.ok(logs.includes('authority log record kept local code=invalid'));
+});
+
+test('stop detaches from the link: a later ready or closed changes nothing', (t) => {
+  const vc = virtualClock();
+  const link = stubLink();
+  const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers });
+  assert.strictEqual(link.listenerCount('ready'), 1);
+  assert.strictEqual(link.listenerCount('closed'), 1);
+  alog.stop();
+  assert.strictEqual(link.listenerCount('ready'), 0);
+  assert.strictEqual(link.listenerCount('closed'), 0);
+});
