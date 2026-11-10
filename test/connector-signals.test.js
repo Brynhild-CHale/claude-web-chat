@@ -261,6 +261,50 @@ test("C-05.39's special rows: an upgraded wake lock gives nothing; a stolen stal
   }
 });
 
+test("C-05.39's other rows: turn-skipped no-change ends the turn, other-session gives nothing; unlock had ends it, unlock not had gives nothing", async (t) => {
+  const d = await withServer(t);
+  const r = await rig(t, d);
+  const turnsSince = (n) => r.link.since(n).filter((f) => f.kind.startsWith('turn.'));
+  const entry = (pred) => waitUntil(() => d.srv.bus.read({ since: 0 }).events.some(pred), { what: 'the ring entry' });
+
+  // A turn that changes nothing: turn-skipped no-change → skipped_no_change.
+  await post(d, '/api/turn-begin', { message: 'SIGNALS-SKIP-TEXT', session_id: SESSION });
+  await waitUntil(() => r.link.of('turn.begun').length === 1, { what: 'turn.begun' });
+  let at = r.link.mark();
+  await post(d, '/api/turn-end', { author: 'claude', session_id: SESSION, summary: 'SIGNALS-SKIP-SUMMARY' });
+  await entry((e) => e.op === 'turn-skipped' && e.reason === 'no-change');
+  await waitUntil(() => turnsSince(at).length >= 1, { what: 'the skipped end', timeout: 5000 });
+  let turns = turnsSince(at);
+  assert.deepStrictEqual(turns.map((f) => [f.kind, f.outcome]), [['turn.ended', 'skipped_no_change']]);
+  assert.strictEqual(turns[0].node, null);
+  conformsTo('05', turns[0]);
+  assertTextFree(turns[0], 'SIGNALS-SKIP-TEXT', 'SIGNALS-SKIP-SUMMARY');
+
+  // Another session's Stop while a turn is held: the held turn goes on.
+  await post(d, '/api/turn-begin', { message: 'x', session_id: SESSION });
+  await waitUntil(() => r.link.of('turn.begun').length === 2, { what: 'the second turn.begun' });
+  at = r.link.mark();
+  await post(d, '/api/turn-end', { author: 'claude', session_id: 'other-session-9' });
+  await entry((e) => e.op === 'turn-skipped' && e.reason === 'other-session');
+  await settle(200);
+  assert.deepStrictEqual(turnsSince(at), [], 'other-session: no signal');
+
+  // An unlock that clears the held turn: turn.ended unlocked.
+  await post(d, '/api/unlock', {});
+  await entry((e) => e.op === 'unlock' && e.had === true);
+  await waitUntil(() => turnsSince(at).length >= 1, { what: 'the unlocked end', timeout: 5000 });
+  turns = turnsSince(at);
+  assert.deepStrictEqual(turns.map((f) => [f.kind, f.outcome]), [['turn.ended', 'unlocked']]);
+  conformsTo('05', turns[0]);
+
+  // An unlock with nothing held: nothing.
+  at = r.link.mark();
+  await post(d, '/api/unlock', {});
+  await entry((e) => e.op === 'unlock' && e.had === false);
+  await settle(200);
+  assert.deepStrictEqual(turnsSince(at), [], 'unlock not had: no signal');
+});
+
 test('a lock gone with no turn entry (a guardReaim steal): turn.ended superseded with daemon_seq null, after a second read agrees', async (t) => {
   const d = await withServer(t);
   const r = await rig(t, d);
@@ -424,8 +468,10 @@ test('the status poll: one health read per tick (shared with the idle check); X-
   assert.strictEqual(reset.reason, 'reset');
   assert.strictEqual(reset.boot, 'boot-from-header');
   assert.strictEqual(reset.record.rev, 0);
-  // A rev above the held one within that boot moves the record.
-  r.client.rewrite = (p, res) => (p === '/api/mirror/status' ? { body: { ...res.body, rev: 7 }, headers: { ...res.headers, 'x-wc-boot': 'boot-from-header' } } : res);
+  // A rev above the held one within that boot moves the record. Its row
+  // carries counts and a text field the daemon might add: neither crosses.
+  const row = { id: 'conv-1', state: 'working', since: 5, quiet: false, counts: { tools: 3 }, title: 'SIGNALS-CONV-TEXT' };
+  r.client.rewrite = (p, res) => (p === '/api/mirror/status' ? { body: { ...res.body, rev: 7, conversations: [row] }, headers: { ...res.headers, 'x-wc-boot': 'boot-from-header' } } : res);
   at = r.link.mark();
   await r.tick();
   const conv = r.link.since(at).filter((f) => f.kind === 'conversations');
@@ -433,7 +479,8 @@ test('the status poll: one health read per tick (shared with the idle check); X-
   assert.strictEqual(conv[0].record.rev, 7);
   assert.strictEqual(conv[0].boot, 'boot-from-header');
   conformsTo('05', conv[0]);
-  for (const row of conv[0].record.conversations) assert.ok(!('counts' in row), 'rows without counts');
+  assert.deepStrictEqual(conv[0].record.conversations, [{ id: 'conv-1', state: 'working', since: 5, quiet: false }], 'the row without counts or text');
+  assertTextFree(conv[0], 'SIGNALS-CONV-TEXT');
 });
 
 test('the status poll with no injected port: the registry finds it once, and a steady tick reads health once in all', async (t) => {
@@ -526,6 +573,15 @@ test('chat status: valid against amendment 1, from host reads only, never the lo
   const seqs = r.link.statuses().map((s) => s.seq);
   assert.ok(seqs.every((s, i) => i === 0 || s > seqs[i - 1]), 'seq grows within the connector boot');
   assert.deepStrictEqual(r.signals.statusOf(CHAT).needs_you, { asks: 3 });
+
+  // A lock that only went stale: health's lock is set, lock_stale true, so no
+  // turn is in flight (06-chat-status turn.in_flight).
+  d.srv.graph.lock.started_at = 1;
+  await r.signals.pollNow(CHAT);
+  const stale = r.signals.statusOf(CHAT);
+  assert.strictEqual(stale.turn.in_flight, false, 'a stale lock is not a turn in flight');
+  assert.ok(!('author' in stale.turn) && !('started_at' in stale.turn));
+  conformsTo('06-chat-status', stale);
 });
 
 test('chat status: no MCP presence row → session null; a daemon that stops answering → daemon null, state starting', async (t) => {
