@@ -125,8 +125,11 @@
 // gesture, Send to Claude, and a plug-in type's tray (tranche 4) — runs
 // through trayAction: while a committed node is previewed (mounts.js
 // contentReadOnly(), D2) it refuses with READONLY_HINT (topbar.js) and sends
-// nothing — one rule, one hint. trayReadOnly() is the same rule for drawing a
-// tray's read-only branch. No tray checks the preview itself
+// nothing — one rule, one hint. A stamped read (mounts.js readLevel,
+// C-04.18b; U757) is the same rule, worded by topbar.js readOnlyHint() with
+// READ_LEVEL_HINT, which names no host command; TRAY_REFUSAL's `hint` reads
+// that chooser, so it is still one frozen object. trayReadOnly() is the same
+// rule for drawing a tray's read-only branch. No tray checks the preview itself
 // (test/conventions.test.js holds `contentReadOnly(` to its homes).
 //
 // SEND TO CLAUDE (F.5; RULED REQ@highlight-send-to-claude M2 (a), J2 (a)).
@@ -179,7 +182,7 @@ import { bus } from './bus.js';
 import { onFrame, onHello } from './ws.js';
 import { contentReadOnly } from './mounts.js';
 import { isPhone } from './viewport.js';
-import { READONLY_HINT, showReaimNote } from './topbar.js';
+import { readOnlyHint, showReaimNote } from './topbar.js';
 import { toolbarState, settingsOf, onToolbarChange, settingsSnapshot, defaultSettings } from './toolbar-state.js';
 import { mediaOf as assetMediaOf } from './element-assets.js';
 
@@ -724,18 +727,21 @@ function settingsFor(type) {
 export function trayReadOnly() { return contentReadOnly(); }
 
 // The guard's refusal: what trayAction answers in place of the action's own.
-export const TRAY_REFUSAL = Object.freeze({ ok: false, refused: 'read-only', hint: READONLY_HINT });
+// Its `hint` is readOnlyHint() at the read: READONLY_HINT in a preview, the
+// read level's words at a stamped read (a caller compares the object itself).
+export const TRAY_REFUSAL = Object.freeze({ ok: false, refused: 'read-only', get hint() { return readOnlyHint(); } });
 
 function showNote(text) {
   try { showReaimNote(text); } catch { /* the note is a courtesy */ }
 }
 
 // trayAction(run, {note}) — run a tray's write action, or, while a preview is
-// up, refuse it: `note` (the tray's own, else the topbar's) shows READONLY_HINT
-// and TRAY_REFUSAL is answered; run is never called, so nothing is sent.
+// up (or at a stamped read), refuse it: `note` (the tray's own, else the
+// topbar's) shows readOnlyHint() and TRAY_REFUSAL is answered; run is never
+// called, so nothing is sent.
 export function trayAction(run, { note } = {}) {
   if (contentReadOnly()) {
-    (typeof note === 'function' ? note : showNote)(READONLY_HINT);
+    (typeof note === 'function' ? note : showNote)(readOnlyHint());
     return TRAY_REFUSAL;
   }
   return run();

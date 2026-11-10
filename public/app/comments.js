@@ -1068,7 +1068,7 @@ function openThread(id, x, y) {
     + chainHtml(pin.chain) + '</div>'
     + '<div class="pin-thread-msgs">' + msgs + '</div>'
     + (ro
-      ? '<div class="pin-reply-err pin-ro-hint">' + esc(mods ? mods.topbar.READONLY_HINT : '') + '</div>'
+      ? '<div class="pin-reply-err pin-ro-hint">' + esc(mods ? mods.topbar.readOnlyHint() : '') + '</div>'
       : '<div class="pin-reply"><textarea class="pin-reply-text" rows="2" placeholder="Reply…"></textarea>'
         + '<div class="pin-actions"><label class="pin-share" title="Claude reads only shared comments (get_comments)">'
         + '<input type="checkbox" class="pin-share-cb" ' + (pin.shared !== false ? 'checked' : '') + '> Shared with Claude</label>'

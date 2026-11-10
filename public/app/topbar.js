@@ -6,7 +6,7 @@ import { view, $ } from './state.js';
 import { bus } from './bus.js';
 import { store } from './store.js';
 import { nodeById, labelFor } from './labels.js';
-import { fullReset, applySnapshot, panes, syncReadonly } from './mounts.js';
+import { fullReset, applySnapshot, panes, syncReadonly, readLevel } from './mounts.js';
 import { applyNodeTheme, getActiveNodeTheme, toggleMode } from './theme.js';
 import { openOverlay, isOverlayOpen, layoutAndRender, updateSidebarButtons, displayChildrenOf, displayParentOf } from './graph-view.js';
 import { isPhone } from './viewport.js';
@@ -158,9 +158,18 @@ export const READONLY_HINT = 'Read-only preview — set this node active in the 
 // layoutLocked). A layout gesture that reaches a control there says where to go
 // — previewing or not, since setting the node active would not unlock it.
 export const LAYOUT_HINT = 'Layout editing is available on a larger screen.';
+// A stamped read (mounts.js readLevel, contract 04 C-04.18b): the viewer may
+// read this page, not change it. Its words name no host command (06
+// C-06.34a), and never "set this node active", which would not unlock it.
+export const READ_LEVEL_HINT = 'Read-only — you can read this chat but not change it.';
+// The reason a write was refused, for every reader that prints one: the
+// preview's words while previewing (unchanged), else the read level's.
+export function readOnlyHint() {
+  return !view.previewing && readLevel() ? READ_LEVEL_HINT : READONLY_HINT;
+}
 function onReadonlyAttempt(e) {
   if (e && e.detail && e.detail.layout && isPhone()) showReaimNote(LAYOUT_HINT);
-  else if (view.previewing) showReaimNote(READONLY_HINT);
+  else if (view.previewing || readLevel()) showReaimNote(readOnlyHint());
 }
 
 /* ---------- leaving preview: ONE owner of the transition ----------
