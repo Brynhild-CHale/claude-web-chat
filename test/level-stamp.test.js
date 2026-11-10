@@ -417,7 +417,14 @@ test('one watcher only in connected mode: a daemon handed no secret, or a record
   const armed = opened(() => createAudience({ configFile: null, relay: connectedRelay(), connectorRecord: rec, pollMs: 50 }));
   assert.ok(armed.live.length > 0, `connected with a fenced record: the watcher is armed (${armed.live})`);
   assert.equal(armed.a.ceiling(), 'full');
+  // A live watcher follows an edit; once stop() has run, nothing does (stop
+  // ends the ceiling watcher too).
+  writeJsonAtomic(rec, recordBody('read'));
+  await waitUntil(() => armed.a.ceiling() === 'read', { timeout: 10000, interval: 10, what: 'the armed watcher following the edit' });
   await armed.a.stop();
+  writeJsonAtomic(rec, recordBody('full'));
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(armed.a.ceiling(), 'read', 'a stopped audience follows the record no more');
 });
 
 // ── (6) never the host, never private ───────────────────────────────────────
