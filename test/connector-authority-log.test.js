@@ -236,6 +236,46 @@ test('three identical denials within 60 s are one record (count 3, first_ts the 
   assert.ok(lines.slice(2).every((l) => l.count === 1));
 });
 
+test('the window is keyed by principal id, chat, rule and reason: N denials of distinct paths under one rule and reason within 60 s are one line (count N) and one queued record carrying the first', (t) => {
+  const vc = virtualClock();
+  const file = path.join(tmpDir(t), 'authority.log');
+  const link = stubLink();
+  link.state = 'backoff'; // queued, not sent: stats().pending counts the records
+  const alog = createAuthorityLog({ file, link, now: vc.now, timers: vc.timers });
+  t.after(() => alog.stop());
+  const N = 250;
+  for (let i = 0; i < N; i++) {
+    alog.record(deny({ method: 'GET', path: `/api/files/f${i}`, rule: 'GET /api/files/*', need: 'files', reason: 'level' }));
+    vc.advance(100);
+  }
+  assert.strictEqual(alog.stats().open_windows, 1, 'one window for the flood');
+  vc.advance(WINDOW_MS);
+  const lines = readLines(file);
+  assert.strictEqual(lines.length, 1);
+  assert.strictEqual(lines[0].count, N);
+  assert.strictEqual(lines[0].path, '/api/files/f0', 'the record carries the window\'s first event');
+  assert.strictEqual(lines[0].first_ts, new Date(T0).toISOString());
+  assert.strictEqual(lines[0].ts, new Date(T0 + (N - 1) * 100).toISOString());
+  assert.strictEqual(alog.stats().pending, 1);
+  link.state = 'up';
+  link.emit('ready', {});
+  const recs = link.sent.flatMap((s) => s.body.records);
+  assert.strictEqual(recs.length, 1);
+  ajvSays(DENY, recs[0], 'the coalesced record');
+  assert.strictEqual(recs[0].count, N);
+
+  // The window is shippable only when the event whose fields it carries is
+  // valid: an invalid first event keeps the window local, a valid later one
+  // does not change that.
+  alog.record(deny({ origin: 'elsewhere', reason: 'ceiling' }));
+  alog.record(deny({ reason: 'ceiling' }));
+  alog.flush();
+  assert.strictEqual(readLines(file).length, 2);
+  assert.strictEqual(readLines(file)[1].count, 2);
+  assert.strictEqual(alog.stats().local_only, 1);
+  assert.strictEqual(alog.stats().pending, 1);
+});
+
 test('the line: the principal\'s id only, the path without its query and at most 512 characters, no hint or body; 0600 in the 0700 connector directory under the sandbox HOME; a token in the path is masked', (t) => {
   const file = userPaths().connectorAuthorityLog;
   assert.ok(file.startsWith(os.homedir()), 'the sandbox HOME');
@@ -246,7 +286,9 @@ test('the line: the principal\'s id only, the path without its query and at most
   const long = `/api/files/${'a'.repeat(700)}?token=abc&x=1#frag`;
   alog.record({ ...deny({ method: 'GET', path: long, rule: null, need: null, reason: 'unknown' }), hint: 'go run claude-web-chat unlock', body: '{"secret":1}', headers: { cookie: 'a=b' } });
   const ghp = fakeSecrets({ seed: 11 }).find((f) => f.id === 'github-ghp').secrets[0];
-  alog.record(deny({ method: 'GET', path: `/api/files/${ghp}/x?q=${ghp}`, rule: null, need: null, reason: 'unknown' }));
+  // Its own chat: the window key is (principal id, chat, rule, reason), so a
+  // second path under the same four would join the first record.
+  alog.record(deny({ chat_id: id26(), method: 'GET', path: `/api/files/${ghp}/x?q=${ghp}`, rule: null, need: null, reason: 'unknown' }));
   alog.stop();
 
   const text = fs.readFileSync(file, 'utf8');
@@ -289,7 +331,8 @@ test('rotation: past 1 MiB the file moves to <file>.1 and a new file starts; a s
   t.after(() => alog.stop());
   let n = 0;
   const writeSome = (k) => {
-    for (let i = 0; i < k; i++) alog.record(deny({ method: 'GET', path: `/api/x/${n++}/${'p'.repeat(400)}`, rule: null, need: null, reason: 'unknown' }));
+    // A chat each: distinct paths alone share one window (the key is principal id, chat, rule, reason).
+    for (let i = 0; i < k; i++) alog.record(deny({ chat_id: id26(), method: 'GET', path: `/api/x/${n++}/${'p'.repeat(400)}`, rule: null, need: null, reason: 'unknown' }));
     alog.flush();
   };
   writeSome(100);
@@ -468,7 +511,7 @@ test('the queue holds at most its cap: past it the oldest are dropped, counted a
   const logs = [];
   const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers, log: (l) => logs.push(l), queueMax: 5 });
   t.after(() => alog.stop());
-  for (let i = 0; i < 8; i++) alog.record(deny({ path: `/api/x/${i}`, rule: null, need: null, reason: 'unknown', method: 'GET' }));
+  for (let i = 0; i < 8; i++) alog.record(deny({ chat_id: id26(), path: `/api/x/${i}`, rule: null, need: null, reason: 'unknown', method: 'GET' }));
   alog.flush();
   assert.strictEqual(alog.stats().pending, 5);
   assert.strictEqual(alog.stats().dropped, 3);
@@ -490,7 +533,7 @@ test('frames carry at most 200 records and go at most once a second', (t) => {
   // holdMs 0: nothing stays in flight, so only the rate holds the next frame.
   const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers, holdMs: 0 });
   t.after(() => alog.stop());
-  for (let i = 0; i < 450; i++) alog.record(deny({ path: `/api/x/${i}`, rule: null, need: null, reason: 'unknown', method: 'GET' }));
+  for (let i = 0; i < 450; i++) alog.record(deny({ chat_id: id26(), path: `/api/x/${i}`, rule: null, need: null, reason: 'unknown', method: 'GET' }));
   alog.flush();
   vc.advance(0);
   assert.deepStrictEqual(link.sent.map((s) => s.body.records.length), [200, 200, 50]);
@@ -556,7 +599,7 @@ test('a record whose principal is valid but whose line breaks 04-deny-record\'s 
   t.after(() => alog.stop());
   alog.record(deny({ origin: 'elsewhere' }));
   alog.record(deny({ chat_id: 'not-a-label' }));
-  alog.record(deny({ status: 200 }));
+  alog.record(deny({ chat_id: id26(), status: 200 })); // its own chat: not the first one's window
   alog.flush();
   vc.advance(0);
   assert.strictEqual(readLines(file).length, 3, 'every line is written');
