@@ -1465,8 +1465,9 @@ test('TEXT_RULES: the spec\'s table, and the carriers ruling Q2 adds to it', () 
     // a group's members (U424a, Y5 = b) are its members' first words.
     items: { comment: ['summary', 'excerpt'], element: ['summary', 'excerpt', 'members'] },
     // A ring entry's own text by kind (J1, K1): the Push note a wake carries,
-    // and the park GET /api/queue/pending serves.
-    entries: { wake: ['note'] },
+    // and the park GET /api/queue/pending serves; and the pusher's hub display
+    // name a relayed Push's wake carries (03 C-03.23a, Q-03.12; U743).
+    entries: { wake: ['note', 'by'] },
   });
 });
 
@@ -1516,7 +1517,7 @@ test('TEXT_RULES: a field name a per-kind row (items, entries) may not hold is r
   fs.copyFileSync(path.join(core, 'element-policy.js'), path.join(dir, 'element-policy.js'));
   const src = fs.readFileSync(path.join(core, 'remote-policy.js'), 'utf8');
   for (const [row, good, bad] of [
-    ['entries', "wake: ['note'],", "wake: ['note.text'],"],
+    ['entries', "wake: ['note', 'by'],", "wake: ['note.text', 'by'],"],
     ['items', "comment: ['summary', 'excerpt'],", "comment: ['summary', 'Excerpt'],"],
   ]) {
     assert.equal(src.split(good).length, 2, `${row}: the row is spelled once in remote-policy.js`);
@@ -2788,4 +2789,23 @@ test('connected ratchet: U761\'s GET /api/elements/anchor-stats awaits table_ver
   assert.equal(v.key, 'GET /api/elements/*', 'the connector admits it by the wildcard row');
   assert.equal(classify('GET', '/api/elements/anchor-stats').key, 'GET /api/elements/*', 'RULES\' element row decides it at the portal');
   assert.ok(daemonRoutes().some((r) => r.method === 'GET' && r.path === '/api/elements/anchor-stats'), 'the route scan finds it');
+});
+
+// U743 (6B.1; 03 C-03.23a, Q-03.12): a relayed Push's wake carries the
+// pusher's hub display name as `by`, its own field beside origin and device.
+// TEXT_RULES.entries.wake names it beside the note, so below `read` the ring
+// (and the park) drop it; at `read` and above the entry keeps it. A hidden
+// name alone is not a hidden note: `note_hidden` says only that a note went.
+test('TEXT_RULES.entries.wake: below read a wake entry drops `by` (with or without a note); read and up keep it', () => {
+  const WAKE = { kind: 'wake', seq: 9, reason: 'push', source: 'queue', origin: 'remote', device: 'mobile', batch: [{ id: 'q1', kind: 'signal' }], by: 'Ada L' };
+  const wake = frozen({ ...WAKE });
+  for (const level of ['read', 'full', 'local']) assert.equal(stripWakeText(wake, level), wake, level);
+  for (const level of ['basic', 'nonsense', undefined]) {
+    const out = stripWakeText(wake, level);
+    const { by, ...rest } = WAKE;
+    assert.deepStrictEqual(out, rest, `${level}: no by, and no note_hidden (no note was hidden)`);
+    const noted = stripWakeText(frozen({ ...WAKE, note: 'wc-u743-note' }), level);
+    assert.deepStrictEqual(noted, { ...rest, note_hidden: true }, `${level}: note and by both go`);
+  }
+  assert.equal(wake.by, 'Ada L', 'never mutated');
 });
