@@ -12,8 +12,11 @@
 // the env var): the daemon listens at the base, and the capture hub that its
 // start() brings up (lib/util/hub ensureHub, through WEB_CHAT_HUB_PORT) at
 // base + 1. A base whose daemon or hub port falls in 5173–5272 (the ports a
-// project daemon may bind, lib/util/registry SCAN_PORTS) or on 5170 (the
-// hub's default, DEFAULT_HUB_PORT) is refused: those are the maintainer's.
+// project daemon may bind, lib/util/registry SCAN_PORTS), on 5170 (the hub's
+// default, DEFAULT_HUB_PORT), on 5171 (the portal's fixed loopback port,
+// lib/tunnel/config DEFAULT_PORTAL_PORT) or on 5172 (cloudflared's metrics
+// port, DEFAULT_METRICS_PORT) is refused: those are the maintainer's. Each is
+// required by name, never written here as a number.
 //
 // THE ISOLATION. A soak owns one --root, made fresh per run by run.sh:
 //
@@ -45,6 +48,7 @@ const { isHomeDir } = require('../../lib/core/paths');
 const { readJson, writeJsonAtomic } = require('../../lib/core/fsjson');
 const { SCAN_PORTS } = require('../../lib/util/registry');
 const { DEFAULT_HUB_PORT } = require('../../lib/util/hub');
+const { DEFAULT_PORTAL_PORT, DEFAULT_METRICS_PORT } = require('../../lib/tunnel/config');
 
 const SOAK_PORT_BASE_DEFAULT = 6400;
 // How long the soak's hub waits with an empty registry before it exits
@@ -77,8 +81,14 @@ class SoakRefusal extends Error {
   }
 }
 
+// The single ports beside the scan band: the hub's, the portal's and
+// cloudflared's metrics server's defaults (the ones the maintainer's tunnel
+// binds; the soak scrubs every WEB_CHAT_* variable and never starts a portal,
+// so a relocated WEB_CHAT_PORTAL_PORT changes nothing here).
+const FIXED_PORTS = Object.freeze([DEFAULT_HUB_PORT, DEFAULT_PORTAL_PORT, DEFAULT_METRICS_PORT]);
+
 function forbiddenPort(p) {
-  return p === DEFAULT_HUB_PORT || SCAN_PORTS.includes(p);
+  return FIXED_PORTS.includes(p) || SCAN_PORTS.includes(p);
 }
 
 function checkPort(p, what = 'port') {
@@ -87,7 +97,7 @@ function checkPort(p, what = 'port') {
   }
   if (forbiddenPort(p)) {
     throw new SoakRefusal(
-      `soak: ${what} ${p} is in the band the maintainer's surfaces use (${SCAN_PORTS[0]}–${SCAN_PORTS[SCAN_PORTS.length - 1]}, and the hub's ${DEFAULT_HUB_PORT})`,
+      `soak: ${what} ${p} is in the band the maintainer's surfaces use (${SCAN_PORTS[0]}–${SCAN_PORTS[SCAN_PORTS.length - 1]}, the hub's ${DEFAULT_HUB_PORT}, the portal's ${DEFAULT_PORTAL_PORT} and cloudflared's metrics ${DEFAULT_METRICS_PORT})`,
       `pick a port base outside it, e.g. --port-base ${SOAK_PORT_BASE_DEFAULT}`,
     );
   }

@@ -14,7 +14,8 @@
 # a shared root is a false failure), HOME / USERPROFILE / CLAUDE_CONFIG_DIR sit
 # inside it, and the band is --port-base (or SOAK_PORT_BASE, default 6400):
 # the daemon at N, its hub at N+1. lib.js refuses a band in 5173-5272 or on
-# 5170, and a HOME that is the real home, with exit 2.
+# the hub's 5170, the portal's 5171 or cloudflared's metrics 5172, and a HOME
+# that is the real home, with exit 2.
 #
 # Exit: soak.sh's (0 every judged counter passed, 1 a FAIL), or 2 for a usage
 # error or a refusal before it starts.
