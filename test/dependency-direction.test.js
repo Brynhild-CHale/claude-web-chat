@@ -72,7 +72,12 @@ const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal
 // finding a system Chrome / ffmpeg and driving Chrome over its debugging pipe.
 // It knows nothing of the graph (the daemon hands it a URL and frame times), so
 // both the server's render route and `doctor` can use it.
-const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'tunnel', 'replay']);
+// lib/relay is SHARED: the relay code the tunnel portal and the connector
+// share — the header rules, the streamed HTTP proxy, the answer surface's port,
+// the one identity probe and the start rate limit (C-06.4 step 7, 05 §4). It
+// lived in lib/portal until a second entry point needed it; the portal
+// re-requires it. It requires lib/client, lib/core and ws only.
+const SHARED = new Set(['util', 'toggle', 'update', 'packs', 'capture', 'channel', 'setup', 'tunnel', 'replay', 'relay']);
 
 // ── the baseline: edges that legitimately remain ────────────────────────────
 // Each is `from => to` at FILE granularity, because the point of naming them is
