@@ -62,8 +62,9 @@ function folder(home, rel, { bare = false } = {}) {
 const noInit = () => { throw new Error('init ran'); };
 
 // A stub standing in for CLI_BIN: it records its argv and cwd in a file beside
-// itself, makes .web-chat/ in its cwd when it succeeds, and exits `code`.
-function stubBin(t, code = 0) {
+// itself, makes .web-chat/ in its cwd when it succeeds (or when `make` says so),
+// and exits `code`.
+function stubBin(t, code = 0, { make = code === 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(userPaths().root, '..', 'stub-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const bin = path.join(dir, 'stub-cli.js');
@@ -71,7 +72,7 @@ function stubBin(t, code = 0) {
     "const fs = require('fs');",
     "const path = require('path');",
     "fs.writeFileSync(path.join(__dirname, 'call.json'), JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));",
-    code === 0 ? "fs.mkdirSync(path.join(process.cwd(), '.web-chat'));" : '',
+    make ? "fs.mkdirSync(path.join(process.cwd(), '.web-chat'));" : '',
     `process.exit(${code});`,
   ].join('\n'));
   const spawns = [];
@@ -263,6 +264,14 @@ test('a folder without .web-chat/ runs the init child interactively; a failed in
   assert.deepStrictEqual(bad.calls().argv, ['init', nativeReal(b)]);
   assert.strictEqual(recordBytes(), before);
   assert.deepStrictEqual(fs.readdirSync(b), [], 'the folder is as it was');
+
+  // The exit code alone decides: an init that made .web-chat/ but exited 1 offers nothing.
+  const half = stubBin(t, 1, { make: true });
+  const h = folder(home, 'projects/h', { bare: true });
+  assert.deepStrictEqual(await folders.offer(h, { deps: half.deps }), { ok: false, refused: 'init-failed' });
+  assert.strictEqual(half.spawns.length, 1);
+  assert.ok(fs.statSync(path.join(h, '.web-chat')).isDirectory(), 'the stub made .web-chat/');
+  assert.strictEqual(recordBytes(), before);
 
   const none = stubBin(t, 0);
   const c = folder(home, 'projects/c');
