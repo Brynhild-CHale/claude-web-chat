@@ -1026,6 +1026,11 @@ const PATTERNS = [
     re: /\bremoteAddress\b/g,
     baseline: {
       'lib/server/audience.js': 1,
+      // The relay credential's own peer check (U741; 03 C-03.21: "the peer is
+      // loopback"), beside the remote label and the relay secret. A credential
+      // check, not a classification: audience's peerOf will read valid(req)
+      // for its relayed kind (U742), so valid cannot read peerOf back.
+      'lib/server/relay-credential.js': 1,
     },
   },
   {

@@ -735,7 +735,9 @@ test('foreground start: the server is created with tokenAtClaim, and the guard\'
     },
     createInstanceGuard: (opts) => { made.push(opts); return { start() {}, stop() {} }; },
   });
-  assert.deepEqual(serverOpts, [{ root, tokenAtClaim: true }]);
+  // U741: the foreground start also hands the relay secret it took first (null
+  // here: the test process was handed none) and its channel.
+  assert.deepEqual(serverOpts, [{ root, tokenAtClaim: true, relaySecret: null, relaySecretVia: null }]);
   assert.equal(typeof made[0].syncToken, 'function');
   assert.deepEqual(made[0].syncToken(), { written: true, reason: 'absent' });
   assert.equal(published, 1);
