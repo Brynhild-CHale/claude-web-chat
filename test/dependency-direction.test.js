@@ -153,6 +153,12 @@ const BASELINE = {
   // not. The fix is to lift the registry, not to widen the rule.
   'lib/packs/plan.js => lib/server/components-registry.js':
     'OWED: the components registry is server-shaped but tier resolution is not',
+
+  // The connector clones a repo chat's root through the daemon's one git
+  // runner (contract 06 C-06.16; GITRUN@baseline-pin, U720) rather than a
+  // second git spawn; PINNED below holds git-run to Node alone.
+  'lib/connector/chats.js => lib/server/git-run.js':
+    'the connector clones a repo chat through the daemon\'s one git runner (06 C-06.16); git-run requires only child_process and fs',
 };
 
 // ── pinned targets: what a baseline edge is allowed to drag in ──────────────
@@ -173,6 +179,12 @@ const PINNED = {
     importer: 'lib/server/domain/asks.js',
     process: 'the daemon (the asks domain)',
     bare: [],
+    files: [],
+  },
+  'lib/server/git-run.js': {
+    importer: 'lib/connector/chats.js',
+    process: 'the hub connector',
+    bare: ['child_process', 'fs'],
     files: [],
   },
 };
