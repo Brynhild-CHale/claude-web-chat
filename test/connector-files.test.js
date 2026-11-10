@@ -3,8 +3,9 @@
 // writeJsonAtomic's mode, the one ceiling reading (lib/core/connected-ceiling),
 // the record's shared module (lib/setup/connector.js: the hand-written shape
 // check, the 0600 write, the read-modify-write under its lock, the hub origin,
-// the unit texts, the service manager's argv behind an injected runner) and the
-// registry's port-less singleton role.
+// the unit texts, the service manager's argv behind an injected runner, and —
+// U714b — the machine key's id and fingerprint over contract 03's test vector)
+// and the registry's port-less singleton role.
 //
 // Every case runs under a throwaway HOME (withTempHome, over npm test's
 // sandbox). No service manager, tmux, claude or hub is run: the argv builders
@@ -524,6 +525,58 @@ test('hubOrigin: normalises to the schema\'s https origin; plain http only for a
 
   for (const o of ['https://hub.example.com', 'https://hub.example.com:8443']) {
     assert.equal(conn.checkRecord({ ...conn.newRecord({ hubId: 'hub-one', origin: o }) }), true, o);
+  }
+});
+
+// ── the machine key's id and fingerprint (U714b; 03 section 2) ────────────
+
+const CONTRACT_EXAMPLES = path.join(__dirname, '..', 'test-support', 'contracts', 'examples');
+const readExample = (name) => JSON.parse(fs.readFileSync(path.join(CONTRACT_EXAMPLES, name), 'utf8'));
+
+test('keyIdOf and fingerprintOf: contract 03\'s test vector, byte for byte', () => {
+  const machine = readExample('03-credential-machine.json');
+  assert.equal(machine.public_key.alg, 'ed25519');
+  const raw = Buffer.from(machine.public_key.value, 'base64url');
+  assert.equal(raw.length, 32, 'the wire form is the raw 32-byte key');
+  // 03 section 2's own lines, beside the example that carries them.
+  assert.equal(machine.key_id, 'mky_v6men077h4s9p7hvxfv5etvn01');
+  assert.equal(machine.fingerprint, 'SHA256:2ajqgOeJMpseO+v2V2t1AFIewl46CYiSZ6HzUasBleQ');
+  assert.strictEqual(conn.keyIdOf(raw), machine.key_id);
+  assert.strictEqual(conn.fingerprintOf(raw), machine.fingerprint);
+
+  // The 06 record example carries a key of its own: the same derivation.
+  const state = readExample('06-connector-state.json');
+  const stateRaw = Buffer.from(state.credential.public_key, 'base64url');
+  assert.strictEqual(conn.keyIdOf(stateRaw), state.credential.key_id);
+  assert.strictEqual(conn.fingerprintOf(stateRaw), state.credential.fingerprint);
+});
+
+test('keyIdOf and fingerprintOf: a Buffer and a Uint8Array agree; a fresh key fits the record\'s grammar', () => {
+  const raw = Buffer.from(readExample('03-credential-machine.json').public_key.value, 'base64url');
+  const plain = new Uint8Array(raw);
+  assert.ok(!Buffer.isBuffer(plain));
+  assert.strictEqual(conn.keyIdOf(plain), conn.keyIdOf(raw));
+  assert.strictEqual(conn.fingerprintOf(plain), conn.fingerprintOf(raw));
+  // A view into a larger buffer hashes only its own bytes.
+  const padded = new Uint8Array(40);
+  padded.set(raw, 4);
+  assert.strictEqual(conn.keyIdOf(padded.subarray(4, 36)), conn.keyIdOf(raw));
+
+  const { publicKey } = require('crypto').generateKeyPairSync('ed25519');
+  const fresh = Buffer.from(publicKey.export({ format: 'jwk' }).x, 'base64url');
+  assert.match(conn.keyIdOf(fresh), /^mky_[0-9a-hjkmnp-tv-z]{26}$/);
+  assert.match(conn.fingerprintOf(fresh), /^SHA256:[A-Za-z0-9+/]{43}$/);
+});
+
+test('keyIdOf and fingerprintOf: anything but raw key bytes throws', () => {
+  const wire = readExample('03-credential-machine.json').public_key.value;
+  for (const fn of [conn.keyIdOf, conn.fingerprintOf]) {
+    for (const bad of [wire, { value: wire }, null, undefined, 42, [1, 2, 3], new ArrayBuffer(32)]) {
+      assert.throws(() => fn(bad), TypeError, `${fn.name}(${Object.prototype.toString.call(bad)})`);
+    }
+    for (const n of [0, 31, 33, 44]) {
+      assert.throws(() => fn(new Uint8Array(n)), RangeError, `${fn.name} over ${n} bytes`);
+    }
   }
 });
 
