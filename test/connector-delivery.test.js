@@ -349,7 +349,8 @@ test('a queue.deliver reaches the daemon\'s queue once as a relayed POST at the 
   // The ledger: ids and the boot, 0600, never text.
   const raw = fs.readFileSync(ledgerFile(), 'utf8');
   noText(raw, 'the ledger');
-  assert.strictEqual(fs.statSync(ledgerFile()).mode & 0o777, LEDGER_MODE);
+  assert.strictEqual(fs.statSync(ledgerFile()).mode & 0o777, 0o600, 'the ledger is 0600 (the brief\'s number, not the module\'s constant)');
+  assert.strictEqual(LEDGER_MODE, 0o600);
   const led = JSON.parse(raw);
   assert.deepStrictEqual(led.entries, [{
     hub_msg_id: held.hub_msg_id, msg_id: ack.daemon.msg_id, item_id: ack.daemon.item_id, boot: ack.daemon.boot, dedupe: 'daemon',
@@ -451,7 +452,7 @@ test('the ledger is written before the ack: a link that throws on the ack still 
   assert.strictEqual(e.boot, (await c.d.api.get('/api/health')).json.boot);
   const onDisk = JSON.parse(fs.readFileSync(ledgerFile(), 'utf8')).entries;
   assert.deepStrictEqual(onDisk.map((x) => [x.hub_msg_id, x.msg_id, x.boot]), [[f.delivery.hub_msg_id, e.msg_id, e.boot]]);
-  assert.strictEqual(fs.statSync(ledgerFile()).mode & 0o777, LEDGER_MODE);
+  assert.strictEqual(fs.statSync(ledgerFile()).mode & 0o777, 0o600);
   noText(fs.readFileSync(ledgerFile(), 'utf8'), 'the ledger');
   assert.strictEqual((await c.d.api.get('/api/queue')).json.items.filter((it) => it.msg_id === e.msg_id).length, 1);
 });
