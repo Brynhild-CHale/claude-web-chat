@@ -307,8 +307,13 @@ test('refusals: not-accepting, unknown-folder, init-needed (nothing written), ro
     chat_id: label('e7'), rev: 1, scope_kind: 'space', root: takenRoot, instance: null, owned_root: true, desired: 'stopped',
   }));
   before = recordBytes();
+  const initsBeforeL6 = runInit.calls.length;
   assert.deepStrictEqual(await chats.apply(assignment(l6)), { chat_id: l6, rev: 0, state: 'refused', reason: 'root-in-use' });
   assert.strictEqual(recordBytes(), before);
+  // Refused before any preparation: no directory made, no init run on a root
+  // another chat maps (the check inside the record's lock is the second one).
+  assert.strictEqual(fs.existsSync(takenRoot), false);
+  assert.strictEqual(runInit.calls.length, initsBeforeL6);
 
   // Every log line is codes and ids: no path.
   for (const l of lines) assert.ok(!l.includes(home) && !l.includes(path.sep), `no path in the log: ${l}`);
@@ -494,6 +499,13 @@ test('an init that fails is init-failed and maps nothing', async (t) => {
   assert.deepStrictEqual(await chats.apply(assignment(lbl)), { chat_id: lbl, rev: 0, state: 'failed', reason: 'init-failed' });
   assert.strictEqual(recordBytes(), before);
   assert.deepStrictEqual(lifecycle.calls, []);
+
+  // An init that exits 0 but leaves no .web-chat/ is init-failed too.
+  const silent = make(t, { runInit: async () => 0 });
+  const lbl2 = label('r2');
+  assert.deepStrictEqual(await silent.chats.apply(assignment(lbl2)), { chat_id: lbl2, rev: 0, state: 'failed', reason: 'init-failed' });
+  assert.strictEqual(recordBytes(), before);
+  assert.deepStrictEqual(silent.lifecycle.calls, []);
 });
 
 test('a workdir under ~/.web-chat refuses every repo and space assignment', async (t) => {
@@ -527,6 +539,14 @@ test('an existing folder chat whose folder was withdrawn is refused folder-withd
   const { chats, lifecycle } = make(t);
   const lbl = label('s1');
   await chats.apply(assignment(lbl, { scope: { kind: 'folder', folder_id: f.id } }));
+  // Another folder id on the same chat: one chat keeps one root.
+  assert.deepStrictEqual(await chats.apply(assignment(lbl, { rev: 2, scope: { kind: 'folder', folder_id: 'f_00000000000000d1' } })),
+    { chat_id: lbl, rev: 1, state: 'refused', reason: 'other', code: 'scope-changed' });
+  // Its .web-chat/ gone: init-needed, and the daemon is not run.
+  fs.rmdirSync(path.join(f.dir, '.web-chat'));
+  assert.deepStrictEqual(await chats.apply(assignment(lbl, { rev: 2, scope: { kind: 'folder', folder_id: f.id } })),
+    { chat_id: lbl, rev: 1, state: 'refused', reason: 'init-needed' });
+  fs.mkdirSync(path.join(f.dir, '.web-chat'));
   editRecord((r) => { r.folders = []; });
   const o = await chats.apply(assignment(lbl, { rev: 2, scope: { kind: 'folder', folder_id: f.id } }));
   assert.deepStrictEqual(o, { chat_id: lbl, rev: 1, state: 'refused', reason: 'folder-withdrawn' });
