@@ -253,6 +253,22 @@ test('`connect status` reads ceiling read, a foreground-only service, and the li
   assert.match(r.out, new RegExp(`Connector process: running \\(pid ${process.pid}\\)$`, 'm'), 'a null port prints as nothing');
 });
 
+test('`connect status` reads a dead connector row as not running and leaves the registry as it was (no prune)', async (t) => {
+  withTempHome(t);
+  conn.writeRecord(pairedRecord());
+  // A pid that has exited: a child run to completion.
+  const dead = spawnSync(process.execPath, ['-e', ''], { timeout: 30000 }).pid;
+  registry.registerRole('connector', { pid: dead });
+  const file = userPaths().instances;
+  const before = fs.readFileSync(file, 'utf8');
+  assert.ok(registry.readAllEntries().some((e) => e.role === 'connector' && e.pid === dead), 'the dead row is there');
+
+  const r = await run(t, ['connect', 'status']);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^Connector process: not running$/m);
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'status prunes nothing: the registry is not written');
+});
+
 test('`connect status` on a corrupt record answers 1 naming the file', async (t) => {
   withTempHome(t);
   conn.ensureConnectorDir();
