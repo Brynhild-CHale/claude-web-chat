@@ -4,8 +4,9 @@
 // the record's shared module (lib/setup/connector.js: the hand-written shape
 // check, the 0600 write, the read-modify-write under its lock, the hub origin,
 // the unit texts, the service manager's argv behind an injected runner, and —
-// U714b — the machine key's id and fingerprint over contract 03's test vector)
-// and the registry's port-less singleton role.
+// U714b — the machine key's id and fingerprint over contract 03's test vector;
+// U716b — writeMachineKey, the one writer of the key file) and the registry's
+// port-less singleton role.
 //
 // Every case runs under a throwaway HOME (withTempHome, over npm test's
 // sandbox). No service manager, tmux, claude or hub is run: the argv builders
@@ -596,6 +597,163 @@ test('keyIdOf and fingerprintOf: anything but raw key bytes throws', () => {
       assert.throws(() => fn(new Uint8Array(n)), RangeError, `${fn.name} over ${n} bytes`);
     }
   }
+});
+
+// ── the machine key file: one writer (U716b, K.2-312) ──────────────────────
+
+function freshKey() {
+  const { privateKey } = require('crypto').generateKeyPairSync('ed25519');
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const raw = Buffer.from(privateKey.export({ format: 'jwk' }).x, 'base64url');
+  return { pem, raw, keyId: conn.keyIdOf(raw), publicKey: raw.toString('base64url'), fingerprint: conn.fingerprintOf(raw) };
+}
+const tmpLeft = (dir) => fs.readdirSync(dir).filter((n) => n.includes('.tmp'));
+
+test('writeMachineKey: the key 0600 (a umask of 0 too) and replaced atomically; the record\'s key fields moved to the key\'s, everything else kept', (t) => {
+  const home = withTempHome(t);
+  const record = pairedRecord(home);
+  conn.writeRecord(record);
+  const keyFile = userPaths().connectorKey('hub-one');
+  const k1 = freshKey();
+  const prev = process.umask(0);
+  let out;
+  try {
+    out = conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem, keyId: k1.keyId, publicKey: k1.publicKey, fingerprint: k1.fingerprint });
+  } finally {
+    process.umask(prev);
+  }
+  assert.equal(modeOf(keyFile), 0o600, 'umask 0: still 0600');
+  assert.equal(fs.readFileSync(keyFile, 'utf8'), k1.pem);
+  const after = conn.readRecord('hub-one');
+  assert.ok(after.ok);
+  assert.deepEqual(out, after.value, 'it answers the record as it now stands');
+  assert.deepEqual(after.value.credential, {
+    ...record.credential, key_file: keyFile, key_id: k1.keyId, public_key: k1.publicKey, fingerprint: k1.fingerprint,
+  });
+  assert.deepEqual({ ...after.value, credential: null }, { ...record, credential: null }, 'nothing but the key fields moved');
+
+  // A second key replaces the first through a rename: the file is a new
+  // inode, never the old one rewritten in place, and no temp file is left.
+  const inode = fs.statSync(keyFile).ino;
+  const k2 = freshKey();
+  conn.writeMachineKey({ hubId: 'hub-one', pem: k2.pem });
+  assert.equal(fs.readFileSync(keyFile, 'utf8'), k2.pem);
+  assert.notEqual(fs.statSync(keyFile).ino, inode, 'replaced by rename');
+  assert.equal(modeOf(keyFile), 0o600);
+  assert.equal(conn.readRecord('hub-one').value.credential.key_id, k2.keyId, 'derived from the PEM when not given');
+  assert.deepEqual(tmpLeft(userPaths().connectorDir), []);
+  assert.ok(!fs.existsSync(userPaths().connectorRecordLock('hub-one')), 'the lock is released');
+});
+
+test('writeMachineKey: the record is read, built and written under <hub-id>.json.lock, and the key is written inside the same critical section', (t) => {
+  const home = withTempHome(t);
+  conn.writeRecord(pairedRecord(home));
+  const lock = userPaths().connectorRecordLock('hub-one');
+  const keyFile = userPaths().connectorKey('hub-one');
+  const k = freshKey();
+  const seen = [];
+  const writes = [];
+  const realRename = fs.renameSync;
+  fs.renameSync = function rename(from, to) {
+    writes.push({ to: path.basename(to), locked: fs.existsSync(lock) });
+    return realRename.apply(this, arguments);
+  };
+  t.after(() => { fs.renameSync = realRename; });
+  conn.writeMachineKey({
+    hubId: 'hub-one',
+    pem: k.pem,
+    update: (cur) => {
+      seen.push({ locked: fs.existsSync(lock), keyThere: fs.existsSync(keyFile), state: cur.credential.state });
+      cur.machine = { ...cur.machine, name: 'renamed in the same section' };
+      return cur;
+    },
+  });
+  fs.renameSync = realRename;
+  assert.deepEqual(seen, [{ locked: true, keyThere: false, state: 'paired' }], 'update ran once, under the lock, before the key was written');
+  assert.deepEqual(writes.map((w) => w.to), ['hub-one.key', 'hub-one.json'], 'the key first, then the record');
+  assert.ok(writes.every((w) => w.locked), 'both renames under the record\'s lock');
+  assert.equal(conn.readRecord('hub-one').value.machine.name, 'renamed in the same section');
+  assert.ok(!fs.existsSync(lock));
+});
+
+test('writeMachineKey: a failed write leaves the old key and the old record as they were', (t) => {
+  const home = withTempHome(t);
+  conn.writeRecord(pairedRecord(home));
+  const keyFile = userPaths().connectorKey('hub-one');
+  const recordFile = userPaths().connectorRecord('hub-one');
+  const k0 = freshKey();
+  conn.writeMachineKey({ hubId: 'hub-one', pem: k0.pem });
+  const oldKey = fs.readFileSync(keyFile);
+  const oldRecord = fs.readFileSync(recordFile);
+  const k1 = freshKey();
+
+  // (a) the record's write fails after the key's: the old key is put back.
+  const plant = `${recordFile}.${process.pid}.tmp`;
+  fs.mkdirSync(path.join(plant, 'x'), { recursive: true });
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem }), (e) => e.step === 'record');
+  fs.rmSync(plant, { recursive: true, force: true });
+  assert.ok(fs.readFileSync(keyFile).equals(oldKey), 'the old key is back');
+  assert.equal(modeOf(keyFile), 0o600);
+  assert.ok(fs.readFileSync(recordFile).equals(oldRecord), 'the record untouched');
+
+  // (b) the key's own write fails: nothing moves.
+  const keyPlant = `${keyFile}.${process.pid}.tmp`;
+  fs.mkdirSync(path.join(keyPlant, 'x'), { recursive: true });
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem }), (e) => e.step === 'key');
+  fs.rmSync(keyPlant, { recursive: true, force: true });
+  assert.ok(fs.readFileSync(keyFile).equals(oldKey));
+  assert.ok(fs.readFileSync(recordFile).equals(oldRecord));
+
+  // (c) refusals before any byte: a record the schema refuses, a key id that
+  // is not the key's, a PEM that is not an Ed25519 key, a torn record.
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem, update: (r) => ({ ...r, secret: 'x' }) }), { code: 'EBADRECORD' });
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem, keyId: k0.keyId }), { code: 'EKEYMISMATCH' });
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem, fingerprint: k0.fingerprint }), { code: 'EKEYMISMATCH' });
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: 'not a key' }), { code: 'EKEY' });
+  assert.ok(fs.readFileSync(keyFile).equals(oldKey));
+  assert.ok(fs.readFileSync(recordFile).equals(oldRecord));
+  fs.writeFileSync(recordFile, '{"v": 1, torn');
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k1.pem }), (e) => e.code === 'ERECORD' && e.state === 'corrupt');
+  assert.ok(fs.readFileSync(keyFile).equals(oldKey));
+  assert.equal(fs.readFileSync(recordFile, 'utf8'), '{"v": 1, torn', 'a torn record is never overwritten');
+  assert.deepEqual(tmpLeft(userPaths().connectorDir), []);
+  assert.ok(!fs.existsSync(userPaths().connectorRecordLock('hub-one')));
+});
+
+test('writeMachineKey: no record and no update → ENOTPAIRED and no key file; a failed first record write removes the new key', (t) => {
+  withTempHome(t);
+  const keyFile = userPaths().connectorKey('hub-one');
+  const k = freshKey();
+  assert.throws(() => conn.writeMachineKey({ hubId: 'hub-one', pem: k.pem }), { code: 'ENOTPAIRED' });
+  assert.equal(fs.existsSync(keyFile), false);
+  const recordFile = userPaths().connectorRecord('hub-one');
+  const plant = `${recordFile}.${process.pid}.tmp`;
+  fs.mkdirSync(path.join(plant, 'x'), { recursive: true });
+  const make = () => conn.writeMachineKey({ hubId: 'hub-one', pem: k.pem, update: (cur) => cur || conn.newRecord({ hubId: 'hub-one', origin: 'https://hub.example.com' }) });
+  assert.throws(make, (e) => e.step === 'record');
+  assert.equal(fs.existsSync(keyFile), false, 'no key without its record');
+  assert.equal(fs.existsSync(recordFile), false);
+  fs.rmSync(plant, { recursive: true, force: true });
+  const rec = make();
+  assert.equal(rec.credential.state, 'unpaired');
+  assert.equal(rec.credential.key_id, k.keyId);
+  assert.equal(modeOf(keyFile), 0o600);
+  assert.throws(() => conn.writeMachineKey({ hubId: 'Not_A_Hub', pem: k.pem }), { code: 'EHUBID' });
+});
+
+test('one writer of the key file: only lib/setup/connector.js names connectorKey for a write; pairing.js and link.js open no file for writing', () => {
+  const lib = path.join(__dirname, '..', 'lib');
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith('.js') ? [path.join(dir, e.name)] : []));
+  const naming = walk(lib).filter((f) => /connectorKey\b/.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(lib, f).split(path.sep).join('/'));
+  assert.deepEqual(naming.sort(), ['core/paths.js', 'setup/connector.js'], 'the key file path is named by its definition and its one writer');
+  for (const name of ['pairing.js', 'link.js']) {
+    const text = fs.readFileSync(path.join(lib, 'connector', name), 'utf8');
+    assert.doesNotMatch(text, /require\(['"](node:)?fs['"]\)/, `${name} requires no fs`);
+    assert.doesNotMatch(text, /\b(writeFileAtomic|writeFileSync|openSync|createWriteStream|renameSync|appendFileSync)\b/, `${name} writes no file`);
+    assert.match(text, /\bwriteMachineKey\b/, `${name} calls the one writer`);
+  }
+  const setupText = fs.readFileSync(path.join(lib, 'setup', 'connector.js'), 'utf8');
+  assert.equal((setupText.match(/\bfunction writeMachineKey\b/g) || []).length, 1);
 });
 
 // ── the unit texts ──────────────────────────────────────────────────────────

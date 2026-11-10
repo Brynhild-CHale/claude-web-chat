@@ -30,7 +30,7 @@ const { versionsRecord, machineFacts } = require('../lib/connector/facts');
 const connectedPolicy = require('../lib/core/connected-policy');
 const { userPaths } = require('../lib/core/paths');
 const {
-  createAuthorityLog, install, principalId, principalOk, POISON_CLOSES, WINDOW_MS, MAX_BYTES, QUEUE_MAX, FRAME_RECORDS, PATH_MAX, HOLD_MS, GRAMMAR,
+  createAuthorityLog, install, principalId, principalOk, WINDOW_MS, MAX_BYTES, QUEUE_MAX, FRAME_RECORDS, PATH_MAX, GRAMMAR,
 } = require('../lib/connector/authority-log');
 
 const validator = createValidator({ folders: 'all' });
@@ -42,6 +42,7 @@ const PRINCIPAL = JSON.parse(JSON.stringify(validator.view.examples.get('03-prin
 const LINE_KEYS = ['t', 'ts', 'first_ts', 'count', 'enforcer', 'principal', 'chat_id', 'machine_id', 'decision_id',
   'origin', 'method', 'path', 'rule', 'need', 'reason', 'status'].sort();
 const T0 = Date.parse('2026-11-10T12:00:00.000Z');
+const DEAD_AFTER_MS = 45000; // the link's dead_after_ms: the old hold a written frame no longer waits
 const id26 = () => mintLabel();
 
 function ajvSays(v, data, what) {
@@ -95,14 +96,26 @@ const DECISION = `dec_${id26()}`;
 
 const readLines = (file) => fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
-// A stand-in for U716's link where a test needs only state and send.
-function stubLink() {
+// A stand-in for U716's link where a test needs only state and send. Like the
+// link, send queues and reports the write later through onWritten: written(err)
+// answers every frame not yet answered (null: written; an error: never).
+// `refuse(body)` → an error code makes send throw it (the link's 'secret').
+function stubLink({ refuse = () => null } = {}) {
   const link = new EventEmitter();
   link.state = 'up';
   link.sent = [];
-  link.send = (ch, kind, body) => { link.sent.push({ ch, kind, body }); return `c${link.sent.length}`; };
+  link.unanswered = [];
+  link.send = (ch, kind, body, opts = {}) => {
+    const code = refuse(body);
+    if (code) throw Object.assign(new Error(`refused ${code}`), { code });
+    link.sent.push({ ch, kind, body });
+    if (opts.onWritten) link.unanswered.push(opts.onWritten);
+    return `c${link.sent.length}`;
+  };
+  link.written = (err = null) => { for (const fn of link.unanswered.splice(0)) fn(err); };
   return link;
 }
+const linkDown = () => Object.assign(new Error('the link closed before the frame was written'), { code: 'ELINKDOWN' });
 
 // ── the machine and its link to the fake ───────────────────────────────────
 function machineOn(fake) {
@@ -402,10 +415,9 @@ test('records ship as schema-valid authority.log frames; records closed while th
   }
   assert.strictEqual(frames[0].frame.records[0].count, 2);
 
-  // The connection stays up past the hold: the first records are shipped.
-  vc.advance(HOLD_MS + 1000);
+  // The link wrote the frame: the first records are shipped, with no hold.
+  await waitUntil(() => alog.stats().shipped === 2, { timeoutMs: 5000 });
   assert.strictEqual(alog.stats().pending, 0);
-  assert.strictEqual(alog.stats().shipped, 2);
 
   // The link drops; records close while it is down; they go first after.
   const closed = once(link, 'closed');
@@ -428,7 +440,7 @@ test('records ship as schema-valid authority.log frames; records closed while th
   assert.strictEqual(new Set(all.map((r) => JSON.stringify(r))).size, 4);
 });
 
-test('a frame sent less than the hold before the link drops is sent again first after the reconnect (at least once)', async (t) => {
+test('a frame the link wrote is shipped: a drop within 45 s of it is NOT a resend (U716b: written, never held)', async (t) => {
   const fake = await withFakeHub(t);
   const { link } = await upLink(t, fake);
   const vc = virtualClock();
@@ -438,21 +450,53 @@ test('a frame sent less than the hold before the link drops is sent again first 
   relay.emit('deny', deny({ reason: 'query', rule: 'GET /api/files/*', need: 'files', method: 'GET', path: '/api/files/x' }));
   vc.advance(WINDOW_MS);
   await fake.waitFor('authority.log');
-  vc.advance(5000); // sent, but the connection has not yet stayed up the hold
-  assert.strictEqual(alog.stats().in_flight, 1);
+  await waitUntil(() => alog.stats().shipped === 1, { timeoutMs: 5000 });
+  vc.advance(5000); // well inside the link's dead_after_ms
+  assert.ok(5000 < DEAD_AFTER_MS);
+  assert.strictEqual(alog.stats().in_flight, 0);
   const closed = once(link, 'closed');
   fake.drop();
   await closed;
-  assert.strictEqual(alog.stats().in_flight, 0);
   relay.emit('deny', deny({ reason: 'ceiling' }));
   vc.advance(WINDOW_MS);
   await once(link, 'ready');
   await fake.waitFor('authority.log', { count: 2 });
   const second = fake.find('authority.log', { dir: 'in' })[1].frame.records;
-  assert.deepStrictEqual(second.map((r) => r.reason), ['query', 'ceiling'], 'the unconfirmed record first, then the new one');
-  vc.advance(HOLD_MS + 1000);
-  assert.strictEqual(alog.stats().pending, 0);
+  assert.deepStrictEqual(second.map((r) => r.reason), ['ceiling'], 'the written record is not sent again');
+  await waitUntil(() => alog.stats().pending === 0, { timeoutMs: 5000 });
+  assert.strictEqual(alog.stats().resent, 0);
+  assert.strictEqual(shippedRecords(fake).length, 2);
+});
+
+test('a frame still queued when the connection closes (ELINKDOWN) is sent again first after the reconnect, then the new one', (t) => {
+  const vc = virtualClock();
+  const link = stubLink();
+  const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers });
+  t.after(() => alog.stop());
+  alog.record(deny({ reason: 'query', rule: 'GET /api/files/*', need: 'files', method: 'GET', path: '/api/files/x' }));
+  alog.flush();
+  vc.advance(0);
+  assert.strictEqual(link.sent.length, 1);
+  assert.strictEqual(alog.stats().in_flight, 1, 'queued on the link, not yet written');
+  vc.advance(DEAD_AFTER_MS + 1000);
+  assert.strictEqual(alog.stats().in_flight, 1, 'no timer ships a frame the link never wrote');
+  // The connection closes with the frame still queued: the link answers it
+  // ELINKDOWN, then emits 'closed'.
+  link.state = 'backoff';
+  link.written(linkDown());
+  link.emit('closed', { code: 1006, action: 'normal', delayMs: 0 });
+  assert.strictEqual(alog.stats().in_flight, 0);
   assert.strictEqual(alog.stats().resent, 1);
+  alog.record(deny({ reason: 'ceiling' }));
+  alog.flush();
+  vc.advance(5000);
+  assert.strictEqual(link.sent.length, 1, 'nothing is sent while the link is down');
+  link.state = 'up';
+  link.emit('ready', {});
+  assert.deepStrictEqual(link.sent[1].body.records.map((r) => r.reason), ['query', 'ceiling'], 'the unwritten record first, then the new one');
+  link.written();
+  assert.strictEqual(alog.stats().pending, 0);
+  assert.strictEqual(alog.stats().shipped, 2);
 });
 
 test('through the relay: a denied READ (a GET refused at status level) is logged and shipped; a no-decision refusal with no principal is written and not shipped', async (t) => {
@@ -531,8 +575,8 @@ test('the queue holds at most its cap: past it the oldest are dropped, counted a
 test('frames carry at most 200 records and go at most once a second', (t) => {
   const vc = virtualClock();
   const link = stubLink();
-  // holdMs 0: nothing stays in flight, so only the rate holds the next frame.
-  const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers, holdMs: 0 });
+  // Only the rate holds the next frame (frames in flight never hold one back).
+  const alog = createAuthorityLog({ file: path.join(tmpDir(t), 'authority.log'), link, now: vc.now, timers: vc.timers });
   t.after(() => alog.stop());
   for (let i = 0; i < 450; i++) alog.record(deny({ chat_id: id26(), path: `/api/x/${i}`, rule: null, need: null, reason: 'unknown', method: 'GET' }));
   alog.flush();
@@ -564,31 +608,58 @@ test('install: subscribes to the relay\'s deny, defaults the file to userPaths()
   assert.doesNotThrow(() => { const a = createAuthorityLog({ file: path.join(dir, 'b.log') }); a.record(null); a.record('x'); a.stop(); });
 });
 
-test('a record in flight at three 4400 closes is dropped from the queue and told once; another close never drops one', (t) => {
+test('a dropped connection never drops a record; a frame once written is never sent again, so a frame the hub refuses (4400) cannot loop', (t) => {
   const vc = virtualClock();
   const link = stubLink();
-  const logs = [];
   const file = path.join(tmpDir(t), 'authority.log');
-  const alog = createAuthorityLog({ file, link, now: vc.now, timers: vc.timers, log: (l) => logs.push(l) });
+  const alog = createAuthorityLog({ file, link, now: vc.now, timers: vc.timers });
   t.after(() => alog.stop());
   alog.record(deny());
   alog.flush();
   vc.advance(0);
   assert.strictEqual(alog.stats().in_flight, 1);
   for (let i = 0; i < 5; i++) {
+    link.written(linkDown());
     link.emit('closed', { code: 1006, action: 'normal', delayMs: 0 });
     link.emit('ready', {});
   }
   assert.strictEqual(alog.stats().pending, 1, 'a dropped connection never drops a record');
-  for (let i = 1; i <= POISON_CLOSES; i++) {
+  assert.strictEqual(link.sent.length, 6, 'sent again after each reconnect while never written');
+  link.written();
+  assert.strictEqual(alog.stats().pending, 0, 'written: shipped');
+  for (let i = 0; i < 3; i++) {
     link.emit('closed', { code: 4400, action: 'normal', delayMs: 0 });
-    assert.strictEqual(alog.stats().pending, i < POISON_CLOSES ? 1 : 0);
     link.emit('ready', {});
   }
-  assert.strictEqual(alog.stats().poisoned, 1);
-  assert.deepStrictEqual(logs.filter((l) => l.includes('bad-frame')), ['authority log record dropped after protocol errors code=bad-frame']);
-  assert.strictEqual(readLines(file).length, 1, 'it stays in the file');
-  assert.strictEqual(link.sent.length, 5 + POISON_CLOSES, 'resent after each reconnect until dropped');
+  assert.strictEqual(link.sent.length, 6, 'never sent again after its write');
+  assert.strictEqual(alog.stats().shipped, 1);
+  assert.strictEqual(readLines(file).length, 1);
+});
+
+test('a record the link refuses for a registered secret is dropped from the queue (kept in the file), counted, told once; the records behind it ship', (t) => {
+  const vc = virtualClock();
+  const link = stubLink({ refuse: (body) => (JSON.stringify(body).includes('planted-secret') ? 'secret' : null) });
+  const logs = [];
+  const file = path.join(tmpDir(t), 'authority.log');
+  const alog = createAuthorityLog({ file, link, now: vc.now, timers: vc.timers, log: (l) => logs.push(l) });
+  t.after(() => alog.stop());
+  const paths = ['/api/a', '/api/planted-secret/1', '/api/b', '/api/planted-secret/2', '/api/c'];
+  for (const p of paths) alog.record(deny({ chat_id: id26(), path: p, rule: null, need: null, reason: 'unknown', method: 'GET' }));
+  alog.flush();
+  vc.advance(0);
+  const shipped = link.sent.flatMap((s) => s.body.records).map((r) => r.path);
+  assert.deepStrictEqual(shipped, ['/api/a', '/api/b', '/api/c'], 'every record but the two refused, in order');
+  assert.strictEqual(alog.stats().secret_dropped, 2);
+  assert.deepStrictEqual(logs.filter((l) => l.includes('code=secret')), ['authority log record dropped code=secret'], 'told once');
+  link.written();
+  assert.strictEqual(alog.stats().pending, 0, 'nothing left blocking the queue');
+  assert.strictEqual(alog.stats().shipped, 3);
+  assert.deepStrictEqual(readLines(file).map((l) => l.path), paths, 'the file keeps all five');
+  // The next record ships as usual.
+  alog.record(deny({ reason: 'ceiling' }));
+  alog.flush();
+  vc.advance(1000);
+  assert.deepStrictEqual(link.sent[link.sent.length - 1].body.records.map((r) => r.reason), ['ceiling']);
 });
 
 test('a record whose principal is valid but whose line breaks 04-deny-record\'s grammar is written and not shipped', (t) => {
