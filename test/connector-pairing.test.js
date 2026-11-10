@@ -252,6 +252,23 @@ test('the code and the key reach no console line, and pairing spawns nothing', a
   assert.doesNotMatch(src, /child_process|console\.|appendFile|applog/, 'pairing runs no program and writes no log');
 });
 
+test('--workdir reaches the new record, pending and paired alike', async (t) => {
+  const home = withTempHome(t);
+  const fake = await fakeHub(t);
+  const workdir = path.join(home, 'agents-here');
+  const lines = [];
+  const result = pair({ hubUrl: fake.url, workdir, deps: { insecureLoopback: true, print: (l) => lines.push(String(l)) } });
+  const code = await waitUntil(() => {
+    const line = lines.find((l) => CODE_RE.test(l));
+    return line && line.match(CODE_RE)[0];
+  }, { timeout: 5000, what: 'the printed code' });
+  await fake.waitFor('pairing.poll_request');
+  assert.equal(readRec('hub-test').workdir, workdir, 'the pending record carries --workdir');
+  fake.pairing.confirm(code);
+  assert.equal((await result).ok, true);
+  assert.equal(readRec('hub-test').workdir, workdir, 'the paired record keeps it');
+});
+
 // ── the ways it ends without a key ──────────────────────────────────────────
 
 test('a code the fake lets expire: non-zero, no key, the record unpaired', async (t) => {
