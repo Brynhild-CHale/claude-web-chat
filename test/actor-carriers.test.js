@@ -25,7 +25,10 @@
 //     Push's line "Pushed from: ... by=<name>"; below read the ring drops `by`.
 //   * the asks decide audit line and the control audit line carry the actor
 //     for a relayed decide or invoke, and no row is handed it.
-//   * U743b (the corrective): a relayed undo's version carries the actor.
+//   * U743b (the corrective): a relayed Send now through the release
+//     scheduler (POST /api/queue/push {ids}) gives a wake, an ack and a park
+//     whose `by` is the name, and a Pushed-from line ending by=<name>, as the
+//     direct path does; a relayed undo's version carries the actor.
 // A relay secret is never printed: a failure message masks it.
 
 const test = require('node:test');
@@ -638,7 +641,63 @@ test('control: a relayed invoke\'s reqCtx and audit line carry the actor (no nam
   for (const c of ctxs) assert.ok(!('actor' in c), 'no row is handed the actor');
 });
 
-// ── U743b: the undo ────────────────────────────────────────────────────────
+// ── U743b: Send now through the scheduler, and the undo ─────────────────────
+
+test('U743b: a relayed Send now through the release scheduler gives a wake, an ack and a park whose by is the name, and a Pushed-from line ending by=<name>; a local one none', async (t) => {
+  const d = await boot(t);
+  const { srv } = d;
+  assert.equal(typeof srv.queueRelease.send, 'function', 'the release scheduler is wired');
+  const hold = async (text, headers) => (await ok(headers
+    ? d.anonApi.post('/api/queue/message', { text, send: 'hold' }, headers)
+    : d.api.post('/api/queue/message', { text, send: 'hold' }), `message ${text}`)).id;
+
+  // A channel live: Send now wakes.
+  srv.state.wakeConsumers = 1;
+  srv.state.wakeConsumerSeenAt = Date.now();
+  const id1 = await hold('send me now', relayed());
+  const msg1 = srv.state.queue.find((it) => it.id === id1).msg_id;
+  const push = await ok(d.anonApi.post('/api/queue/push', { ids: [id1] }, relayed()), 'relayed Send now');
+  assert.equal(push.mode, 'wake', JSON.stringify(push));
+  assert.ok(!('by' in push) && !JSON.stringify(push).includes(NAME), 'the answer carries no by');
+  const wakes = async () => (await d.api.get('/api/events?since=0')).json.events.filter((e) => e.kind === 'wake');
+  const wake = (await wakes()).at(-1);
+  assert.equal(wake.by, NAME, 'the wake: by beside origin and device');
+  assert.deepEqual([wake.origin, wake.device], ['remote', 'desktop']);
+  assert.ok(wake.batch.some((it) => it.id === id1));
+  carriesNoActor('the wake', JSON.stringify(wake));
+  assert.equal(srv.state.pendingAck.by, NAME, 'the retained ack keeps by');
+  const content = await bridged(t, wake);
+  assert.match(content, new RegExp(`^Pushed from: origin=remote device=desktop by=${NAME}$`, 'm'));
+  assert.match(content, new RegExp(`^Message from the user \\[web-chat message ${msg1}\\] by=${NAME}:$`, 'm'));
+
+  // No channel: Send now parks, and the park keeps by. (The first wake's ack
+  // is taken as delivered, so its message is not folded into the park, whose
+  // one message slot would then hold the second back.)
+  srv.state.pendingAck = null;
+  srv.state.wakeConsumers = 0;
+  srv.state.wakeConsumerSeenAt = 0;
+  const id2 = await hold('park me', relayed());
+  const parked = await ok(d.anonApi.post('/api/queue/push', { ids: [id2] }, relayed()), 'relayed Send now, parked');
+  assert.equal(parked.mode, 'parked', JSON.stringify(parked));
+  const park = srv.state.pendingWake;
+  assert.ok(park.batch.some((it) => it.id === id2));
+  assert.equal(park.by, NAME, 'the park keeps by');
+  assert.match(park.envelope.content, new RegExp(`^Pushed from: origin=remote device=desktop by=${NAME}$`, 'm'));
+  carriesNoActor('the park\'s envelope', JSON.stringify(park.envelope));
+
+  // A local Send now carries no by, and its Pushed-from line no by=.
+  srv.state.pendingWake = null;
+  srv.state.pendingAck = null;
+  srv.state.wakeConsumers = 1;
+  srv.state.wakeConsumerSeenAt = Date.now();
+  const id3 = await hold('local now');
+  const lp = await ok(d.api.post('/api/queue/push', { ids: [id3] }), 'local Send now');
+  assert.equal(lp.mode, 'wake', JSON.stringify(lp));
+  const lw = (await wakes()).at(-1);
+  assert.ok(lw.batch.some((it) => it.id === id3));
+  assert.ok(!('by' in lw), 'a local Send now: no by on the wake');
+  assert.ok(!wakeEnvelope(lw.batch, lw).content.includes('by='), 'and no by= anywhere in its envelope');
+});
 
 test('U743b: a relayed undo\'s version carries the actor (no name); a local undo\'s none', async (t) => {
   const d = await boot(t);
