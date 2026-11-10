@@ -150,6 +150,29 @@ test('sessionCommand: the channel flag, the root, and only the two variables set
   assert.notStrictEqual(cmd.argv, cli.SESSION_ARGV, 'a fresh argv each time');
 });
 
+test('sessionCommand reads the channel from lib/core/channels, its one home, never a copy', (t) => {
+  const channels = require('../lib/core/channels');
+  const root = tmpDir(t, 'wc-u732-root-');
+  const cmd = cli.sessionCommand({ root, env: { PATH: '' } });
+  assert.equal(cmd.argv[1], channels.CHANNEL_NAME);
+  assert.equal(cmd.env[channels.CHANNEL_ENV], channels.CHANNEL_ENV_VALUE);
+  // A renamed channel reaches the session command with no edit of claude-cli:
+  // load a fresh copy of it over a channels module whose values differ.
+  const chPath = require.resolve('../lib/core/channels');
+  const cliPath = require.resolve('../lib/core/claude-cli');
+  const saved = { ch: require.cache[chPath], cli: require.cache[cliPath] };
+  t.after(() => {
+    require.cache[chPath] = saved.ch;
+    require.cache[cliPath] = saved.cli;
+  });
+  delete require.cache[cliPath];
+  require.cache[chPath] = { ...saved.ch, exports: { ...channels, CHANNEL_ENV: 'WEB_CHAT_CHANNEL_RENAMED', CHANNEL_ENV_VALUE: 'on', CHANNEL_NAME: 'server:renamed' } };
+  const fresh = require('../lib/core/claude-cli').sessionCommand({ root, env: { PATH: '' } });
+  assert.equal(fresh.argv[1], 'server:renamed');
+  assert.equal(fresh.env.WEB_CHAT_CHANNEL_RENAMED, 'on');
+  assert.equal(Object.prototype.hasOwnProperty.call(fresh.env, 'WEB_CHAT_CHANNEL'), false);
+});
+
 test('sessionCommand: exe is null with an empty PATH and no fallback install', (t) => {
   withTempHome(t);
   const root = tmpDir(t, 'wc-u732-root-');
