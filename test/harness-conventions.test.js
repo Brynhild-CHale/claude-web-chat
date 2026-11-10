@@ -116,6 +116,10 @@ const PATTERNS = [
       // spy over lib/client, INJECTED INTO lib/connector/lifecycle.js, which
       // does the subscribing; the test asserts on the opts the lifecycle passes.
       'test/connector-hold.test.js': 3,
+      // The ring reader (U723): one spy over lib/client INJECTED INTO the
+      // lifecycle, which does the subscribing; it counts the streams (the ring
+      // opens none) and adjusts what onOpen and onEvent are handed.
+      'test/connector-ring.test.js': 1,
     },
   },
   {
