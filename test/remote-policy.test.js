@@ -2447,3 +2447,288 @@ test('U424a (Y5 = b): a comment group\'s members from the real producer are text
   delete bare.more;
   assert.equal(JSON.stringify(wakeEnvelope([group], { note: 'n' })), JSON.stringify(wakeEnvelope([bare], { note: 'n' })), 'the envelope is byte-equal');
 });
+
+// ── 6. THE CONNECTED TABLE'S RATCHET (tranche 6 U744; contract 04 C-04.19) ───
+// lib/core/connected-policy.js compiles the locked connected route table
+// (lib/core/connected-routes.json, table_version 1) for the connector's gate.
+// It is a separate table beside RULES and ANSWER_RULES (which stay as they
+// are, pinned above), so this ratchet holds it to the code the same way the
+// one above holds RULES. It fails on:
+//   (a) an `app.<verb>(` route in lib/server/routes or index.js that hits no
+//       session or answer row (falls to the default deny) and is not pending;
+//   (b) a RULES or ANSWER_RULES key no row names as its from_rule, not pending;
+//   (c) a from_rule that is not a live RULES or ANSWER_RULES key;
+//   (d) a control action (control.action(name, …) under lib/server/control)
+//       without its two answer rows (GET /answer/control/<name>, POST
+//       /answer/api/control/<name>, each a literal row);
+//   (e) a lib/server/ws.js `msg.type` without a ws_inbound row;
+//   (f) a table whose sha256 (crypto over stableStringify) is not the one
+//       pinned for its table_version — a changed table without a bump;
+//   (g) lib/core/connected-routes.json not byte-equal to the locked example
+//       (test-support/contracts/examples/04-route-table.json, U734's copy at
+//       contracts-v1.4 cad3e8e);
+//   (h) a pending entry that is stale: its route or rule no longer exists, or
+//       the table now has a row for it (as a stale baseline fails).
+//
+// THE PENDING LIST IS TEST-ONLY (ROUTES@table-version (a), U744-U761@pending-
+// list-home (a)). It names what the code has grown since the table was
+// derived (ae/int 826442d6) and the table has no row for yet: "known,
+// unclassified, awaiting its agreed row". It changes only what this ratchet
+// accepts. At runtime a route with no row is C-04.13's default deny for every
+// relayed request whatever this list says, and nothing here is a row of
+// lib/core/connected-routes.json. A route a later tranche-6 unit adds appends
+// its own entry here (in that unit); table_version 2, once the contracts lock
+// carries it (U744b), copies the agreed example, pins its sha and empties the
+// list. An entry for a route the v1 table admits by a wildcard row while the
+// daemon serves it host only (U761's GET /api/elements/anchor-stats under
+// GET /api/elements/*) says so with `admitted_by` (the wildcard row's key); it
+// is stale once another row decides the route.
+//
+// Derived at this unit's base (ae/int 0fbfcd07) by running these checks
+// against table_version 1 with an empty list: one route and its one RULES key.
+const connectedPolicy = require('../lib/core/connected-policy');
+
+const CONNECTED_TABLE_SHA256 = Object.freeze({
+  1: '7db274986ff5a192f01b90ee1fb1cd27fe67ce0708c487f8591266f297a7e059',
+});
+const AWAITS_V2 = 'table_version 2';
+const CONNECTED_PENDING = Object.freeze([
+  Object.freeze({ route: 'GET /api/forms/shifts', added_by: 'c930c0d1 (the form-shift counter, DECISIONS.md C4; host only)', awaits: AWAITS_V2 }),
+  Object.freeze({ rule: '* /api/forms/*', added_by: 'c930c0d1 (the form-shift counter, DECISIONS.md C4; a host-only RULES row)', awaits: AWAITS_V2 }),
+]);
+
+const CONNECTED_FILE = path.join(REPO_ROOT, 'lib/core/connected-routes.json');
+const LOCKED_TABLE_FILE = path.join(REPO_ROOT, 'test-support/contracts/examples/04-route-table.json');
+
+// The control action names registered under lib/server/control, from the
+// source as daemonRoutes() reads routes: `action('<name>'`, `action(NAME,`
+// with `const NAME = '<name>'` in the same file, and a file's own
+// `const row = (…) => control.action(` helper called as `row('<name>'`.
+function controlActionNames(sources) {
+  const names = new Set();
+  for (const src of Object.values(sources)) {
+    for (const m of src.matchAll(/\baction\(\s*'([a-z][a-z0-9-]*)'/g)) names.add(m[1]);
+    for (const m of src.matchAll(/\baction\(\s*([A-Z][A-Z0-9_]*)\s*,/g)) {
+      const c = src.match(new RegExp(`\\bconst\\s+${m[1]}\\s*=\\s*'([a-z][a-z0-9-]*)'`));
+      if (c) names.add(c[1]); else names.add(`<unresolved ${m[1]}>`);
+    }
+    if (/\bconst\s+row\s*=\s*\([^)]*\)\s*=>\s*control\.action\(/.test(src)) {
+      for (const m of src.matchAll(/(?:^|[^.\w])row\(\s*'([a-z][a-z0-9-]*)'/gm)) names.add(m[1]);
+    }
+  }
+  return [...names].sort();
+}
+function controlSources() {
+  const dir = path.join(REPO_ROOT, 'lib/server/control');
+  const out = {};
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) out[f] = fs.readFileSync(path.join(dir, f), 'utf8');
+  return out;
+}
+// The viewer-to-daemon message types lib/server/ws.js handles.
+function wsMessageTypes(src) {
+  return [...new Set([...src.matchAll(/\bmsg\.type\s*===\s*'([^']+)'/g)].map((m) => m[1]))].sort();
+}
+
+function connectedInputs() {
+  return {
+    routes: daemonRoutes(),
+    liveKeys: [...RULES, ...ANSWER_RULES].map(keyOf),
+    actions: controlActionNames(controlSources()),
+    wsTypes: wsMessageTypes(fs.readFileSync(path.join(REPO_ROOT, 'lib/server/ws.js'), 'utf8')),
+    tableBytes: fs.readFileSync(CONNECTED_FILE),
+    lockedBytes: fs.readFileSync(LOCKED_TABLE_FILE),
+    pinned: CONNECTED_TABLE_SHA256,
+    pending: CONNECTED_PENDING,
+  };
+}
+
+// Every problem as {check, what}; [] when the table, the code and the list agree.
+function connectedProblems(inp) {
+  const out = [];
+  const say = (check, what) => out.push({ check, what });
+  if (!inp.tableBytes.equals(inp.lockedBytes)) {
+    say('g', 'lib/core/connected-routes.json is not byte-equal to the locked example (U734\'s copy at cad3e8e) — copy the agreed example, never edit the shipped table');
+  }
+  let table;
+  try { table = JSON.parse(inp.tableBytes.toString('utf8')); } catch (e) {
+    say('f', `the shipped table does not parse (${e.message})`);
+    return out;
+  }
+  const c = connectedPolicy.compileTable(table);
+  const pin = inp.pinned[table.table_version];
+  if (pin !== c.TABLE_SHA256) {
+    say('f', `table_version ${table.table_version}: sha256 ${c.TABLE_SHA256} is not the pinned ${pin || '(none)'} — a changed table needs a table_version bump and its own pin`);
+  }
+  const pendingRoutes = new Map(inp.pending.filter((p) => p.route).map((p) => [p.route, p]));
+  const pendingRules = new Set(inp.pending.filter((p) => p.rule).map((p) => p.rule));
+  const hit = (m, url) => c.classifySession(m, url).key !== null || c.classifyAnswerRoute(m, url).key !== null;
+  // (a)
+  const codeRoutes = new Map();
+  for (const r of inp.routes) {
+    for (const m of r.method === '*' ? ['GET', 'POST', 'DELETE'] : [r.method]) {
+      const name = `${m} ${r.path}`;
+      codeRoutes.set(name, { method: m, url: sample(r.path), file: r.file });
+      if (!hit(m, sample(r.path)) && !pendingRoutes.has(name)) say('a', `${name}   (${r.file}) hits no row of the connected table`);
+    }
+  }
+  // (b), (c)
+  const rows = [...table.session, ...table.answer];
+  const froms = new Set(rows.map((r) => r.from_rule));
+  const live = new Set(inp.liveKeys);
+  for (const k of live) if (!froms.has(k) && !pendingRules.has(k)) say('b', `RULES/ANSWER_RULES key ${k} is no row's from_rule`);
+  for (const r of rows) if (!live.has(r.from_rule)) say('c', `${keyOf(r)}: from_rule ${r.from_rule} is not a live RULES or ANSWER_RULES key`);
+  // (d)
+  for (const a of inp.actions) {
+    for (const [m, p] of [['GET', `/answer/control/${a}`], ['POST', `/answer/api/control/${a}`]]) {
+      const v = c.classifyAnswerRoute(m, p);
+      if (!v.row || v.row.path !== p) say('d', `control action ${a}: no literal answer row for ${m} ${p}`);
+    }
+  }
+  // (e)
+  for (const t of inp.wsTypes) if (c.wsInboundLevel(t) === null) say('e', `lib/server/ws.js msg.type '${t}' has no ws_inbound row`);
+  // (h)
+  for (const p of inp.pending) {
+    if (p.route) {
+      const code = codeRoutes.get(p.route);
+      if (!code) { say('h', `pending ${p.route}: no such route in the code any more — drop the entry`); continue; }
+      const key = c.classifySession(code.method, code.url).key ?? c.classifyAnswerRoute(code.method, code.url).key;
+      if (p.admitted_by ? key !== p.admitted_by : key !== null) {
+        say('h', `pending ${p.route}: the table now decides it by ${key === null ? 'the default deny' : `row ${key}`} — drop the entry`);
+      }
+    } else if (p.rule) {
+      if (!live.has(p.rule)) say('h', `pending rule ${p.rule}: not a live RULES or ANSWER_RULES key — drop the entry`);
+      else if (froms.has(p.rule)) say('h', `pending rule ${p.rule}: a row names it as from_rule now — drop the entry`);
+    }
+  }
+  return out;
+}
+
+const checksOf = (problems) => [...new Set(problems.map((p) => p.check))].sort();
+const fmtProblems = (problems) => problems.map((p) => `(${p.check}) ${p.what}`).join('\n  ');
+
+test('connected ratchet: the scans are live (routes, every control action, the seven ws message types)', () => {
+  const inp = connectedInputs();
+  assert.ok(inp.routes.length >= 60);
+  for (const a of ['interrupt', 'task-stop', 'resume', 'session-compact', 'session-plan', 'session-rename', 'session-clear',
+    'session-resume', 'restore', 'undo', 'fork', 'pack-approve']) assert.ok(inp.actions.includes(a), `the action scan finds ${a}: ${inp.actions}`);
+  assert.ok(!inp.actions.some((a) => a.startsWith('<unresolved')), String(inp.actions));
+  assert.deepStrictEqual(inp.wsTypes, ['client', 'event', 'pane:form', 'pane:state', 'report', 'script:error', 'store:set']);
+});
+
+test('connected ratchet: the table, the code and the pending list agree (C-04.19\'s checks a–h)', () => {
+  const problems = connectedProblems(connectedInputs());
+  assert.deepStrictEqual(problems, [],
+    'the connected route table (lib/core/connected-routes.json, contract 04) and the code disagree. A new route or RULES key '
+    + 'goes on CONNECTED_PENDING (test-only; it awaits table_version 2 — the runtime still default-denies it), never as a row '
+    + 'in the shipped table, which is the contracts lock\'s copy:\n  ' + fmtProblems(problems));
+  // The module the connector reads is the table this ratchet read.
+  assert.equal(connectedPolicy.TABLE_SHA256, CONNECTED_TABLE_SHA256[connectedPolicy.TABLE_VERSION], '(f) the module\'s sha is the pinned one');
+  assert.equal(connectedPolicy.TABLE_VERSION, JSON.parse(fs.readFileSync(CONNECTED_FILE, 'utf8')).table_version);
+});
+
+test('connected ratchet: the pending list is well-formed — each entry a route or a rule, who added it, awaiting table_version 2; no duplicates', () => {
+  const seen = new Set();
+  for (const p of CONNECTED_PENDING) {
+    assert.ok(Object.isFrozen(p));
+    assert.ok(!!p.route !== !!p.rule, JSON.stringify(p));
+    const name = p.route || p.rule;
+    assert.match(name, /^(\*|[A-Z]+(\|[A-Z]+)*) \//, name);
+    assert.equal(typeof p.added_by, 'string');
+    assert.ok(p.added_by.length > 0, name);
+    assert.equal(p.awaits, AWAITS_V2, name);
+    if (p.admitted_by !== undefined) assert.ok(p.route && typeof p.admitted_by === 'string', name);
+    assert.ok(!seen.has(name), `${name} twice`);
+    seen.add(name);
+  }
+});
+
+test('connected ratchet: each check fails on its own mutation (a–h)', () => {
+  const base = connectedInputs();
+  const mutate = (patch) => connectedProblems({ ...base, ...patch });
+  const edit = (from, to) => {
+    const s = base.tableBytes.toString('utf8');
+    assert.ok(s.includes(from), from);
+    return Buffer.from(s.replace(from, to), 'utf8');
+  };
+  // (a) removing the pending route's entry.
+  const noRoute = mutate({ pending: CONNECTED_PENDING.filter((p) => p.route !== 'GET /api/forms/shifts') });
+  assert.deepStrictEqual(checksOf(noRoute), ['a'], fmtProblems(noRoute));
+  assert.match(noRoute[0].what, /^GET \/api\/forms\/shifts /);
+  // (a) a new route the code grows, with no row and no entry.
+  const newRoute = mutate({ routes: [...base.routes, { method: 'POST', path: '/api/brand-new-thing', file: 'fixture' }] });
+  assert.deepStrictEqual(checksOf(newRoute), ['a'], fmtProblems(newRoute));
+  // (b) removing the pending rule's entry; a fake RULES key.
+  assert.deepStrictEqual(checksOf(mutate({ pending: CONNECTED_PENDING.filter((p) => !p.rule) })), ['b']);
+  const fakeKey = mutate({ liveKeys: [...base.liveKeys, 'GET /api/fake-rule'] });
+  assert.deepStrictEqual(checksOf(fakeKey), ['b'], fmtProblems(fakeKey));
+  assert.match(fakeKey[0].what, /GET \/api\/fake-rule/);
+  // (c) a renamed from_rule (the table's bytes move too: f and g; the old key is no row's: b).
+  const renamed = mutate({ tableBytes: edit('"from_rule": "GET /api/graph/diff"', '"from_rule": "GET /api/graph/diffs"') });
+  assert.ok(checksOf(renamed).includes('c'), fmtProblems(renamed));
+  assert.deepStrictEqual(checksOf(renamed), ['b', 'c', 'f', 'g']);
+  // ...and a from_rule the code no longer has (a RULES row renamed under the table).
+  const gone = mutate({ liveKeys: base.liveKeys.filter((k) => k !== 'GET /api/embed-check').concat('GET /api/embed-checks') });
+  assert.ok(checksOf(gone).includes('c'), fmtProblems(gone));
+  // (d) an action with no answer rows.
+  const action = mutate({ actions: [...base.actions, 'fixture-act'] });
+  assert.deepStrictEqual(checksOf(action), ['d'], fmtProblems(action));
+  assert.equal(action.length, 2, 'both the document and the action rows');
+  // ...found by the scan in a fixture source, too.
+  const scanned = controlActionNames({ ...controlSources(), 'fixture.js': "control.action('fixture-act', {});\nconst ACTION = 'fixture-two';\ncontrol.action(ACTION, {});" });
+  assert.ok(scanned.includes('fixture-act') && scanned.includes('fixture-two'), String(scanned));
+  // (e) a fake msg.type in a ws.js fixture.
+  const wsSrc = fs.readFileSync(path.join(REPO_ROOT, 'lib/server/ws.js'), 'utf8')
+    .replace("} else if (msg.type === 'pane:state') {", "} else if (msg.type === 'pane:fixture') {\n      } else if (msg.type === 'pane:state') {");
+  const fakeWs = mutate({ wsTypes: wsMessageTypes(wsSrc) });
+  assert.deepStrictEqual(checksOf(fakeWs), ['e'], fmtProblems(fakeWs));
+  assert.match(fakeWs[0].what, /pane:fixture/);
+  // (f) and (g) a one-byte edit of connected-routes.json.
+  const oneByte = edit('"path": "/index.html"', '"path": "/index.htmm"');
+  assert.equal(oneByte.length, base.tableBytes.length);
+  assert.equal([...oneByte].filter((b, i) => b !== base.tableBytes[i]).length, 1, 'exactly one byte');
+  assert.deepStrictEqual(checksOf(mutate({ tableBytes: oneByte })), ['f', 'g']);
+  // (f) alone: a changed table without a bump, in the locked copy as well (the bytes agree, the pin does not).
+  const bumpless = edit('"level": "read",\n      "from_rule": "GET /api/graph"', '"level": "message",\n      "from_rule": "GET /api/graph"');
+  assert.deepStrictEqual(checksOf(mutate({ tableBytes: bumpless, lockedBytes: bumpless })), ['f']);
+  // ...and the same table with its bump and its own pin passes.
+  const bumped = Buffer.from(bumpless.toString('utf8').replace('"table_version": 1', '"table_version": 2'), 'utf8');
+  const bumpedSha = connectedPolicy.tableSha256(JSON.parse(bumped.toString('utf8')));
+  assert.deepStrictEqual(mutate({ tableBytes: bumped, lockedBytes: bumped, pinned: { ...CONNECTED_TABLE_SHA256, 2: bumpedSha } }), []);
+  // (g) alone: whitespace moves the bytes but not the canonical sha.
+  const spaced = Buffer.concat([base.tableBytes, Buffer.from('\n')]);
+  assert.deepStrictEqual(checksOf(mutate({ tableBytes: spaced })), ['g']);
+  // (h) a pending entry that now hits a row — table_version 2's row for the forms route.
+  const withRow = Buffer.from(base.tableBytes.toString('utf8').replace('"session": [',
+    '"session": [\n    {"methods": "*", "path": "/api/forms/*", "level": "host_only", "from_rule": "* /api/forms/*"},'), 'utf8');
+  const stale = mutate({ tableBytes: withRow, lockedBytes: withRow, pinned: { 1: connectedPolicy.tableSha256(JSON.parse(withRow.toString('utf8'))) } });
+  assert.deepStrictEqual(checksOf(stale), ['h'], fmtProblems(stale));
+  assert.equal(stale.length, 2, 'the route entry and the rule entry are both stale');
+  // (h) an entry for a route that hits a row today, or that the code no longer has.
+  const hits = mutate({ pending: [...CONNECTED_PENDING, { route: 'GET /api/graph', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  assert.deepStrictEqual(checksOf(hits), ['h'], fmtProblems(hits));
+  const vanished = mutate({ pending: [...CONNECTED_PENDING, { route: 'GET /api/no-such-route', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  assert.deepStrictEqual(checksOf(vanished), ['h'], fmtProblems(vanished));
+  const ruleGone = mutate({ pending: [...CONNECTED_PENDING, { rule: 'GET /api/no-such-rule', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  assert.deepStrictEqual(checksOf(ruleGone), ['h'], fmtProblems(ruleGone));
+  // (h) the wildcard form (U761's shape): admitted by the named row is not stale; by another row it is.
+  const draw = { route: 'GET /api/elements/types/:type/draw.js', added_by: 'fixture', awaits: AWAITS_V2 };
+  assert.deepStrictEqual(mutate({ pending: [...CONNECTED_PENDING, { ...draw, admitted_by: 'GET /api/elements/*' }] }), []);
+  assert.deepStrictEqual(checksOf(mutate({ pending: [...CONNECTED_PENDING, { ...draw, admitted_by: 'GET /api/elements/search' }] })), ['h']);
+});
+
+test('connected ratchet: the pending list is test-only — the runtime default-denies every pending route, and RULES never learns of the table', () => {
+  for (const p of CONNECTED_PENDING.filter((x) => x.route && !x.admitted_by)) {
+    const [m, pat] = p.route.split(' ');
+    const v = connectedPolicy.classifySession(m, sample(pat));
+    assert.deepStrictEqual([v.allow, v.key, v.reason], [false, null, 'unknown'], p.route);
+  }
+  // The shipped table holds no row of the pending list's.
+  const table = JSON.parse(fs.readFileSync(CONNECTED_FILE, 'utf8'));
+  for (const p of CONNECTED_PENDING.filter((x) => x.rule)) {
+    assert.ok(![...table.session, ...table.answer].some((r) => r.from_rule === p.rule), p.rule);
+  }
+  // No field on RULES rows (C-04.19: a separate compiled table).
+  for (const r of [...RULES, ...ANSWER_RULES]) {
+    for (const k of ['level', 'requires', 'from_rule', 'daemon_mirror', 'table_version']) assert.equal(r[k], undefined, `${keyOf(r)}.${k}`);
+  }
+});
