@@ -1,0 +1,77 @@
+{
+  "ch": "control",
+  "kind": "hello.ack",
+  "id": "h3",
+  "seq": 3,
+  "re": "c2",
+  "at": 1793181400052,
+  "protocol": 1,
+  "hub": {
+    "id": "hub-hale",
+    "origin": "https://hub.hale.dev"
+  },
+  "machine": {
+    "id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "name": "Studio MacBook"
+  },
+  "capabilities": [
+    "relay.http",
+    "relay.ws",
+    "relay.answer",
+    "relay.decision_ref",
+    "events.batch",
+    "events.signals",
+    "authority.log",
+    "queue.message",
+    "key.rotate"
+  ],
+  "heartbeat_ms": 15000,
+  "dead_after_ms": 45000,
+  "windows": {
+    "relay_stream_bytes": 262144,
+    "relay_streams_max": 256,
+    "relay_streams_per_chat": 64,
+    "signals_unacked": 256,
+    "batches_unacked_per_chat": 4,
+    "frame_bytes_max": 1048576
+  },
+  "compat": {
+    "kind": "compat",
+    "state": "ok",
+    "protocol": 1,
+    "window": {
+      "min": "0.9.0-alpha.4",
+      "max": "0.9.0",
+      "protocol": {
+        "min": 1,
+        "max": 1
+      },
+      "claude_code_min": "2.1.287"
+    },
+    "hub": {
+      "version": "0.1.0",
+      "web_chat": "0.9.0-alpha.4"
+    },
+    "reasons": [
+      {
+        "code": "daemon_below_min",
+        "detail": "chat 01jbz8m2k4d6f8h0j2n4p6q8r0 runs 0.9.0-alpha.3; it restarts onto 0.9.0-alpha.4 when its turn ends"
+      }
+    ],
+    "restrictions": [],
+    "message": {
+      "text": "Connected. One chat on this machine still runs web-chat 0.9.0-alpha.3 and is read-only until it restarts.",
+      "command": null
+    },
+    "daemons": [
+      {
+        "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+        "state": "behind",
+        "restrictions": [
+          "no_queue_delivery",
+          "read_only_relay"
+        ]
+      }
+    ]
+  }
+}

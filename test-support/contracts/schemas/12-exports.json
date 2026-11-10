@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/12-exports.json",
+  "title": "web-chat public entry points as data (contract 12)",
+  "description": "The package.json \"exports\" map web-chat adds, written as data so both repos can test against it: web-chat asserts that its package.json exports equal {subpath: target} over these entries and that every listed name exists on the module; ServerWebChat asserts it requires nothing outside them, by package name or by path into the dependency's directory (C-12.9). There is no root export and no \"main\" (C-12.7). At 826442d6 web-chat-dev.worktrees/ae-int/package.json has \"main\": \"lib/server/index.js\" and no exports map, so every file under lib/ is reachable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "package",
+    "web_chat_version",
+    "everything_else_private",
+    "entries"
+  ],
+  "properties": {
+    "package": {
+      "description": "The package name, package.json name.",
+      "const": "claude-web-chat"
+    },
+    "web_chat_version": {
+      "description": "The first web-chat version whose package.json carries this map (alpha.4, or earlier if the maintainer slots it).",
+      "type": "string",
+      "pattern": "^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}(?:[-+][0-9A-Za-z.+-]{1,48})?$"
+    },
+    "everything_else_private": {
+      "description": "Always true: a path not listed is private and may change in any release (C-12.7). Node enforces it with ERR_PACKAGE_PATH_NOT_EXPORTED.",
+      "const": true
+    },
+    "entries": {
+      "description": "One row per exports subpath. No row may be the package root '.' (C-12.7, Q-12.5).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/entry"
+      },
+      "not": {
+        "contains": {
+          "type": "object",
+          "required": [
+            "subpath"
+          ],
+          "properties": {
+            "subpath": {
+              "const": "."
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subpath",
+        "target",
+        "kind",
+        "stability",
+        "names",
+        "purpose"
+      ],
+      "properties": {
+        "subpath": {
+          "description": "The exports key, as a consumer writes it after the package name (require('claude-web-chat/portal') has subpath './portal'). The root '.' is not allowed (entries refuses it). A trailing '/*' is a Node subpath pattern.",
+          "type": "string",
+          "pattern": "^\\.(/[a-z0-9-]+)*(/\\*)?$|^\\./package\\.json$"
+        },
+        "target": {
+          "description": "The file the subpath resolves to, relative to the package root, as written in the exports map. A pattern subpath has a pattern target.",
+          "type": "string",
+          "pattern": "^\\./(lib|bin)/[A-Za-z0-9/*._-]+\\.js$|^\\./package\\.json$"
+        },
+        "kind": {
+          "description": "module: require() it and use the names. executable: resolve its path and spawn it with process.execPath; never require() it. metadata: read it (package.json).",
+          "enum": [
+            "module",
+            "executable",
+            "metadata"
+          ]
+        },
+        "stability": {
+          "description": "stable: before 0.9.0 a listed name changes only with a CHANGELOG Upgrading line and a hub window (C-12.10) that moves with it; from 0.9.0 on, only in a new minor version with a CHANGELOG line (C-12.8). provisional: may change in any prerelease before 1.0 with a CHANGELOG line.",
+          "enum": [
+            "stable",
+            "provisional"
+          ]
+        },
+        "names": {
+          "description": "The named exports that are public. A name the module exports but this list omits is private even though it is reachable. Empty for executable and metadata entries.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+          }
+        },
+        "pending_names": {
+          "description": "Names promised for this module but not in it at the code baseline (826442d6): they land on the connector branch. Each joins names, with a changelog line in contract 12, in the release that carries it; until then web-chat's exports test skips it and ServerWebChat must not require it (C-12.7). Optional; absent means none.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+          }
+        },
+        "purpose": {
+          "description": "What a consumer uses this entry for, in one sentence.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "consumers": {
+          "description": "Who uses it: hub (ServerWebChat's runtime), hub-tests (ServerWebChat's suite), connector (web-chat's own connect command, for the record; it requires in-tree, so this never makes an entry public on its own).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "hub",
+              "hub-tests",
+              "connector"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

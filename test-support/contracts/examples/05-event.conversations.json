@@ -1,0 +1,25 @@
+{
+  "ch": "events",
+  "kind": "conversations",
+  "id": "c404",
+  "seq": 4,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "boot": "48302:1793181402551",
+  "daemon_seq": null,
+  "daemon_at": 1793181452310,
+  "record": {
+    "rev": 88,
+    "aggregate": "question",
+    "conversations": [
+      {
+        "id": "c1",
+        "state": "question",
+        "since": 1793181452290,
+        "quiet": false,
+        "step_kind": "bash",
+        "waiting_kind": "permission",
+        "last_activity_at": 1793181452290
+      }
+    ]
+  }
+}

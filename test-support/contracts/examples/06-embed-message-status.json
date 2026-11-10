@@ -1,0 +1,12 @@
+{
+  "wc_embed": 1,
+  "type": "status",
+  "conn": "live",
+  "pill": { "cls": "locked channel", "text": "channel turn n1.12" },
+  "node_label": "n1.12",
+  "title": "Hub skeleton",
+  "previewing": false,
+  "mode": "dark",
+  "mode_toggleable": true,
+  "queue_count": 0
+}

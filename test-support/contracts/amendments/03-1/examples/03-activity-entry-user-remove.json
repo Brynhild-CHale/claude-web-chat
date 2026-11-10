@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "id": "act_we7b3zcetbnqee0tkshrvhpwny",
+  "at": "2026-10-28T17:42:51.006Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_j7q61jdj9tf4793xr8emqz64v6",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "user.remove",
+  "target": { "type": "user", "id": "usr_xt28rtks3f0se86pb8c10105b9" },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Removed from the allowlist: 3 credentials revoked",
+    "source": "template",
+    "template": "user.removed",
+    "chars": 49,
+    "truncated": false,
+    "redaction": { "pass": "hub-rules", "masks": 0 }
+  }
+}

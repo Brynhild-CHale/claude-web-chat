@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-chat-assignment.json",
+  "title": "Chat assignment",
+  "description": "What the hub tells the connector about one chat: its scope, whether its daemon should run, whether an agent session is wanted and how, and the origins the hub minted for it. Contract 05 carries this object as the body of its assignment message; this schema is the body only. The connector applies assignments per chat in rev order and ignores a rev it has already applied.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "chat_id", "rev", "issued_at", "scope", "desired", "agent", "origins"],
+  "properties": {
+    "v": { "const": 1, "description": "Body format version." },
+    "chat_id": { "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat label (contract 03 section 2): the chat id without its cht_ prefix, as every 05 frame names a chat and as the chat-<label> origins carry it." },
+    "rev": { "type": "integer", "minimum": 1, "description": "Monotonic per chat. A rev at or below the last applied one is ignored." },
+    "issued_at": { "type": "number", "description": "When the hub issued this revision, epoch ms (information only; ordering is rev)." },
+    "title": { "type": "string", "maxLength": 120, "description": "The chat's display name, for the connector's log and `connect status`. Never written into the root." },
+    "scope": {
+      "description": "Where the chat's files are. A folder chat names an offered folder by id only; a repo chat is cloned by the connector; a space chat gets an empty directory.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "folder_id"],
+          "properties": {
+            "kind": { "const": "folder", "description": "A folder this machine offered." },
+            "folder_id": { "type": "string", "pattern": "^f_[0-9a-f]{16}$", "description": "The offered folder's id (06-connector-state.json#/$defs/folder). Never a path." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": { "const": "repo", "description": "A GitHub clone the connector makes under its workdir." },
+            "url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "https clone URL with no credentials in it; the clone uses the machine's own git credentials." },
+            "ref": { "type": "string", "pattern": "^[A-Za-z0-9._/][A-Za-z0-9._/-]{0,199}$", "description": "Branch or tag to check out; the default branch when absent. Never starts with -: the connector also refuses such a ref before git runs (C-06.16), so it cannot be read as an option." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "space", "description": "The chat's own space: an empty directory under the connector's workdir." }
+          }
+        }
+      ]
+    },
+    "desired": { "enum": ["running", "stopped", "removed"], "description": "running: the daemon is up and held up (the retain stream); stopped: the hold is released (or the daemon shut down, see stop_mode); removed: stopped, then the mapping is forgotten. Owned roots stay on disk in v1." },
+    "stop_mode": { "enum": ["release", "now"], "description": "With desired stopped or removed. release (the default): drop the hold and let the daemon's idle grace end it; now: POST /api/shutdown, only on a daemon the connector started." },
+    "agent": {
+      "type": "object",
+      "description": "The Claude Code session beside the daemon.",
+      "additionalProperties": false,
+      "required": ["want", "launch"],
+      "properties": {
+        "want": { "enum": ["none", "session"], "description": "none: a surface only (it does not count against the cap); session: the chat should have an agent." },
+        "launch": { "enum": ["manual", "connector"], "description": "manual: the user starts the session at the machine (`claude-web-chat connect attach <chat-label>`); connector: the connector launches it under tmux (needs let_home_start_agents, the cap, tmux, and one prior manual attach in the root, else needs-trust; C-06.26)." },
+        "requested_by": { "enum": ["user", "home"], "description": "Who asked for the session: the user, or Home on the user's behalf. Shown in status and logs." }
+      }
+    },
+    "origins": {
+      "type": "object",
+      "description": "The origins the hub minted for this chat. The connector uses them for the answer-origin header, frame-ancestors and the X-WC-Embed-Parent response header on the relayed health (C-06.33); it never derives them itself.",
+      "additionalProperties": false,
+      "required": ["surface", "answer", "shell"],
+      "properties": {
+        "surface": { "type": "string", "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}\\.[a-z0-9.-]+$", "description": "The surface endpoint, https://chat-<label>.<hub>." },
+        "answer": { "type": "string", "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+$", "description": "The answer origin, https://chat-<label>-a.<hub>." },
+        "shell": { "type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?$", "description": "The hub shell's origin that frames the surface; becomes the X-WC-Embed-Parent response header on the relayed GET /api/health (C-06.33) and the extra frame-ancestors source (C-06.31)." }
+      }
+    }
+  }
+}

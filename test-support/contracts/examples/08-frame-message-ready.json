@@ -1,0 +1,7 @@
+{
+  "wc_embed": 1,
+  "type": "ready",
+  "package_version": "0.9.0-alpha.5",
+  "actions": ["chrome.palette", "chrome.graph", "chrome.add", "chrome.bookmark", "chrome.replay", "chrome.prev", "chrome.next", "chrome.rail", "chrome.push", "chrome.chat", "chrome.legend", "chrome.mode", "chrome.settings", "chrome.export", "chrome.wipe", "chrome.new-graph", "chrome.escape"],
+  "features": ["status.chat_state", "status.active_node", "status.auth", "whoami", "theme", "hotkeys"]
+}

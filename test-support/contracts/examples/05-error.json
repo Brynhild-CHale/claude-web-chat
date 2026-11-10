@@ -1,0 +1,9 @@
+{
+  "ch": "control",
+  "kind": "control.error",
+  "id": "c40",
+  "seq": 40,
+  "re": "h77",
+  "code": "unknown_stream",
+  "fatal": false
+}

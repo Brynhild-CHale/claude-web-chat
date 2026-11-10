@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-envelope.json",
+  "title": "Connector link frame envelope",
+  "description": "The fields every frame on wss://<hub>/connector carries (C-05.10, C-05.11). Each frame also validates against its own kind's schema in the other 05 files; this envelope is open (additionalProperties true) because it is the common base those close. Protocol 1 sends text frames of one JSON object each.",
+  "type": "object",
+  "properties": {
+    "ch": {
+      "type": "string",
+      "enum": [
+        "control",
+        "relay",
+        "events",
+        "queue"
+      ],
+      "description": "The channel. `blobs` is reserved for a later protocol and refused in protocol 1."
+    },
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z_]+){0,3}$",
+      "description": "The frame kind, dotted, unique within its channel."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "This frame's id, unique per sender per connection."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per connection, per channel, per direction, from 1 (C-05.11)."
+    },
+    "re": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "The id of the frame this one answers, when it answers one."
+    },
+    "at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "When the sender built the frame. Informative only."
+    }
+  },
+  "required": [
+    "ch",
+    "kind",
+    "id",
+    "seq"
+  ],
+  "additionalProperties": true
+}

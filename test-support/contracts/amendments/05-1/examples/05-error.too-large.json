@@ -1,0 +1,9 @@
+{
+  "ch": "control",
+  "kind": "control.error",
+  "id": "c41",
+  "seq": 41,
+  "code": "too_large",
+  "fatal": true,
+  "hint": "A frame of 2097152 bytes passed the 1 MiB bound (C-05.10); the link closes with 4400."
+}

@@ -1,0 +1,7 @@
+{
+  "ch": "control",
+  "kind": "machine.revoked",
+  "id": "h120",
+  "seq": 120,
+  "hint": "This machine was disconnected from hub.hale.dev in Settings > Machines. Run claude-web-chat connect hub.hale.dev to pair it again."
+}

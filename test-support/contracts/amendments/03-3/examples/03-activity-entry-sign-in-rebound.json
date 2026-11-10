@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "id": "act_3q0f8yv6z1m2k4n7p9r1s3t5v7",
+  "at": "2026-11-01T20:14:09.512Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_8h3m5r7t9v1x3z5b7d9f1h3k5m",
+    "machine": null,
+    "chat": null,
+    "session": "ses_4c6e8g0j2k4n6q8s0t2w4y6a8c",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "auth.sign_in",
+  "target": {
+    "type": "user",
+    "id": "usr_8h3m5r7t9v1x3z5b7d9f1h3k5m"
+  },
+  "outcome": "accepted",
+  "related": "act_we7b3zcetbnqee0tkshrvhpwny",
+  "summary": {
+    "text": "Signed in with google: the identity of a removed account moved to this one",
+    "source": "template",
+    "template": "auth.sign-in.rebound",
+    "chars": 74,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-pairing.json",
+  "title": "Connector pairing (HTTP bodies)",
+  "description": "The bodies of the two unauthenticated pairing routes the hub serves (C-05.1 to C-05.3): POST /connector/pair and POST /connector/pair/poll. Single use and non-privileged: Komodo's onboarding key (inputs/komodo-template.md) without reuse, tags, templates or the `privileged` option. The person's side (entering the code in Settings > Machines) is hub-internal and has no schema here. Nothing web-chat emits today; the nearest code is the portal start route's rules (web-chat-dev.worktrees/ae-int/lib/portal/start.js) and its throttle (lib/portal/throttle.js), whose shape the hub's pairing limits copy with a key function over the X-Forwarded-For address, counting starts rather than failures (C-05.1).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/start_request"
+    },
+    {
+      "$ref": "#/$defs/start_response"
+    },
+    {
+      "$ref": "#/$defs/poll_request"
+    },
+    {
+      "$ref": "#/$defs/poll_response"
+    },
+    {
+      "$ref": "#/$defs/error_response"
+    }
+  ],
+  "$defs": {
+    "start_request": {
+      "type": "object",
+      "description": "Body of POST https://<hub>/connector/pair (C-05.1, C-05.2). Unauthenticated and rate limited. The key pair already exists, in memory only, so the code binds this key and no other.",
+      "properties": {
+        "v": {
+          "const": 1,
+          "description": "Pairing body version."
+        },
+        "public_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "An Ed25519 public key: the raw 32 bytes, base64url without padding (contract 03 `machine.public_key.value`)."
+        },
+        "client_nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "32 random bytes, base64url, signed with the new key to prove possession."
+        },
+        "proof": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Signature over `web-chat-connector-pair/1\\n<hub host the connector dialled>\\n<client_nonce>`."
+        },
+        "connector": {
+          "type": "object",
+          "description": "What the person entering the code is shown beside the fingerprint, so they can tell this machine from a code someone else started. Informative; none of it is trusted.",
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "maxLength": 253,
+              "description": "os.hostname(); the name the hub proposes."
+            },
+            "platform": {
+              "type": "string",
+              "enum": [
+                "darwin",
+                "linux"
+              ],
+              "description": "process.platform (contract 12: macOS and Linux)."
+            },
+            "package_version": {
+              "type": "string",
+              "maxLength": 80,
+              "description": "The connector's web-chat package version (contract 12 versions.package_version)."
+            }
+          },
+          "required": [
+            "hostname",
+            "platform",
+            "package_version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "public_key",
+        "client_nonce",
+        "proof",
+        "connector"
+      ],
+      "additionalProperties": false
+    },
+    "start_response": {
+      "type": "object",
+      "description": "200 answer to POST /connector/pair: the code to show and how to wait for it.",
+      "properties": {
+        "ok": {
+          "const": true,
+          "description": "Success marker."
+        },
+        "pairing_id": {
+          "type": "string",
+          "pattern": "^pr_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The pending pairing. Not a secret: every poll must also be signed."
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$",
+          "description": "The pairing code as shown: 8 Crockford base32 characters (no I, L, O, U) in two groups of four, 40 bits from a CSPRNG. Single use; dies at `expires_at`."
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the code dies: 300 s after issue (C-05.2)."
+        },
+        "poll_after_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000,
+          "description": "How long to wait before the first poll."
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
+          "description": "What a person compares: `SHA256:` and the unpadded standard base64 of SHA-256(raw public key), as OpenSSH prints a key and contract 06's state record stores it. Contract 03 stores the same digest as lowercase hex."
+        },
+        "hub_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{2,62}$",
+          "description": "The hub's stable short id, minted when the hub is installed. Contract 06 names the connector's state and key files after it."
+        }
+      },
+      "required": [
+        "ok",
+        "pairing_id",
+        "code",
+        "expires_at",
+        "poll_after_ms",
+        "fingerprint",
+        "hub_id"
+      ],
+      "additionalProperties": false
+    },
+    "poll_request": {
+      "type": "object",
+      "description": "Body of POST https://<hub>/connector/pair/poll, a long poll the hub holds at most 25 s.",
+      "properties": {
+        "v": {
+          "const": 1,
+          "description": "Pairing body version."
+        },
+        "pairing_id": {
+          "type": "string",
+          "pattern": "^pr_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The pending pairing. Not a secret: every poll must also be signed."
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The connector's clock, epoch milliseconds, inside the signed string. The hub refuses a poll more than 120 s from its own clock with 400 clock_skew (a coarse replay bound, not an ordering; C-05.3)."
+        },
+        "proof": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Signature over `web-chat-connector-pair-poll/1\\n<hub host>\\n<pairing_id>\\n<ts>` by the key the start request named (C-05.3)."
+        }
+      },
+      "required": [
+        "v",
+        "pairing_id",
+        "ts",
+        "proof"
+      ],
+      "additionalProperties": false
+    },
+    "poll_response": {
+      "type": "object",
+      "description": "Answer to a poll. `pending` repeats until the code is entered and confirmed, or dies.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "False only with `refused`."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "bound",
+            "expired",
+            "refused"
+          ],
+          "description": "pending: poll again. bound: the machine record exists with this key on it; write the key to disk now. expired: the code died unused. refused: the person declined it on the hub."
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The machine's hub id (contract 03: `mch_` and 26 lowercase Crockford base32 characters)."
+        },
+        "machine_name": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "The name the person gave the machine in Settings > Machines."
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The key's id (contract 03 section 2, prefix `mky`): `mky_` and the first 26 characters of the Crockford base32 of SHA-256 over the raw public key, computed the same way by both sides. Names a key without carrying it."
+        },
+        "hub_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{2,62}$",
+          "description": "The hub's stable short id, minted when the hub is installed. Contract 06 names the connector's state and key files after it."
+        },
+        "connect_url": {
+          "type": "string",
+          "pattern": "^wss://[a-z0-9.-]+(:[0-9]{1,5})?/connector$",
+          "description": "Where to dial (C-05.4). Always the host the connector paired with."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "With expired or refused: what to do next, for the person at the machine."
+        }
+      },
+      "required": [
+        "ok",
+        "state"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "bound",
+                "description": "The bound state."
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "machine_id",
+              "machine_name",
+              "key_id",
+              "hub_id",
+              "connect_url"
+            ]
+          }
+        }
+      ]
+    },
+    "error_response": {
+      "type": "object",
+      "description": "A refused pairing request: 400, 404, 429 or 503. Never a stack, a path or whether a code exists.",
+      "properties": {
+        "ok": {
+          "const": false,
+          "description": "Failure marker."
+        },
+        "error": {
+          "type": "string",
+          "enum": [
+            "bad_request",
+            "bad_proof",
+            "clock_skew",
+            "rate_limited",
+            "too_many_pending",
+            "unknown_pairing",
+            "unavailable"
+          ],
+          "description": "Why. clock_skew: a poll's ts is more than 120 s from the hub's clock (400); the connector tells the person to set the machine's clock and does not retry until it changes."
+        },
+        "retry_after_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "With rate_limited; also sent as Retry-After."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "In words."
+        }
+      },
+      "required": [
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

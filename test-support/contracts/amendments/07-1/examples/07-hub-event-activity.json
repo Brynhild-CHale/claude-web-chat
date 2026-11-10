@@ -1,0 +1,41 @@
+{
+  "stream": "chat:cht_r618kehfmbv66mnewa5ndwhe72",
+  "seq": 4190,
+  "epoch": "ep_01JBF6Q9C2D3E4F5G6H7J8K9MN",
+  "id": "ev_01JBF7A4M2N3P4Q5R6S7T8V9WX",
+  "at": 1793196352090,
+  "origin": "hub",
+  "kind": "activity.message.send",
+  "chat_id": "cht_r618kehfmbv66mnewa5ndwhe72",
+  "machine_id": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "data": {
+    "activity_id": "act_fmy9tydx1y4s2xef4dgfcg8b2g",
+    "kind": "message.send",
+    "target": {
+      "type": "message"
+    },
+    "outcome": "accepted",
+    "summary": {
+      "text": "Message queued for contracts-review on studio-mac: 412 chars",
+      "source": "template",
+      "template": "queue.queued",
+      "chars": 60,
+      "truncated": false,
+      "redaction": {
+        "pass": "hub-rules",
+        "masks": 0
+      }
+    }
+  }
+}

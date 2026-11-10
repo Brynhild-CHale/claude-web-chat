@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-stream-frame.json",
+  "title": "Hub stream frame",
+  "description": "Hub to shell or phone (C-07.18 to C-07.23). A live subscription gets hello then events frames and pings; a JSON read (10's ReadActivity, POST /hub/api/read) gets one events frame. The gap fields copy web-chat-dev.worktrees/ae-int/lib/core/bus.js read() (lines 208-218).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/hello"
+    },
+    {
+      "$ref": "#/$defs/events"
+    },
+    {
+      "$ref": "#/$defs/ping"
+    }
+  ],
+  "$defs": {
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "stream",
+        "cursor",
+        "state",
+        "at"
+      ],
+      "description": "The snapshot a subscription starts from (C-07.20).",
+      "properties": {
+        "type": {
+          "const": "hello",
+          "description": "Discriminator."
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^(chat:cht_[0-9a-hjkmnp-tv-z]{26}|machine:mch_[0-9a-hjkmnp-tv-z]{26}|hub)$",
+          "description": "The hub stream: chat:<chat_id>, machine:<machine_id>, or hub (C-07.1, section 2)."
+        },
+        "cursor": {
+          "$ref": "https://web-chat-contracts/schemas/07-cursor.json#/$defs/hub",
+          "description": "The last seq the snapshot includes; the next events frame starts at cursor.seq + 1."
+        },
+        "state": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "The stream's current state record (contract 05 shapes: a chat's state dot, queue counts, unseen Activity; a machine's liveness and versions)."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hub clock when the snapshot was taken."
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "stream",
+        "epoch",
+        "events",
+        "latest",
+        "oldest",
+        "gap",
+        "dropped"
+      ],
+      "description": "Events after a cursor, with bus.read's gap semantics (C-07.19).",
+      "properties": {
+        "type": {
+          "const": "events",
+          "description": "Discriminator."
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^(chat:cht_[0-9a-hjkmnp-tv-z]{26}|machine:mch_[0-9a-hjkmnp-tv-z]{26}|hub)$",
+          "description": "The hub stream: chat:<chat_id>, machine:<machine_id>, or hub (C-07.1, section 2)."
+        },
+        "epoch": {
+          "type": "string",
+          "pattern": "^ep_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "The stream's epoch: ep_ and a ULID, re-minted only when the stream's numbering is rewritten (C-07.4)."
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "https://web-chat-contracts/schemas/07-hub-event.json"
+          },
+          "description": "Ascending by seq, at most 500 (C-07.21)."
+        },
+        "latest": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The stream's highest seq."
+        },
+        "oldest": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "The lowest retained seq, null for an empty stream."
+        },
+        "gap": {
+          "type": "boolean",
+          "description": "True when the reader's cursor cannot be continued: events were pruned past it, or it is from another epoch or ahead of latest."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "oldest - 1 - since when pruned; 0 otherwise and with reset."
+        },
+        "reset": {
+          "type": "boolean",
+          "description": "True when the cursor is from another epoch, ahead of latest, or the hub cut a slow subscriber (C-07.23). The reader resubscribes without since."
+        },
+        "more": {
+          "type": "boolean",
+          "description": "JSON read only: more events remain after the last one sent."
+        }
+      }
+    },
+    "ping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "at"
+      ],
+      "description": "Keep-alive on a live subscription, every 15 s like the daemon's SSE ping (events.js SSE_HEARTBEAT_MS).",
+      "properties": {
+        "type": {
+          "const": "ping",
+          "description": "Discriminator."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hub clock."
+        }
+      }
+    }
+  }
+}

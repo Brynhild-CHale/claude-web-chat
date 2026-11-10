@@ -1,0 +1,25 @@
+{
+  "ch": "control",
+  "kind": "heartbeat",
+  "id": "c88",
+  "seq": 88,
+  "at": 1793170000900,
+  "beat": {
+    "type": "heartbeat",
+    "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "beat": 361,
+    "interval_ms": 15000,
+    "connector_now": 1793170000900,
+    "echo_at": 1793169990950,
+    "chats": [
+      {
+        "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+        "daemon": "running",
+        "boot": "48302:1793181402551",
+        "viewers": 1,
+        "ring_seq": 313,
+        "channel_connected": true
+      }
+    ]
+  }
+}

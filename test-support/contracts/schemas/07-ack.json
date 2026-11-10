@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-ack.json",
+  "title": "Acknowledgement",
+  "description": "The two acknowledgements of contract 07, carried inside contract 05's link frames. queue.ack goes connector to hub after the daemon answered a delivery (C-07.27). events.ack goes hub to connector after an events.batch was committed (C-07.11).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/queueAck"
+    },
+    {
+      "$ref": "#/$defs/eventsAck"
+    }
+  ],
+  "$defs": {
+    "queueAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "hub_msg_id",
+        "chat_id",
+        "attempt",
+        "outcome"
+      ],
+      "description": "The connector's answer to one queue.deliver, sent only after the daemon's POST /api/queue/message (web-chat-dev.worktrees/ae-int/lib/server/routes/queue.js:299) answered or could not be reached.",
+      "properties": {
+        "type": {
+          "const": "queue.ack",
+          "description": "Discriminator."
+        },
+        "hub_msg_id": {
+          "type": "string",
+          "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "The hub's message id: hm_ and a ULID, minted once when the hub accepts the message (C-07.25). Also sent to the daemon as client_msg_id."
+        },
+        "chat_id": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The attempt this answers, echoed from queue.deliver."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "duplicate",
+            "retry",
+            "refused",
+            "expired"
+          ],
+          "description": "C-07.27's table: accepted (ok:true), duplicate (the daemon answered duplicate:true, or the connector's ledger already holds this id), retry (rate_limited, too_many, file_refused with why unavailable, daemon unreachable, or the connector's paused), refused (any other refusal word), expired (deliver_within_ms elapsed before the POST)."
+        },
+        "daemon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "boot",
+            "msg_id",
+            "item_id"
+          ],
+          "description": "What the daemon answered for an accepted or duplicate message (routes/queue.js:322: {ok, id, msg_id, mode}; with C-07.29, also duplicate and the client_msg_id echo).",
+          "properties": {
+            "boot": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The boot that answered the POST: its X-WC-Boot response header (C-07.9, Q-07.1), or, against a daemon without the header, GET /api/health read before the POST. Today `${pid}:${Date.now()}` from lib/server/index.js:156; from alpha.4 random per createServer and without the pid (C-07.15, Q-07.8). Opaque to the hub: compared for equality only."
+            },
+            "msg_id": {
+              "type": "string",
+              "pattern": "^m-[0-9a-f]{8}$",
+              "description": "The daemon's message id, minted by mintMessageId (web-chat-dev.worktrees/ae-int/lib/server/domain/queue.js): m- and 8 hex."
+            },
+            "item_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "The queue item's id (the answer's id), which the rail and PATCH/DELETE address."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "held",
+                "queued",
+                "wake",
+                "parked",
+                "transported"
+              ],
+              "description": "The release the daemon reported (routes/queue.js releaseAnswer and schedulerAnswer)."
+            }
+          }
+        },
+        "dedupe": {
+          "type": "string",
+          "enum": [
+            "daemon",
+            "connector"
+          ],
+          "description": "Which side guaranteed no duplicate (C-07.29): daemon only when the daemon's ok answer echoed client_msg_id; connector when the connector's ledger did."
+        },
+        "refused": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,32}$",
+          "description": "The daemon's refusal word (lib/server/composer.js HINTS) for outcome refused or retry, or the connector's paused (05 C-05.27) for outcome retry."
+        },
+        "retry_after_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "For outcome retry: wait at least this long, from the daemon's retry_after (seconds) times 1000, or 10000 when the daemon was unreachable or refused file_refused with why unavailable (C-07.27). For paused, 0: the hub redelivers after the resume, not on a timer."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "accepted",
+                  "duplicate"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "daemon",
+              "dedupe"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "refused"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "refused"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "retry"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "retry_after_ms"
+            ]
+          }
+        }
+      ]
+    },
+    "eventsAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "chat_id",
+        "batch_id",
+        "cursor",
+        "ingested",
+        "duplicates"
+      ],
+      "description": "The hub's commit of one events.batch (schemas/07-source-batch.json).",
+      "properties": {
+        "type": {
+          "const": "events.ack",
+          "description": "Discriminator."
+        },
+        "chat_id": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+        },
+        "batch_id": {
+          "type": "string",
+          "pattern": "^b_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "The batch acknowledged."
+        },
+        "cursor": {
+          "$ref": "https://web-chat-contracts/schemas/07-cursor.json#/$defs/source",
+          "description": "The source cursor the hub now holds for this chat: seq is the highest ring position it knows for that boot (C-07.12)."
+        },
+        "ingested": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries newly stored."
+        },
+        "duplicates": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries dropped because their source.key was already stored (C-07.12)."
+        },
+        "last_hub_seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The chat stream's seq after the commit, when anything was stored."
+        }
+      }
+    }
+  }
+}

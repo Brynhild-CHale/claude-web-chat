@@ -1,0 +1,40 @@
+{
+  "ch": "control",
+  "kind": "hello.refused",
+  "id": "h3",
+  "seq": 3,
+  "re": "c2",
+  "compat": {
+    "kind": "compat",
+    "state": "refused",
+    "protocol": null,
+    "window": {
+      "min": "0.9.0",
+      "max": "0.10.0",
+      "protocol": {
+        "min": 2,
+        "max": 3
+      },
+      "claude_code_min": null
+    },
+    "hub": {
+      "version": "0.4.0",
+      "web_chat": "0.10.0"
+    },
+    "reasons": [
+      {
+        "code": "protocol_unsupported",
+        "detail": "connector speaks protocol 1 to 1; hub speaks 2 to 3"
+      },
+      {
+        "code": "install_dev",
+        "detail": "the connector runs from a git checkout"
+      }
+    ],
+    "restrictions": [],
+    "message": {
+      "text": "This machine runs web-chat 0.9.0-alpha.3 from a git checkout, and this hub no longer speaks to it (it needs 0.9.0 or newer). Update the checkout; the connector keeps retrying and reconnects once updated.",
+      "command": "git pull && npm install"
+    }
+  }
+}

@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/11-retention-table.json",
+  "title": "Hub retention table (contract 11)",
+  "description": "What the hub keeps, where, for how long, and whether backups carry it (C-11.9 to C-11.11). One row per record class, and every hub table names its rows by a table comment retention:<record> (C-11.10a). A record class with no row is pass-through by default: the hub MUST NOT write it anywhere (C-11.9). The pattern follows web-chat's own one-table rule for caps and retention (web-chat-dev.worktrees/ae-int/lib/server/mirror/retention.js RETENTION, one row per cap with what it protects), but this table is the hub's and describes no web-chat record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "table_version",
+    "rows"
+  ],
+  "properties": {
+    "table_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on any change to a row's class, store, retention or backed_up, and when a row is added, removed or renamed. A change that widens what the hub keeps is a contract change (README rule 7)."
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/row"
+      },
+      "description": "The record classes, in any order; `record` is unique across rows."
+    }
+  },
+  "$defs": {
+    "duration": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^P([0-9]+[YMWD])*(T([0-9]+[HMS])+)?$",
+      "description": "An ISO 8601 duration such as P30D, PT10M or P0D."
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record",
+        "class",
+        "content",
+        "store",
+        "retention",
+        "backed_up",
+        "redaction",
+        "owner_contract",
+        "description"
+      ],
+      "properties": {
+        "record": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,47}$",
+          "description": "The record class's name, as the contract prose uses it (for example activity-entry, queue-message-text)."
+        },
+        "class": {
+          "enum": [
+            "persist",
+            "held",
+            "transient",
+            "pass-through"
+          ],
+          "description": "'persist': kept at rest for the retention below. 'held': kept at rest only until an event (delivery, expiry), then deleted. 'transient': in hub memory only, rebuilt after a restart, never written. 'pass-through': relayed or forwarded, never written, held in memory only for one exchange (C-11.9)."
+        },
+        "content": {
+          "enum": [
+            "metadata",
+            "user-text",
+            "derived",
+            "surface-content",
+            "bytes",
+            "secret-material"
+          ],
+          "description": "What kind of data the record holds. 'metadata': ids, names, kinds, times, counts, paths the user offered. 'user-text': words a principal wrote that the hub must deliver verbatim. 'derived': content a hub-side daemon built from Read-level relays (dashboards, Home). 'surface-content': pane HTML, params, store, form_state, mirror text, element text. 'bytes': images and documents. 'secret-material': keys, codes, push subscription secrets."
+        },
+        "store": {
+          "enum": [
+            "postgres",
+            "blob",
+            "hub-vm-daemon",
+            "claude-code-transcript",
+            "log-file",
+            "memory",
+            "push-service",
+            "none"
+          ],
+          "description": "Where it lives on the hub. 'hub-vm-daemon': a web-chat daemon running on the hub VM (Home, a dashboard), under web-chat's own on-disk rules. 'push-service': handed to a browser vendor's Web Push service, encrypted to the subscription. 'none': nowhere but the wire."
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rule"
+          ],
+          "description": "How long the record stays.",
+          "properties": {
+            "rule": {
+              "enum": [
+                "none",
+                "fixed",
+                "until-event",
+                "until-deleted",
+                "external"
+              ],
+              "description": "'none': never at rest. 'fixed': `duration` from creation. 'until-event': until `event`, then `after_event` more, and never longer than `max_hold` if the event never comes. 'until-deleted': until its owner (chat, machine, principal, dashboard) is deleted, which `event` may name; archive is not deletion. 'external': another system's retention decides (named in `note`)."
+            },
+            "duration": {
+              "$ref": "#/$defs/duration",
+              "description": "For rule 'fixed': how long from creation."
+            },
+            "event": {
+              "enum": [
+                "delivered",
+                "expired",
+                "disconnected",
+                "unsubscribed",
+                "used",
+                "chat-deleted",
+                "ended",
+                "removed",
+                "account-deleted",
+                "machine-deleted",
+                "workspace-deleted",
+                "project-deleted",
+                "dashboard-deleted"
+              ],
+              "description": "For rule 'until-event': the event that starts the end. For rule 'until-deleted' (optional): the owner's deletion that removes the record. 'delivered' is the daemon's acceptance of the message as contract 07 acknowledges it, not an upload's ok (C-11.22). 'ended' is a credential's end, whichever of expiry, revocation or single use comes first (03 C-03.5, C-03.30). 'removed' is the record's own removal by an admin (an allowlist entry). The '-deleted' events are the deletion of the named owner; archive and removal are not deletion."
+            },
+            "after_event": {
+              "$ref": "#/$defs/duration",
+              "description": "For rule 'until-event': how long the record stays after the event (P0D: deleted at once)."
+            },
+            "max_hold": {
+              "$ref": "#/$defs/duration",
+              "description": "For rule 'until-event': the longest the record is kept when the event never comes; then it is deleted and the deletion is an Activity entry."
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 300,
+              "description": "A short reason or, for 'external', the system whose retention applies."
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "fixed"
+                  }
+                },
+                "required": [
+                  "rule"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "duration": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "duration"
+                ]
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "until-event"
+                  }
+                },
+                "required": [
+                  "rule"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "after_event": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "event",
+                  "after_event"
+                ]
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "external"
+                  }
+                },
+                "required": [
+                  "rule"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "note"
+                ]
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "none"
+                  }
+                },
+                "required": [
+                  "rule"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "duration": false,
+                  "event": false,
+                  "max_hold": false,
+                  "after_event": false
+                }
+              }
+            }
+          ]
+        },
+        "backed_up": {
+          "type": "boolean",
+          "description": "Whether the hub's nightly backup carries the record (C-11.24). Always false for 'held' bytes, 'transient' and 'pass-through'."
+        },
+        "redaction": {
+          "enum": [
+            "not-applicable",
+            "daemon-at-source",
+            "hub-rules",
+            "not-redacted"
+          ],
+          "description": "'not-applicable': no free text. 'daemon-at-source': the machine's daemon redacted it before it left (mirror text, asks). 'hub-rules': the hub's own redactor ran before the write; for a record whose only words are label or summary fields (chat-event, deny-record), on those fields. 'not-redacted': kept as written, by design (a message Claude must receive verbatim) or by today's web-chat behaviour (pane state on a hub-side daemon); the description says which."
+        },
+        "owner_contract": {
+          "type": "string",
+          "pattern": "^([0-9]{2}|hub)$",
+          "description": "The contract whose clauses define the record's shape, or 'hub' for a hub-internal record no cross-side contract defines. This table fixes only residency and retention."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600,
+          "description": "What the record is and why it is kept this way."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "class": {
+                "enum": [
+                  "transient",
+                  "pass-through"
+                ]
+              }
+            },
+            "required": [
+              "class"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retention": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "const": "none"
+                  }
+                }
+              },
+              "backed_up": {
+                "const": false
+              },
+              "store": {
+                "enum": [
+                  "memory",
+                  "push-service",
+                  "none"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "class": {
+                "const": "held"
+              }
+            },
+            "required": [
+              "class"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retention": {
+                "type": "object",
+                "properties": {
+                  "rule": {
+                    "enum": [
+                      "until-event",
+                      "fixed"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "class": {
+                "const": "held"
+              },
+              "content": {
+                "const": "bytes"
+              }
+            },
+            "required": [
+              "class",
+              "content"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "backed_up": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

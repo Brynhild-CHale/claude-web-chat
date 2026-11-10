@@ -1,0 +1,47 @@
+{
+  "ch": "control",
+  "kind": "machine.facts",
+  "id": "c5",
+  "seq": 5,
+  "at": 1793558401200,
+  "hostname": "studio-mbp.local",
+  "login": "dev-hale",
+  "tailnet_name": "studio-mbp.yak-bebop.ts.net",
+  "folders": [
+    {
+      "id": "f_3a9c1e07b54d2f68",
+      "path": "/Users/dev-hale/Dev/ServerWebChat",
+      "display": "~/Dev/ServerWebChat",
+      "label": "ServerWebChat",
+      "access": "read-write",
+      "offered_at": 1793177520000
+    },
+    {
+      "id": "f_c0d4e19a7b2f5836",
+      "path": "/Users/dev-hale/Dev/web-chat-contracts",
+      "display": "~/Dev/web-chat-contracts",
+      "access": "read-write",
+      "offered_at": 1793177580000
+    }
+  ],
+  "settings": {
+    "agents_at_once": 2,
+    "local_cap": null,
+    "accept_new_chats": true,
+    "let_home_start_agents": false,
+    "paused": false,
+    "rev": 4
+  },
+  "mcp_servers": [
+    "web-chat",
+    "github",
+    "context7"
+  ],
+  "skills": [
+    "web-chat",
+    "respond-to-comment",
+    "capture-profile",
+    "project-identity"
+  ],
+  "ceiling": "full"
+}

@@ -1,0 +1,17 @@
+{
+  "wc_embed": 1,
+  "type": "status",
+  "conn": "live",
+  "pill": { "cls": "", "text": "active n1.12" },
+  "node_label": "n1.12",
+  "title": "Variance assessment",
+  "previewing": false,
+  "mode": "light",
+  "mode_toggleable": true,
+  "queue_count": 2,
+  "chat_state": "needs_you",
+  "waiting_kind": "permission",
+  "asks_pending": 1,
+  "active_node": "n1.12",
+  "auth": "ok"
+}

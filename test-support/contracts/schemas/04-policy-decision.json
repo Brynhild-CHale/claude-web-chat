@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/04-policy-decision.json",
+  "title": "Policy decision for one principal and one chat (contract 04)",
+  "description": "What the hub decides a principal may do on one chat (C-04.1 to C-04.7): the design's levels it holds, why, the specifics beyond them, and the daemon level the connector stamps. Computed by the hub only, carried inside contract 05's relay frames for every HTTP request and WebSocket upgrade, and applied by the connector against the route table (04-route-table.json). Not something web-chat emits today: its nearest shape is the project opt-in lib/tunnel/config.js mirrorLevelFor returns ('off' | 'read' | 'full') plus tunnel.json remote.allowDestructive, both per project, never per principal (web-chat-dev.worktrees/ae-int). The v1 restrictions (C-04.28) are encoded in allOf.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision_id",
+    "version",
+    "issued_at",
+    "expires_at",
+    "principal",
+    "chat_id",
+    "machine_id",
+    "relation",
+    "chat_state",
+    "levels",
+    "sources",
+    "specifics",
+    "daemon_level",
+    "origins"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string",
+      "pattern": "^dec_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The decision's hub id (contract 03 section 2, prefix dec). Opaque id of this decision version, stamped as X-WC-Decision and written on every deny record, so a refusal can be traced to the decision that caused it."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per (principal, chat). A connector holding a higher version never goes back to a lower one; a new version for an open relay that changes daemon_level, levels or specifics closes that relay (C-04.12)."
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the hub computed it, in the hub's clock (contract 07 on clocks)."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "At most 300 seconds after issued_at (C-04.6). The connector refuses a request whose decision has expired, with reason 'expired'."
+    },
+    "principal": {
+      "$ref": "https://web-chat-contracts/schemas/03-principal.json",
+      "description": "Whose authority this is: the contract 03 principal record (schemas/03-principal.json), as the hub authenticated it. The hub's own status reader (relation hub) is the via: hub principal, with user, machine, session and writer_class null."
+    },
+    "chat_id": {
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The reached chat, by its label (contract 03 section 2): the chat id without its cht_ prefix, as it appears in the surface origin chat-<label>.<hub>."
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The machine the chat lives on; the connector refuses a decision naming another machine."
+    },
+    "relation": {
+      "enum": [
+        "owner",
+        "grantee",
+        "project_peer",
+        "home",
+        "hub",
+        "admin"
+      ],
+      "description": "Which row of C-04.2 produced the levels. owner: the user who owns the chat. grantee: a user, or an agent of another project, holding only per-chat grants. project_peer: the agent of another chat in the same project. home: the Home agent. hub: the hub's own status reader. admin: a hub administrator with no other relation, which brings no chat level by itself."
+    },
+    "chat_state": {
+      "enum": [
+        "active",
+        "archived"
+      ],
+      "description": "archived drops every level to Read and every specific to false (C-04.3)."
+    },
+    "levels": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 4,
+      "items": {
+        "enum": [
+          "read",
+          "message",
+          "write_page",
+          "files"
+        ]
+      },
+      "description": "The design's levels this principal holds on this chat. Empty only for relation 'hub' or 'admin'. Any level but read appears only with read (C-04.3)."
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Why each held level is held, one key per entry of `levels`, in the design's words: always (built in, cannot be turned off), default (on until turned off, a project or Home default), grant (turned on per chat by a user), standing (Home's hub-wide right). Shown in the Grants panel and copied into deny records.",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/source"
+        },
+        "message": {
+          "$ref": "#/$defs/source"
+        },
+        "write_page": {
+          "$ref": "#/$defs/source"
+        },
+        "files": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "specifics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "steer",
+        "destructive",
+        "private"
+      ],
+      "description": "What the decision carries beyond the four levels (C-04.5).",
+      "properties": {
+        "status": {
+          "type": "boolean",
+          "description": "May reach the status rows (health, the heartbeat, the typed ask projection). True whenever levels holds read, and for relation 'hub'."
+        },
+        "steer": {
+          "type": "boolean",
+          "description": "May answer asks and use the turn controls on the answer origin (Allow or Deny, Stop, task stop, compact, plan mode, rename, clear). v1: the owner only."
+        },
+        "destructive": {
+          "type": "boolean",
+          "description": "May wipe the graph or start a new one (POST /api/graph/wipe, /api/graph/new), the hub's counterpart of tunnel.json remote.allowDestructive. v1: the owner only, and only when the owner turned the hub setting on (off by default)."
+        },
+        "private": {
+          "enum": [
+            "none",
+            "author"
+          ],
+          "description": "Which private elements this principal sees. none: no private element at all (v1 for every principal, C-04.25). author: the ones this principal wrote (the later rule, C-04.26; not issued in v1)."
+        }
+      }
+    },
+    "daemon_level": {
+      "enum": [
+        "basic",
+        "read",
+        "full"
+      ],
+      "description": "The daemon level the connector stamps as X-WC-Level (C-04.4): basic for status only, read for Read alone, full when any of message, write_page or files is held. Never local. The daemon honours it only on a request with a valid relay credential, under its ceiling (C-04.10, C-04.11)."
+    },
+    "origins": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surface",
+        "answer"
+      ],
+      "description": "The chat's origins the hub minted.",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}\\.[a-z0-9.-]+$",
+          "description": "The surface endpoint, https://chat-<label>.<hub>."
+        },
+        "answer": {
+          "description": "The answer origin, https://chat-<label>-a.<hub>, when steer is true or write_page is held; else null. The connector puts it in X-WC-Answer-Origin on GET /api/health, as lib/portal/index.js does at full, so a principal without it frames no answer or control documents.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+$"
+            }
+          ]
+        }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sha256"
+      ],
+      "description": "The route table the hub pre-checked with, when it did (C-04.19), named as the connector's hello names its own (contract 05): by table_version and sha256. Informative: the connector's own table decides.",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "table_version of the hub's copy."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the hub's copy's canonical JSON, as 04-route-table.json defines it (RFC 8785)."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "enum": [
+        "always",
+        "default",
+        "grant",
+        "standing"
+      ],
+      "description": "always: built in. default: on until turned off. grant: off until turned on. standing: Home's hub-wide right."
+    }
+  },
+  "allOf": [
+    {
+      "description": "A held level other than read needs read.",
+      "if": {
+        "properties": {
+          "levels": {
+            "contains": {
+              "enum": [
+                "message",
+                "write_page",
+                "files"
+              ]
+            }
+          }
+        },
+        "required": [
+          "levels"
+        ]
+      },
+      "then": {
+        "properties": {
+          "levels": {
+            "contains": {
+              "const": "read"
+            }
+          },
+          "daemon_level": {
+            "const": "full"
+          }
+        }
+      }
+    },
+    {
+      "description": "Read alone stamps read.",
+      "if": {
+        "properties": {
+          "levels": {
+            "const": [
+              "read"
+            ]
+          }
+        },
+        "required": [
+          "levels"
+        ]
+      },
+      "then": {
+        "properties": {
+          "daemon_level": {
+            "const": "read"
+          }
+        }
+      }
+    },
+    {
+      "description": "Read brings status.",
+      "if": {
+        "properties": {
+          "levels": {
+            "contains": {
+              "const": "read"
+            }
+          }
+        },
+        "required": [
+          "levels"
+        ]
+      },
+      "then": {
+        "properties": {
+          "specifics": {
+            "properties": {
+              "status": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "No level: only the hub's status reader (basic) or an admin with nothing else (which the hub never relays, so it never reaches a connector with a usable level).",
+      "if": {
+        "properties": {
+          "levels": {
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "levels"
+        ]
+      },
+      "then": {
+        "properties": {
+          "relation": {
+            "enum": [
+              "hub",
+              "admin"
+            ]
+          },
+          "daemon_level": {
+            "const": "basic"
+          }
+        }
+      }
+    },
+    {
+      "description": "An archived chat is Read at most, with no specifics.",
+      "if": {
+        "properties": {
+          "chat_state": {
+            "const": "archived"
+          }
+        },
+        "required": [
+          "chat_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "levels": {
+            "maxItems": 1,
+            "items": {
+              "const": "read"
+            }
+          },
+          "specifics": {
+            "properties": {
+              "steer": {
+                "const": false
+              },
+              "destructive": {
+                "const": false
+              }
+            }
+          },
+          "origins": {
+            "properties": {
+              "answer": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "v1 (C-04.28): write_page, files, steer and destructive go to the chat's owner only.",
+      "if": {
+        "properties": {
+          "relation": {
+            "not": {
+              "const": "owner"
+            }
+          }
+        },
+        "required": [
+          "relation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "levels": {
+            "not": {
+              "contains": {
+                "enum": [
+                  "write_page",
+                  "files"
+                ]
+              }
+            }
+          },
+          "specifics": {
+            "properties": {
+              "steer": {
+                "const": false
+              },
+              "destructive": {
+                "const": false
+              }
+            }
+          },
+          "origins": {
+            "properties": {
+              "answer": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "v1 (C-04.25): no principal sees private elements.",
+      "properties": {
+        "specifics": {
+          "properties": {
+            "private": {
+              "const": "none"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

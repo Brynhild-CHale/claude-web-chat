@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-health-embedded.json",
+  "title": "What the embedded chrome reads on GET /api/health",
+  "description": "What the chrome reads on its relayed GET /api/health to decide the embedded layout (contract 06 C-06.33, C-06.34): two response headers the connector adds, the way it adds X-WC-Answer-Origin, and the daemon's body. The daemon is unchanged for the flag (lib/server/routes/health.js and lib/core/cors.js need nothing). public/app/remote.js reads the headers with headerOf from the same health read, and also accepts the optional body fields embedded and embed_parent if a daemon ever sends them. Nothing is required: an absent flag means not embedded and an absent parent means none, because a connector may drive an older daemon or chrome (contract 12). The body is described from web-chat 0.9 (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js mountHealthRoutes), also so a reader can see what the connector reads for chat status (C-06.24); it stays open on purpose, since health grows per release and the chrome and the connector ignore what they do not know. Below level read the route sends the body through stripText (lib/core/remote-policy TEXT_RULES), which takes the lock's text fields; `answer`, `graph_integrity` and `viewer_peers` are sent to a local request only.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "headers": {
+      "type": "object",
+      "description": "Response headers the chrome reads, lowercase as fetch's Headers presents them. Others pass through and are ignored here.",
+      "additionalProperties": true,
+      "properties": {
+        "x-wc-embedded": {
+          "const": "1",
+          "description": "Added by the connector on a relayed GET or HEAD /api/health at the surface origin (06-relay-headers.json downstream_response). The chrome applies the embedded layout only when this is present AND it is itself framed (window.self !== window.top). A label: it changes the layout only, never what a request may reach."
+        },
+        "x-wc-embed-parent": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+(:[1-9][0-9]{0,4})?$",
+          "description": "The shell origin (the assignment's origins.shell, port included, C-06.29a, A-06.2), added beside x-wc-embedded. The chrome takes it only when it is a valid https origin, accepts bridge messages only from it and posts only to it (C-06.36)."
+        },
+        "x-wc-answer-origin": {
+          "type": "string",
+          "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+(:[1-9][0-9]{0,4})?$",
+          "description": "Contract 04's (C-04.9, schemas/04-level-header.json); read from the same response, listed so the set is complete. Carries the hub's port exactly when the hub's public origin does (C-06.29a, A-06.2)."
+        }
+      }
+    },
+    "body": {
+      "type": "object",
+      "description": "The daemon's health body as 0.9 builds it. No field is required here; the identity probe (C-06.4 step 6) is what insists on role, pid and instance.",
+      "additionalProperties": true,
+      "properties": {
+        "ok": {
+          "const": true,
+          "description": "Always true on a 200."
+        },
+        "role": {
+          "const": "instance",
+          "description": "A project daemon. web-chat's capture hub (lib/hub, which contract 10 calls the capture hub) answers role `hub` and the tunnel portal `portal`; neither is ServerWebChat's hub."
+        },
+        "version": {
+          "type": "integer",
+          "description": "PROTOCOL_VERSION (lib/core/versions.js, 3 in 0.9): the wire protocol the self-heal compares."
+        },
+        "package_version": {
+          "type": "string",
+          "description": "packageVersion(): the web-chat release the daemon runs."
+        },
+        "pid": {
+          "type": "integer",
+          "description": "The daemon's pid; the identity probe compares it with the registry entry (lib/portal/index.js probeIdentity)."
+        },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{8}$",
+          "description": "instanceId(root): which project this pid serves."
+        },
+        "active": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The active node's stored id."
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Node count."
+        },
+        "lock": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The turn lock (lib/server/domain/turns.js): base, started_at, message (redacted prompt text; stripped below read), author (user, wake or task), ttl_ms, session fields. The connector reads author and started_at only.",
+          "additionalProperties": true
+        },
+        "lock_stale": {
+          "type": "boolean",
+          "description": "Whether the lock outlived its TTL; a stale lock is not a turn in flight."
+        },
+        "active_label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The active node's label, e.g. n1.7."
+        },
+        "last_commit_at": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Newest commit time, epoch ms."
+        },
+        "viewers": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Open /ws sockets (ctx.getViewers = wsApi.clients.size), relayed ones included."
+        },
+        "mcp_seen": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Last sighting of an MCP server process: {seen_at, started_at} (lib/core/mcp-seen.js).",
+          "additionalProperties": true
+        },
+        "boot": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The daemon's per-boot id, pid:start-ms (lib/server/index.js bootId)."
+        },
+        "remote": {
+          "type": "boolean",
+          "description": "isRemoteRequest(req): this request carried X-WC-Remote: 1 (the portal's or the connector's label). A label for the page, never a grant."
+        },
+        "mirror": {
+          "type": "object",
+          "description": "The chat mirror summary: enabled, level (this request's level: basic, read, full or local), state, conversations, last_hook_at.",
+          "additionalProperties": true
+        },
+        "answer": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "{port} of the answer surface, to a local request only; a relayed page frames from X-WC-Answer-Origin instead.",
+          "additionalProperties": true
+        },
+        "graph_integrity": {
+          "type": "object",
+          "description": "The boot reconcile's verdict (counts only), local requests only (domain/elements-reconcile integritySummary).",
+          "additionalProperties": true
+        },
+        "viewer_peers": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Connector branch (C-06.24, Q-06.13): getViewerSummary's {local, remote} socket counts (lib/server/ws.js), sent to a local request only, as `answer` is. Read by the connector's host read for chat status; a relayed page never sees it.",
+          "additionalProperties": true
+        },
+        "embedded": {
+          "type": "boolean",
+          "description": "Optional, not built in v1. Accepted by public/app/remote.js if a daemon ever sends it; same meaning as the x-wc-embedded response header. Absent means false."
+        },
+        "embed_parent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^https://[a-z0-9.-]+(:[1-9][0-9]{0,4})?$",
+          "description": "Optional, not built in v1. Accepted if a daemon ever sends it; same meaning as the x-wc-embed-parent response header. Absent means none."
+        }
+      }
+    }
+  }
+}

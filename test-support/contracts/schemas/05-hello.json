@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-hello.json",
+  "title": "Connector link hello and version negotiation",
+  "description": "The connector's hello and the hub's answers (C-05.12 to C-05.14). The version facts are web-chat's own (web-chat-dev.worktrees/ae-int/lib/core/versions.js packageVersion, PROTOCOL_VERSION 3, PORTAL_PROTOCOL_VERSION 12, SCHEMA_VERSION 4) inside contract 12's records.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/hello"
+    },
+    {
+      "$ref": "#/$defs/hello_ack"
+    },
+    {
+      "$ref": "#/$defs/hello_refused"
+    },
+    {
+      "$ref": "#/$defs/compat_update"
+    }
+  ],
+  "$defs": {
+    "hello": {
+      "type": "object",
+      "description": "The connector's first frame after auth.ok (C-05.12). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "hello",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "versions": {
+          "$ref": "12-compat.json#/$defs/versions",
+          "description": "The connector's versions record (contract 12, C-12.12), its protocol range included."
+        },
+        "route_table": {
+          "type": "object",
+          "description": "The route table the connector's gate enforces (contract 04, C-04.19).",
+          "properties": {
+            "table_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "04-route-table.json table_version."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "sha256 of the table's canonical JSON (RFC 8785: keys sorted, no whitespace), as 04 C-04.19 and schemas/04-route-table.json define it."
+            }
+          },
+          "required": [
+            "table_version",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+(\\.[a-z_]+){0,3}$",
+            "description": "A capability name."
+          },
+          "description": "Optional features a side offers (C-05.12). Protocol 1 names: relay.http, relay.ws, relay.answer, relay.decision_ref, events.batch, events.signals, authority.log, queue.message, key.rotate. An unknown name is ignored, never refused."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "versions",
+        "route_table",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "hello_ack": {
+      "type": "object",
+      "description": "The hub accepts the link and fixes its parameters (C-05.12 to C-05.14). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "hello.ack",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The protocol chosen: the highest both ranges hold."
+        },
+        "hub": {
+          "type": "object",
+          "description": "The hub as the connector should record it.",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{2,62}$",
+              "description": "The hub's stable short id, minted when the hub is installed. Contract 06 names the connector's state and key files after it."
+            },
+            "origin": {
+              "type": "string",
+              "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?$",
+              "description": "The hub's https origin."
+            }
+          },
+          "required": [
+            "id",
+            "origin"
+          ],
+          "additionalProperties": false
+        },
+        "machine": {
+          "type": "object",
+          "description": "The machine record as the hub holds it.",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+              "description": "The machine's hub id (contract 03: `mch_` and 26 lowercase Crockford base32 characters)."
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 120,
+              "description": "The name shown in Settings > Machines."
+            }
+          },
+          "required": [
+            "id",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+(\\.[a-z_]+){0,3}$",
+            "description": "A capability name."
+          },
+          "description": "Optional features a side offers (C-05.12). Protocol 1 names: relay.http, relay.ws, relay.answer, relay.decision_ref, events.batch, events.signals, authority.log, queue.message, key.rotate. An unknown name is ignored, never refused."
+        },
+        "heartbeat_ms": {
+          "type": "integer",
+          "minimum": 5000,
+          "maximum": 30000,
+          "description": "Heartbeat period, each direction, in ms: 15000 in protocol 1 (C-05.17). Contract 07's liveness states are multiples of it (C-07.34)."
+        },
+        "dead_after_ms": {
+          "type": "integer",
+          "minimum": 15000,
+          "maximum": 120000,
+          "description": "Silence after which either side treats the link as dead, in ms: 45000 in protocol 1, three missed beats (C-05.17)."
+        },
+        "windows": {
+          "type": "object",
+          "description": "Flow-control parameters for this connection (C-05.21 to C-05.25).",
+          "properties": {
+            "relay_stream_bytes": {
+              "type": "integer",
+              "minimum": 65536,
+              "description": "Initial credit per relay stream, each direction, in decoded payload bytes. Protocol 1: 262144."
+            },
+            "relay_streams_max": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Concurrent relay streams per connection. Protocol 1: 256."
+            },
+            "relay_streams_per_chat": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Concurrent relay streams per chat. Protocol 1: 64."
+            },
+            "signals_unacked": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Derived signal frames the connector may have unacknowledged. Protocol 1: 256."
+            },
+            "batches_unacked_per_chat": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "events.batch frames per chat the connector may have unacknowledged. Protocol 1: 4."
+            },
+            "frame_bytes_max": {
+              "type": "integer",
+              "minimum": 65536,
+              "description": "The largest text frame either side sends. Protocol 1: 1048576."
+            }
+          },
+          "required": [
+            "relay_stream_bytes",
+            "relay_streams_max",
+            "relay_streams_per_chat",
+            "signals_unacked",
+            "batches_unacked_per_chat",
+            "frame_bytes_max"
+          ],
+          "additionalProperties": false
+        },
+        "compat": {
+          "$ref": "12-compat.json#/$defs/compat",
+          "description": "The hub's verdict on the hello (contract 12, C-12.13): ok, ahead or behind here; refused goes in hello.refused."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "protocol",
+        "hub",
+        "machine",
+        "capabilities",
+        "heartbeat_ms",
+        "dead_after_ms",
+        "windows",
+        "compat"
+      ],
+      "additionalProperties": false
+    },
+    "hello_refused": {
+      "type": "object",
+      "description": "The protocol ranges do not meet (C-05.13). The hub closes with 4426 next. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "hello.refused",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "compat": {
+          "$ref": "12-compat.json#/$defs/compat",
+          "description": "The verdict, state refused and protocol null (contract 12, C-12.13)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "compat"
+      ],
+      "additionalProperties": false
+    },
+    "compat_update": {
+      "type": "object",
+      "description": "A new verdict, sent whenever a daemon_versions record changes one (contract 12, C-12.13). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "compat.update",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "compat": {
+          "$ref": "12-compat.json#/$defs/compat",
+          "description": "The fresh verdict."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "compat"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

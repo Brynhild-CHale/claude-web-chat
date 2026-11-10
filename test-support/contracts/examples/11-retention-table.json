@@ -1,0 +1,278 @@
+{
+  "table_version": 3,
+  "rows": [
+    {
+      "record": "activity-entry",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-deleted",
+        "note": "archive keeps it; the chat's deletion removes it"
+      },
+      "backed_up": true,
+      "redaction": "hub-rules",
+      "owner_contract": "03",
+      "description": "One row per audited act: actor principal, kind, target ids, at, and at most one summary (schemas/11-activity-summary.json, 200 characters, hub redactor)."
+    },
+    {
+      "record": "chat-event",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-deleted",
+        "note": "until chat-deleted; archive keeps it (07 C-07.6)"
+      },
+      "backed_up": true,
+      "redaction": "hub-rules",
+      "owner_contract": "07",
+      "description": "A chat stream event (07 C-07.1): a ring entry or reconciliation record after the connector's and the hub's audit projection, fields per C-11.18 (ids, state words, counts, times). Only its label fields hold words, and they pass the hub redactor and the 200-character cap."
+    },
+    {
+      "record": "machine-event",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "fixed",
+        "duration": "P30D",
+        "note": "30 days, which meets 07 C-07.6's at least 30 days; pruned from the front"
+      },
+      "backed_up": true,
+      "redaction": "not-applicable",
+      "owner_contract": "07",
+      "description": "A machine stream event (07 C-07.1): connector and daemon lifecycle, heartbeats and facts changes, ids, states, counts and times only."
+    },
+    {
+      "record": "deny-record",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "fixed",
+        "duration": "P90D"
+      },
+      "backed_up": true,
+      "redaction": "hub-rules",
+      "owner_contract": "04",
+      "description": "A denial (04 C-04.27, schemas/04-deny-record.json): a line of the connector's authority log shipped over 05's authority.log frame, or a hub-side refusal. Fields: ts, count, enforcer, principal, chat and machine ids, decision id, method, path without query, rule, level needed, reason, status, and for sink activity one template summary (hub redactor). Never a body or query (C-11.20)."
+    },
+    {
+      "record": "queue-message-text",
+      "class": "held",
+      "content": "user-text",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-event",
+        "event": "delivered",
+        "after_event": "P7D",
+        "max_hold": "P30D",
+        "note": "undelivered after 30 days: expired, sender told. Not backed up: held text must not outlive its deletion inside a backup."
+      },
+      "backed_up": false,
+      "redaction": "not-redacted",
+      "owner_contract": "07",
+      "description": "The words of a message queued at the hub for a chat (offline machine, phone, Home's delegated messages). Claude must receive them verbatim, so they are not redacted; after delivery they stay 7 days for the Queue panel and redelivery checks."
+    },
+    {
+      "record": "queue-message-record",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-deleted",
+        "note": "a record restored from a backup whose text is gone expires, the sender told (C-11.14, C-11.24)"
+      },
+      "backed_up": true,
+      "redaction": "not-applicable",
+      "owner_contract": "07",
+      "description": "What remains of a message after its text goes: msg_id, chat, sender, chars, files_count, state, times. The same keys web-chat's publicItem keeps (lib/server/domain/queue.js PUBLIC_MESSAGE_KEYS)."
+    },
+    {
+      "record": "held-attachment",
+      "class": "held",
+      "content": "bytes",
+      "store": "blob",
+      "retention": {
+        "rule": "until-event",
+        "event": "delivered",
+        "after_event": "P0D",
+        "max_hold": "P30D",
+        "note": "deleted within one minute of the daemon accepting the message (07), not at the upload ok; a 429 is retried; an hourly sweep removes orphans"
+      },
+      "backed_up": false,
+      "redaction": "not-redacted",
+      "owner_contract": "11",
+      "description": "A composer image attached to a hub-queued message: at most 5 MB, PNG, JPEG, GIF or WebP, as the daemon's /api/attachments accepts. Uploaded through the relay at delivery and uploaded again if the daemon pruned it before the message was sent; deleted at the hub once the message is accepted (C-11.22)."
+    },
+    {
+      "record": "machine-facts",
+      "class": "persist",
+      "content": "metadata",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-event",
+        "event": "disconnected",
+        "after_event": "P0D"
+      },
+      "backed_up": true,
+      "redaction": "not-applicable",
+      "owner_contract": "05",
+      "description": "The closed list contract 05 names: connector and Claude Code versions, agents-at-once cap, pause state, folders offered (06's folder object: id, real path and the home-masked display path), chats hosted. Deleted on Disconnect; Activity keeps the machine's id and name."
+    },
+    {
+      "record": "pairing-code",
+      "class": "held",
+      "content": "secret-material",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-event",
+        "event": "used",
+        "after_event": "P0D",
+        "max_hold": "PT5M",
+        "note": "300 s, contract 05 C-05.2"
+      },
+      "backed_up": false,
+      "redaction": "not-applicable",
+      "owner_contract": "05",
+      "description": "Kept only as a hash, single use, gone at use or expiry."
+    },
+    {
+      "record": "hub-relay-log",
+      "class": "persist",
+      "content": "metadata",
+      "store": "log-file",
+      "retention": {
+        "rule": "fixed",
+        "duration": "P90D"
+      },
+      "backed_up": false,
+      "redaction": "not-applicable",
+      "owner_contract": "11",
+      "description": "The hub's own relay log (C-11.19, formerly the hub-access-log row): one JSON line per relayed write, socket upgrade and socket close: ts, principal, machine, chat, method, path without query, status, bytes, duration, close code. Never a body, query, frame or credential. The connector's authority log is not this row: it stays on the machine and what it ships lands in deny-record and activity-entry (C-11.20)."
+    },
+    {
+      "record": "hub-app-log",
+      "class": "persist",
+      "content": "metadata",
+      "store": "log-file",
+      "retention": {
+        "rule": "fixed",
+        "duration": "P30D"
+      },
+      "backed_up": false,
+      "redaction": "hub-rules",
+      "owner_contract": "hub",
+      "description": "The hub process's own errors and lifecycle lines: codes, ids, counts; each line passes the hub redactor."
+    },
+    {
+      "record": "push-subscription",
+      "class": "persist",
+      "content": "secret-material",
+      "store": "postgres",
+      "retention": {
+        "rule": "until-event",
+        "event": "unsubscribed",
+        "after_event": "P0D"
+      },
+      "backed_up": true,
+      "redaction": "not-applicable",
+      "owner_contract": "hub",
+      "description": "A device's Web Push endpoint and keys, removed when the push service answers gone or the user removes the device."
+    },
+    {
+      "record": "push-payload",
+      "class": "pass-through",
+      "content": "derived",
+      "store": "push-service",
+      "retention": {
+        "rule": "none",
+        "note": "the hub sets a Web Push TTL of at most one day on each message"
+      },
+      "backed_up": false,
+      "redaction": "hub-rules",
+      "owner_contract": "11",
+      "description": "A notification: ids plus one Activity summary, encrypted to the subscription (C-11.23)."
+    },
+    {
+      "record": "chat-status",
+      "class": "transient",
+      "content": "metadata",
+      "store": "memory",
+      "retention": {
+        "rule": "none"
+      },
+      "backed_up": false,
+      "redaction": "not-applicable",
+      "owner_contract": "11",
+      "description": "State dots, Needs you, queue and activity badges, built from 05's status poll (GET /api/mirror/status, GET /api/asks and GET /api/health, read by the connector as a local caller through lib/client and cut to the fields schemas/06-chat-status.json names, C-11.15) and rebuilt after a restart."
+    },
+    {
+      "record": "relayed-http-body",
+      "class": "pass-through",
+      "content": "surface-content",
+      "store": "none",
+      "retention": {
+        "rule": "none"
+      },
+      "backed_up": false,
+      "redaction": "daemon-at-source",
+      "owner_contract": "05",
+      "description": "Any request or response body the relay carries between a viewer and a chat's daemon, exports, previews, mirror attachments and live composer uploads included."
+    },
+    {
+      "record": "relayed-ws-frame",
+      "class": "pass-through",
+      "content": "surface-content",
+      "store": "none",
+      "retention": {
+        "rule": "none"
+      },
+      "backed_up": false,
+      "redaction": "daemon-at-source",
+      "owner_contract": "05",
+      "description": "Every frame of a relayed socket: render, store:patch, pane:form, markdown, mirror:*, element:*, queue. Projected per socket by the daemon; opaque to the hub."
+    },
+    {
+      "record": "dashboard-surface",
+      "class": "persist",
+      "content": "derived",
+      "store": "hub-vm-daemon",
+      "retention": {
+        "rule": "until-deleted"
+      },
+      "backed_up": true,
+      "redaction": "not-redacted",
+      "owner_contract": "11",
+      "description": "A dashboard daemon's own graph, store and element log on the hub VM, kept by web-chat's rules (pane state is not redacted there today). Mirror panes hold references, never copies (C-11.16)."
+    },
+    {
+      "record": "home-surface",
+      "class": "persist",
+      "content": "derived",
+      "store": "hub-vm-daemon",
+      "retention": {
+        "rule": "until-deleted"
+      },
+      "backed_up": true,
+      "redaction": "not-redacted",
+      "owner_contract": "11",
+      "description": "Home's daemon on the hub VM: its pages, store and elements, under web-chat's rules. Its mirror follows web-chat's own retention rows (lib/server/mirror/retention.js:48-134 at 826442d6): no count cap deletes; the only deleters are claude-code-cleanup and disk-budget-bytes, unlimited unless the host sets at least 64 MiB in .web-chat/mirror.json; parsed-conversations-max 160 bounds memory only; 64 task, 64 agent and 32 workflow rows persist per session."
+    },
+    {
+      "record": "home-transcript",
+      "class": "persist",
+      "content": "derived",
+      "store": "claude-code-transcript",
+      "retention": {
+        "rule": "external",
+        "note": "Claude Code's own transcript cleanup on the hub VM (its cleanupPeriodDays setting)"
+      },
+      "backed_up": true,
+      "redaction": "daemon-at-source",
+      "owner_contract": "11",
+      "description": "Home's Claude Code session files on the hub VM. What Home read from chats arrived through the relay at its level, so mirror text in it was redacted at the source machine."
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-heartbeat.json",
+  "title": "Connector link heartbeat",
+  "description": "The link's heartbeat (C-05.17): 15 s each way, any frame resets the peer's dead timer, 45 s of silence is a dead link. Unrelated to the daemon's own socket keep-alive (web-chat-dev.worktrees/ae-int/lib/server/ws.js HEARTBEAT_INTERVAL_MS 30 s), which keeps running on each relayed socket.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/heartbeat"
+    },
+    {
+      "$ref": "#/$defs/ping"
+    }
+  ],
+  "$defs": {
+    "heartbeat": {
+      "type": "object",
+      "description": "The connector's beat every heartbeat_ms (C-05.17), carrying contract 07's liveness body. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "heartbeat",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "beat": {
+          "$ref": "07-heartbeat.json",
+          "description": "Contract 07's heartbeat body (C-07.34, C-07.35), interval_ms 15000."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "beat"
+      ],
+      "additionalProperties": false
+    },
+    "ping": {
+      "type": "object",
+      "description": "The hub's beat every heartbeat_ms (C-05.17). The connector echoes this frame's `at` as the next heartbeat body's echo_at. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "ping",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The hub's clock when sent."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "at"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

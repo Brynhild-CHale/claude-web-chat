@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-source-batch.json",
+  "title": "Source batch",
+  "description": "Connector to hub: main-ring entries of one chat's daemon, read from GET /api/events or GET /api/events/stream (web-chat-dev.worktrees/ae-int/lib/server/routes/events.js:69, :167), plus captures rebuilt from GET /api/captures?since (C-07.11, C-07.12). Every entry and record is reduced to contract 11's C-11.18 allowlist by the connector before it sends; the hub applies it again before it stores (C-07.8). Carried inside a contract 05 frame.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "batch_id",
+    "chat_id",
+    "ring",
+    "boot",
+    "since",
+    "contiguous",
+    "entries"
+  ],
+  "properties": {
+    "type": {
+      "const": "events.batch",
+      "description": "Discriminator."
+    },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^b_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Connector-minted id, echoed by events.ack."
+    },
+    "chat_id": {
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+    },
+    "ring": {
+      "type": "string",
+      "enum": [
+        "main"
+      ],
+      "description": "The source ring."
+    },
+    "boot": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A daemon's per-boot token, read from the X-WC-Boot response header where the daemon sends it (C-07.9, Q-07.1), else from GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js:131). Today `${pid}:${Date.now()}` from lib/server/index.js:156; from alpha.4 random per createServer and without the pid (C-07.15, Q-07.8). Opaque to the hub: compared for equality only, never parsed (C-07.36)."
+    },
+    "since": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The since the connector read with."
+    },
+    "contiguous": {
+      "type": "boolean",
+      "description": "True only when the batch provably continues the hub cursor (C-07.11): in a live stream its first entry is the cursor's ring position + 1 in the same boot, each capture counting one position; in a catch-up replay with since > 0, its first non-capture entry is since + 1. False with no gap object makes the hub record one source.gap unknown with dropped null."
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gap",
+        "dropped",
+        "oldest"
+      ],
+      "description": "Present when the read answered gap: the fields bus.read returned (web-chat-dev.worktrees/ae-int/lib/core/bus.js:208-218), or the SSE gap event (events.js:128). Until Q-07.2 lands, the connector does not trust gap or dropped when the ring's oldest entry may be a capture (bus.js:212), and then sends the batch as not contiguous without this object (C-07.11).",
+      "properties": {
+        "gap": {
+          "const": true,
+          "description": "Always true when present."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries the ring evicted between since and oldest; 0 with reset."
+        },
+        "oldest": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "The ring's oldest retained seq as served (for a capture, its counter, until Q-07.2's rename)."
+        },
+        "reset": {
+          "type": "boolean",
+          "description": "True when since was ahead of the ring: the daemon restarted under the cursor."
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 500,
+      "description": "Ring entries in ascending ring position, read at host level and reduced by the connector to contract 11's C-11.18 allowlist (C-07.8).",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "seq",
+          "ts",
+          "kind"
+        ],
+        "description": "One ring entry: {seq, ts, kind, ...fields} as bus.emit built it. Open: the field set is the daemon's.",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The served seq (for kind capture, the capture counter until Q-07.2's rename; after it, the ring position)."
+          },
+          "ts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Daemon clock, epoch ms."
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "The entry's kind."
+          }
+        }
+      }
+    },
+    "reinit": {
+      "type": "boolean",
+      "description": "True on the batch that carries the first entry or record of a new boot when the connector, reading GET /api/captures?since and GET /api/elements?since once at that boot change before the batch, found a re-initialised surface (C-07.12a): a capture next_cursor (state.captureSeq, lib/server/routes/capture.js:289), or a capture entry's counter, below the cursor's capture_seq. The hub then records one source.gap reinit, raises surface_gen by 1 and sets capture_seq and element_seq to 0, in this batch's transaction and before it keys the batch's entries. An element next_cursor below element_seq alone does not set it: it sets element_seq to 0 and leaves surface_gen."
+    },
+    "reconciled": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Capture records from GET /api/captures?since that a catch-up read or a non-contiguous batch left out (C-07.12). Best effort: the route lists only the live captures, at most CAPTURES_LIVE_MAX 50 (lib/server/domain/captures.js:45), emptied by a Wipe or New graph. The hub stores each as a kind capture event with source.via reconcile.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "capture_id",
+          "seq",
+          "ts"
+        ],
+        "description": "A capture's identity, without its body (bodies are fetched by tool call or per contract 11).",
+        "properties": {
+          "kind": {
+            "const": "capture",
+            "description": "Only captures are reconciled into the stream in v1."
+          },
+          "capture_id": {
+            "type": "string",
+            "pattern": "^cap[0-9]{1,16}$",
+            "description": "The capture's id (captures.js allocateCapture)."
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The capture counter."
+          },
+          "ts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The record's ts, daemon clock."
+          },
+          "source": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "The record's source (ext:tab-stream, element:box-grab)."
+          }
+        }
+      }
+    },
+    "element_reset": {
+      "type": "boolean",
+      "description": "true when the connector found the daemon's element next_cursor below the cursor's element_seq without a capture re-init: the hub sets element_seq to 0 for this batch and leaves surface_gen (C-07.12a)."
+    }
+  }
+}

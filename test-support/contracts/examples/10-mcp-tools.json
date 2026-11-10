@@ -1,0 +1,1372 @@
+{
+  "catalogue": "web-chat-mcp",
+  "catalogue_version": "1.0.0-pre",
+  "source": {
+    "repo": "claude-web-chat",
+    "worktree": "web-chat-dev.worktrees/ae-int",
+    "ref": "826442d6",
+    "registration": "web-chat-dev.worktrees/ae-int/lib/mcp/index.js",
+    "build": "0.9.0-alpha.2 and 0.9.0-alpha.2.1 (lib/mcp unchanged between tag ae-alpha.2, a9c22e5c and 826442d6): the pre-catalogue placeholder, hash 50bce3a6..., which no hub claims; catalogue 1.0.0 is minted at 0.9.0-alpha.3's cut, after U419 (C-10.1, C-10.9)"
+  },
+  "transport": "stdio, spawned by Claude Code per session (bin/claude-web-chat-mcp.js); every call is one or two HTTP requests to 127.0.0.1:<port of this chat's daemon> through lib/mcp/client.js",
+  "client_headers": [
+    {
+      "name": "X-WC-Writer",
+      "value": "this boot's writer token, 64 lowercase hex, read from <root>/.web-chat/writer-token (0600)",
+      "source": "web-chat-dev.worktrees/ae-int/lib/core/writer-token.js WRITER_HEADER; sent by lib/mcp/client.js"
+    },
+    {
+      "name": "X-WC-Client",
+      "value": "mcp",
+      "source": "web-chat-dev.worktrees/ae-int/lib/core/mcp-seen.js CLIENT_HEADER"
+    },
+    {
+      "name": "X-WC-MCP-Started",
+      "value": "the MCP server process's start time in ms",
+      "source": "web-chat-dev.worktrees/ae-int/lib/core/mcp-seen.js STARTED_HEADER"
+    }
+  ],
+  "catalogue_sha256": "50bce3a617ab4305baf58814498564248fd108bdabf6c54a074436811b32cc29",
+  "tools": [
+    {
+      "name": "render",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/render.js",
+      "description": "Render arbitrary HTML/JS into a shadow-rooted mount in the user's browser surface. Inline `<script>` tags execute with `store`, `root`, `params`, `mountId` and `api` injected as globals (`api.spawn({id?, component?, params?, html?, after?, place?})` puts up a child pane owned by this one, `api.close(id)` takes one down \u2014 see the rules file) \u2014 query the pane's DOM via `root` (an open shadow root), NEVER `document.querySelector`/`getElementById` (they cannot see into the shadow DOM and the script dies at mount \u2014 `document.createElement` is fine, and is preferred over `innerHTML` for data). Each call replaces any prior mount with the same `id` (reuse the id to update in place). Use this for ad-hoc, one-off UI; for recurring patterns prefer `save_component` then `use_component`; for LIVE HOST STATE (git, test runs, log tails, file editing) prefer a service-backed component \u2014 `list_components` first, builtins include git-dashboard and file-editor. OWNERSHIP: rendering over a pane owned by another writer (`owner:\"service:<name>\"` \u2014 a local driver \u2014 or `\"pane:<id>\"` \u2014 a child another pane spawned \u2014 in list_mounts) is soft-rejected with `{ok:false, owned:true, owner}` \u2014 pass `force:true` to take it over deliberately, or use a fresh id alongside it; a pane the user LOCKED refuses every re-render. ROUTING IS OPT-OUT: clicks, edits and submits in the pane coalesce into one \"activity\" item per mount in the user's queue rail, even if its script fails, and typed form values persist per mount (`form_state` in list_mounts; see `params.form_reset` / `params.routing`). Declared `signals` (below) remain the SEMANTIC layer on top: a named payload key for a deliberate affordance (Apply/Send button), or an immediate wake \u2014 render\u2192declare\u2192react\u2192re-render on each Push. PAGES: one ordered sequence of panes and markdown \u2014 `write_markdown` puts the `#` title and a `##` per part between runs of panes (they build the Contents nav), `after` inserts this pane into a page that already has content, and `place:{col,span,rows}` lays panes on the 12-column grid: two `span:6` side by side, `span:3` stat tiles, `span:4` + `span:8` for a list beside its detail. A lone pane keeps the full width (no `span`), and a re-render without `place`/`after` keeps the user's arrangement.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "html": {
+            "type": "string",
+            "description": "The HTML/JS payload. <style> and <script> tags inside are handled correctly."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable mount id (used for replace-in-place). If omitted, a unique id is generated. The shell's own element ids are RESERVED \u2014 \"main\", \"topbar\", \"status\", \"dock\", \"stage\", \"overlay\", \"drawer\", \"minbar\", \"queue-rail\", \"cmd-palette\" and the rest of the chrome \u2014 and a render naming one is refused with {ok:false, reserved:true, hint}. Prefix your ids (e.g. \"plan-form\") and this never comes up."
+          },
+          "target": {
+            "type": "string",
+            "description": "Slot in the page DOM to mount into. Defaults to \"main\"."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Take over a pane owned by another writer (owner:\"service:<name>\" or \"pane:<id>\"). Without it, rendering over an owned pane soft-rejects with {ok:false, owned:true, owner}."
+          },
+          "after": {
+            "type": "string",
+            "description": "Position in the page sequence: place the pane right after this pane/markdown id, or \"start\" for the top. Omitted: a new pane appends and a re-render keeps its position. An unknown id still mounts (appended) and returns a `warning`. Pair with `write_markdown` to put headings and prose between runs of panes."
+          },
+          "place": {
+            "type": "object",
+            "description": "Proposed grid placement on the page's 12-column grid: `col` (1\u201312, the column it starts in; omit for auto flow), `span` (2\u201312 columns wide, shrunk to fit right of `col`; default the rest of the row), `rows` (2\u201324 rows of 40px; omit for auto height). Out-of-range values are clamped and the applied placement comes back as `place`. It also becomes this pane's \"Claude's layout\" baseline \u2014 the user can rearrange freely and \u21ba puts the run back. Omitted: a new pane is full-width auto-height and a re-render keeps whatever layout the user left.",
+            "properties": {
+              "col": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12
+              },
+              "span": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 12
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 24
+              }
+            }
+          },
+          "params": {
+            "type": "object",
+            "description": "Mount params persisted with the pane and injected into its script as `params`. Recognized keys: `title` labels the pane's header (otherwise it shows the mount id) and `type` adds a type chip beside it; `form_reset:true` drops the mount's persisted form_state on this render (use when supplying fresh prefills); `routing:\"none\"` opts the pane out of default activity-item routing (\"auto\" opts a service-owned pane back in). Other keys pass through to the pane script.",
+            "properties": {
+              "form_reset": {
+                "type": "boolean",
+                "description": "Drop the persisted form_state for this mount on this render."
+              },
+              "routing": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "none"
+                ],
+                "description": "Activity-routing override for this pane. Default: auto (none for service-owned panes)."
+              }
+            }
+          },
+          "signals": {
+            "type": "array",
+            "description": "Optional declared wake signals (channels). Each entry names a store key this pane writes on a deliberate user action and how it should wake you: wake:\"queue\" (default) folds a browser write to that key into the user's queue rail, to send when they hit Push; wake:\"immediate\" wakes you the moment the pane writes it, bypassing the queue. Use \"immediate\" only for explicit \"Ask Claude now\" affordances. Declaring signals is the channels-native replacement for the arm-a-wait convention \u2014 you no longer need to background a watch for these keys.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "The store key the pane writes (e.g. \"form_submit\")."
+                },
+                "wake": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "immediate"
+                  ],
+                  "description": "queue (default) or immediate."
+                },
+                "why": {
+                  "type": "string",
+                  "description": "Short human label for why this wakes you (shown in the queue rail)."
+                }
+              },
+              "required": [
+                "key"
+              ]
+            }
+          }
+        },
+        "required": [
+          "html"
+        ]
+      },
+      "description_sha256": "c193f1ffb5a552747d2a3783ddcd364e3dac36d0b70325da483cddb3281fa5e0",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/render",
+          "query": [],
+          "body": "the tool arguments; `signals` moved under `params.signals`",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/render"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "clear",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/clear.js",
+      "description": "Remove mounts from the page. Pass `id` to remove one specific mount (or one markdown item written by `write_markdown`), `target` to clear a slot, or `{}` to clear everything \u2014 a page-wide clear takes markdown items too, while pinned panes stay \u2014 and so does the markdown directly above each pinned pane (the run of items between it and the previous pane or the page top), in place. Panes owned by another writer \u2014 a local driver (`owner:\"service:<name>\"` in list_mounts) or the pane that spawned them (`owner:\"pane:<id>\"`) \u2014 are soft-rejected like a render over them, and a bulk clear that would take one is rejected whole (a pinned one it keeps does not count) \u2014 clear your own by id instead. force:true clears them anyway, and on a bulk clear it also takes every pinned pane, the user's included.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Specific mount id to remove."
+          },
+          "target": {
+            "type": "string",
+            "description": "Clear all mounts in this target slot."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Clear panes owned by another writer (a driver, or a parent pane) too. Without it, a clear that would take one is soft-rejected. On a bulk clear it also removes pinned panes."
+          }
+        }
+      },
+      "description_sha256": "d203188b890a395a332382589ee0a460475a3c5c4fbaf2ee1e9ae70b7d408a6f",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/clear",
+          "query": [],
+          "body": "the tool arguments as given",
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "POST /api/clear",
+            "note": "a clear with no id is refused by lib/server/routes/render.js under X-WC-Remote"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "list_mounts",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/list_mounts.js",
+      "description": "List currently rendered mounts on the page. Returns `{mounts: [{id, target, component?, pane_state?, place, form_state?, owner?}], markdown: [{id, owner, chars, headings}], order, runs}` \u2014 panes in page order, the markdown items `write_markdown` put between them (summarised by their headings, not echoed), and `order`, the full page sequence of pane and markdown ids (use an id from it as `after` to position a new item). `place` is each pane's current `{col, span, rows}` on the 12-column grid (as the user may have left it \u2014 pass `place` on render to propose a new one); `runs` holds non-default per-run flags keyed by the markdown id that anchors the run (or `start`) \u2014 `{stacks:false}` means that run keeps its fixed grid on a narrow screen. `pane_state` also carries the user's own flags: `pinned` (it survives a page-wide clear), `locked` (it refuses any re-render or move), `minimized` (folded to a chip under its run; a re-render keeps it folded). Pane metadata plus the user's current typed form values, no HTML payload. `form_state` is the auto-captured per-pane form snapshot \u2014 keys are `#<id>:<n>` (element id), `@<name>:<n>` (element name), or positional `:<n>`; hidden/file/password inputs and `contenteditable=\"false\"` are never captured \u2014 read it to see what the user has typed into a pane even if they never hit a submit affordance (it survives refresh, navigation, and re-renders). Use to check what is already visible before rendering \u2014 on a page that already has content, to pick the `after` anchor and see how the user arranged it \u2014 or to find a mount to clear/replace. `owner` identifies who last rendered the pane: `null`/`\"claude\"` is yours; `\"service:<name>\"` means a local driver process owns it, and `\"pane:<id>\"` means another pane spawned it (`api.spawn`) \u2014 re-rendering over or clearing either is rejected unless you pass `force:true` to take it over.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "description_sha256": "d06e7d943a6d9af2b7ee52a982079b74470c38f231ac219dabf298d6b14350fa",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/mounts",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/mounts"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "save_component",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/save_component.js",
+      "description": "Promote an HTML/JS payload into a named, reusable component stored under `.web-chat/components/<name>/`. After saving, future renders can call `use_component` with this name + params instead of re-emitting the HTML. The `description` is what you read back in `list_components` to decide when to use this \u2014 make it specific (purpose, when to use, what params do). Optionally pair a host-side `service` (a service.js driver) so the component reflects LIVE state: while its pane is on the active graph node, the daemon runs the service and it writes the shared store the pane reacts to (git status, test runs, file watches). First run of a service prompts the user to approve it. Reach for a service-backed component whenever the user wants to WATCH or BROWSE live host state rather than get a one-shot answer \u2014 and check `list_components` first: builtins (git-dashboard, file-editor) may already cover it. BUILTIN NAMES ARE RESERVED: saving over one (`list_components` marks them `builtin`) is refused with `{ok:false, reserved:true, hint}` \u2014 either location, no override, because web-chat could never repair the builtin afterwards. To change what a builtin does, save your version under a DIFFERENT name and mount that.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "kebab-case component name (`^[a-z][a-z0-9-]*$`) \u2014 it becomes a directory name. Builtin names are reserved and refused."
+          },
+          "source": {
+            "type": "string",
+            "description": "HTML/JS source. Scripts inside can read `params` (passed by `use_component`)."
+          },
+          "description": {
+            "type": "string",
+            "description": "When/why to use this component. Critical for later discovery."
+          },
+          "params_schema": {
+            "type": "object",
+            "description": "JSON Schema for the params object the component expects."
+          },
+          "seed": {
+            "type": "string",
+            "description": "Optional seed.js source: a browser-side script run to compute default params when the component is mounted from the drawer."
+          },
+          "service": {
+            "type": "string",
+            "description": "Optional service.js host-side source. Presence makes this a service-backed component. Must `module.exports = { async start(ctx), async stop?() }`; ctx = { driver, params, mountId, name, log }. In v1 the service writes the store only (ctx.driver.setStore(...)) \u2014 no render. The daemon spawns it while its pane is on the active node and stops it when you navigate away or clear the pane."
+          },
+          "location": {
+            "type": "string",
+            "enum": [
+              "local",
+              "system"
+            ],
+            "description": "local = this project (.web-chat/components); system = ~/.web-chat/components (all projects). Defaults to local."
+          }
+        },
+        "required": [
+          "name",
+          "source",
+          "description"
+        ]
+      },
+      "description_sha256": "3a3c94fb34e8bde6947e33f586892b19bcb61ed7345f6623b7508f7cfa4d35fc",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/components",
+          "query": [],
+          "body": "the tool arguments as given",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/components/*"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "list_components",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/list_components.js",
+      "description": "List the saved components available here, across both tiers: this project (`location:\"local\"`, .web-chat/components) and this user (`location:\"system\"`, ~/.web-chat/components), deduped by name \u2014 `shadows` names the tiers a same-named entry hides, and `use_component` resolves the entry listed. Each carries `description`, `params_schema`, `has_seed`, `builtin:true` for the ones web-chat ships, and `has_service`: a host-side service.js the daemon runs while the pane is up, which is what keeps a pane showing LIVE HOST STATE (git, tests, logs, file editing) between your turns \u2014 prefer one of those over one-shot terminal output. Scan this before rendering from scratch \u2014 a component might already exist for what you need.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "description_sha256": "eec805fb04a68397ea71706a206939a3501fb7aa20a24d1d5923d1c92d0df84e",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/components",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/components/*"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_component",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_component.js",
+      "description": "Fetch the full source + metadata of a saved component. Use this to inspect before editing (re-save with the same name overwrites).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Component name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "description_sha256": "e722ee14c2bea7b85f673b26eac720b967f0127f0cc66810831bb2a56ea83910",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/components/:name",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/components/*"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "use_component",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/use_component.js",
+      "description": "Render a saved component by name with params. Equivalent to `render` \u2014 same mount-set, same ownership guard and `force`, same declared `signals`, same `after`/`place` page placement, same persisted form_state and per-pane theme \u2014 but it uses stored source instead of an inline payload, so it is cheaper and more consistent across calls.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Component name (must already be saved)."
+          },
+          "params": {
+            "type": "object",
+            "description": "Params passed to the component's script as the `params` global. Shape defined by the component's params_schema. Server-recognized keys ride here too: `form_reset:true` drops the mount's persisted form_state on this render (use when supplying fresh prefills); `routing:\"none\"`/`\"auto\"` overrides activity routing as in `render`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable mount id (replace-in-place). Reserved shell element ids (\"main\", \"topbar\", \"status\", \"overlay\", \u2026) are refused with {ok:false, reserved:true}, exactly as in `render`."
+          },
+          "target": {
+            "type": "string",
+            "description": "Target slot. Defaults to \"main\"."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Take over a pane owned by another writer (owner:\"service:<name>\" or \"pane:<id>\"). Without it, mounting over an owned pane soft-rejects with {ok:false, owned:true, owner}."
+          },
+          "after": {
+            "type": "string",
+            "description": "Position in the page sequence: place the pane right after this pane/markdown id, or \"start\" for the top. Omitted: a new pane appends and a re-render keeps its position. An unknown id still mounts (appended) and returns a `warning`. Pair with `write_markdown` to put headings and prose between runs of panes."
+          },
+          "place": {
+            "type": "object",
+            "description": "Proposed grid placement on the page's 12-column grid: `col` (1\u201312, the column it starts in; omit for auto flow), `span` (2\u201312 columns wide, shrunk to fit right of `col`; default the rest of the row), `rows` (2\u201324 rows of 40px; omit for auto height). Out-of-range values are clamped and the applied placement comes back as `place`. It also becomes this pane's \"Claude's layout\" baseline \u2014 the user can rearrange freely and \u21ba puts the run back. Omitted: a new pane is full-width auto-height and a re-render keeps whatever layout the user left.",
+            "properties": {
+              "col": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12
+              },
+              "span": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 12
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 24
+              }
+            }
+          },
+          "signals": {
+            "type": "array",
+            "description": "Optional declared wake signals (channels), exactly as in `render`: each entry names a store key this pane writes on a deliberate user action and how it should wake you. wake:\"queue\" (default) folds a browser write to that key into the user's queue rail, to send when they hit Push; wake:\"immediate\" wakes you the moment the pane writes it.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "The store key the pane writes (e.g. \"form_submit\")."
+                },
+                "wake": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "immediate"
+                  ],
+                  "description": "queue (default) or immediate."
+                },
+                "why": {
+                  "type": "string",
+                  "description": "Short human label for why this wakes you (shown in the queue rail)."
+                }
+              },
+              "required": [
+                "key"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "description_sha256": "6a1cfbbcff90ba25247ef1ccb0f3dbc068d4cf13b3372ada3d3b1dafb37d2263",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/components/:name/use",
+          "query": [],
+          "body": "{params, id, target, force, after, place}; `signals` moved under `params.signals`",
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "POST /api/components/:name/use"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_store",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_store.js",
+      "description": "Read keys from the shared store. The store is the canonical channel for surface\u2192Claude state \u2014 when a user clicks something or submits a form, the component writes to the store, and this is how you read it back. Without `keys`, returns the whole store.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Specific store keys to read. Omit to fetch everything."
+          }
+        }
+      },
+      "description_sha256": "3b174c0a280d6be076a36a2292c466fe54d16e0619d40ed482f4a60a675b56c1",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/store",
+          "query": [
+            "keys"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET|POST /api/store"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "set_store",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/set_store.js",
+      "description": "Write a patch into the shared store. Useful for seeding state a component will read on mount (e.g., setting a list of items before rendering a viewer of them).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "patch": {
+            "type": "object",
+            "description": "Object whose keys+values are merged into the store."
+          }
+        },
+        "required": [
+          "patch"
+        ]
+      },
+      "description_sha256": "7069d0829213c7d6744dfff40db1b84da1084c2aaa0ab7f4c293053b5257253f",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/store",
+          "query": [],
+          "body": "{patch}",
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET|POST /api/store"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "the route's {ok, store} echo is replaced by {ok, keys_written, store_keys, store_bytes} (lib/mcp/tools/set_store.js)",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_events",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_events.js",
+      "description": "Read the recent event log: renders, clicks, store mutations, graph operations, and pane script failures (kind:\"script-error\" \u2014 a pane's inline <script> threw at mount, with mount id + message; if a pane you rendered is unresponsive or its declared signal never fires, check for one of these FIRST). Each event carries a `source` \u2014 `\"browser\"` for user/page activity, `\"history\"` for the user putting an older version of a pane back (\u25f7 \u2192 Make current), otherwise the writer's owner (`\"claude\"`, `\"service:<name>\"`, `\"pane:<id>\"` \u2014 pane <id> spawning or closing its child panes, `\"server\"`) \u2014 use it to tell user actions from your own, a pane's or a driver's writes. Filter by sequence number (`since`) to catch up on what happened since you last looked. Returns `{events, latest, oldest, gap, dropped}`. The log is a ring buffer (last 1000 events), so if your `since` cursor predates `oldest`, `gap` is true and `dropped` counts the silently-evicted events. Sequence numbers restart at 1 whenever the daemon does (a `claude-web-chat restart`, a crash, an update), so a cursor from before that is ahead of the new log: `gap` is true with `reset:true` and no `dropped` count. On either kind of gap, resync from a full get_store/get_graph snapshot instead of trusting the partial catch-up.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "number",
+            "description": "Only return events with seq > this. Default 0 (all)."
+          }
+        }
+      },
+      "description_sha256": "036071db1664801cd72d22bd97483c49f79c69238a6eacc11fb6b1d68482be7c",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/events",
+          "query": [
+            "since"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/events/*"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_graph",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_graph.js",
+      "description": "Get the turn graph topology: every node's id/parent_id/created_at/author/trigger_summary/children plus a derived hierarchical `label` (e.g. n1.0, n1.1, n1.1.0) and bookmark fields (`bookmarked`/`name`), plus which node is `active` (where the next turn commits, with its `active_label`) and the current `lock` state. Use this to know where you are and reference prior nodes by their hierarchical label (e.g. n1.7) when talking with the user \u2014 the stored id is opaque. Also returns `pending_bookmark` \u2014 the name the user gave a graph they just started, which is applied to the next committed node, so `{active:null, pending_bookmark:{name:\"release\"}}` means \"you are at the root of a fresh graph the user called release\" \u2014 and `pending_reaim`, a navigation the user requested during your turn that will be applied the moment it ends (so `active` is about to move). Nodes written before no-change turns stopped committing may be marked `collapsed:true` \u2014 byte-identical to their parent, hidden in the graph viewer. Each surviving node reports the run it stands for as `absorbed`/`absorbed_count`, and `display_parent` is the edge the user actually sees (`parent_id` is still the truth on disk). Reference a node by the label the user can see: a collapsed one is not on their screen. `lock.message` is capped at 200 characters; when it is cut, `lock.message_bytes` carries the true length.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "description_sha256": "8af5e1c44c1a4112643b725bd4eb430e2dec594f0d3089572099cf724d003252",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/graph",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/graph"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "lock.message capped at 200 characters with message_bytes beside it (lib/mcp/shape.js capLock)",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_active",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_active.js",
+      "description": "Get the active node id, its hierarchical `label` (e.g. n1.7) \u2014 the parent of the next commit \u2014 and the current turn `lock` (null when no turn is in flight). Cheaper than `get_graph` when you only need these. `lock.message` is the user's prompt for the turn in flight, capped at 200 characters; when it is cut, `lock.message_bytes` carries the true length.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "description_sha256": "d60d542944a1f65e020c765933972874c4444ca3d84aee92bb6c7346acbc44d5",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/graph",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/graph"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "projected to {active, active_label, lock} with lock.message capped (lib/mcp/shape.js capLock)",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "diff_nodes",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/diff_nodes.js",
+      "description": "Diff two graph states instead of pulling both full snapshots into context and comparing by hand. Each of `a` and `b` is a node reference: a hierarchical label (e.g. `n1.2`), an opaque id (`n3`), the keyword `active` (the current commit point), or `live` (the uncommitted live surface \u2014 use this to see what the current turn has changed vs a prior node). Returns a token-cheap structural diff: `mounts` ({added, removed, changed, unchanged}) where each changed mount reports only the fields that differ \u2014 html as a truncated unified-diff (hunks + added/removed line counts), other fields as {from,to}; `markdown` ({added, removed, changed, unchanged}, a changed item's text as a unified diff); `order` (null, or {from, to} page sequences when items both sides hold were rearranged); `runs` (null, or {from, to} per-run layout flags); `store` ({added, removed, changed, unchanged}); node-level `theme` token/css deltas; and `elements` ({added, removed, changed, orphaned}: the comments, highlights and box grabs each side carries, by id and version \u2014 an entry is {id, type, v, shared}, a changed one {id, type, from_v, to_v, shared, changes} with `changes` naming `replied`, `edited`, `shared` and/or `anchor`, and `orphaned` the elements of `b` whose anchor the page last could not find; ids and types only, never text \u2014 read a comment or highlight with get_comments (its `type`), a box grab with get_captures \u2014 and a private element is withheld). Unchanged content is listed by id/key only, never echoed. Optional `context` sets html hunk context lines (default 2).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string",
+            "description": "First node: hierarchical label (n1.2), opaque id (n3), `active`, or `live`."
+          },
+          "b": {
+            "type": "string",
+            "description": "Second node: same forms as `a`."
+          },
+          "context": {
+            "type": "number",
+            "description": "Context lines around each html diff hunk. Default 2."
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ]
+      },
+      "description_sha256": "c6e37726ee076b9a959ca87c4d0a12d681e8657e8ff34f91d1e60ace91ff9b70",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/graph/diff",
+          "query": [
+            "a",
+            "b",
+            "context"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/graph/diff"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_comments",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_comments.js",
+      "description": "Pull the user's comment pins from the surface \u2014 notes they attached to specific points on the page by clicking an element and typing. Returns ONLY pins the user shared (a per-pin toggle, default on; private pins are withheld). Each pin: `{id, seq, created_at, text, anchor, anchor_label, replies}`. `text` is the ROOT note; `anchor_label` describes what it's pinned to (e.g. `plan: \"Timeline\"`); `replies` is the thread, `[{author:'user'|'claude', text, at}]` oldest\u2192newest. On a `[comment] reply` wake the ask is the LATEST entry in `replies[]` (the user's newest message), NOT `pin.text` \u2014 answer that, in-thread, with reply_comment. Use `since` (a seq cursor; pass the prior `next_cursor`) to fetch only new/updated pins, `mount` to scope to one pane. Returns `{comments, next_cursor, respond_hint}` \u2014 `respond_hint` is ONE top-level field (not per pin) routing you to the respond-to-comment skill. Check this at the start of a turn when the user mentions leaving comments/notes. The same read serves every element type: pass `type: 'highlight'` for the text the user highlighted on the page and shared (a `Highlight sent to Claude` queue item names one) \u2014 each `{id, v, anchor, color, note, shared, seq, created_at}`, where `anchor.quote.exact` is the highlighted text and `note` the user's note on it (often empty) \u2014 returned as `{type, elements, next_cursor}`; only comments take replies (reply_comment).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "number",
+            "description": "Only return pins with seq greater than this (exclusive). Pass the prior call's next_cursor to get just new/edited pins."
+          },
+          "mount": {
+            "type": "string",
+            "description": "Scope to pins anchored in this mount id only."
+          },
+          "type": {
+            "type": "string",
+            "description": "The element type to read: 'comment' (the default) or 'highlight'."
+          }
+        }
+      },
+      "description_sha256": "366d63e16da6d524ce94f46242d5660de077c19669e4aa63422a91afa7cbd92f",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/elements",
+          "query": [
+            "type",
+            "shared_only",
+            "since",
+            "mount"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/elements/*",
+            "need": "read"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "type comment: {comments, next_cursor, respond_hint}; any other type: {type, elements, next_cursor}",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "reply_comment",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/reply_comment.js",
+      "description": "Reply to a user's comment pin \u2014 post a short response into its thread, Google-Docs style. The user sees your message under their note, the pin's marker turns green (\"Claude answered\"), and they can reply back to continue the thread. Read the pin first with get_comments (it carries the anchor and any prior `replies`); keep the reply short and specific \u2014 a margin comment, not an essay. Ask a follow-up only if you're genuinely blocked. Args: {id, text}. Returns the updated pin.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The comment pin id (from get_comments, e.g. \"c3\")."
+          },
+          "text": {
+            "type": "string",
+            "description": "Your reply. Short and specific \u2014 a doc comment, not an essay."
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ]
+      },
+      "description_sha256": "b555bb951a3278115e9cf33fc1df95c912eb5cd07de438c2fe0d62860486b041",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/elements/:id/reply",
+          "query": [],
+          "body": "{text, author:'claude'}",
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "POST|PATCH|DELETE /api/elements/*",
+            "need": "full"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "{ok, pin} from the write's {ok, element}",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_captures",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_captures.js",
+      "description": "List tab-stream captures \u2014 page snapshots the user sent from the browser extension. Returns each capture's DISTILLED content (the profile's output), which is the agent-visible tier; the full raw DOM is NOT included. Drill into the raw with inspect_capture only when the distillation dropped something you need. Without args, lists captures on the live surface; pass `node` to read a committed graph node's captures, or `since` (a seq cursor) for only newer ones. Captures auto-collect in the queue rail, so a fresh capture reaches you when the user hits Push \u2192 Claude (or via parked delivery on their next message) \u2014 no wait to arm.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string",
+            "description": "A committed node id (e.g. 'n5') to read that node's captures instead of the live surface."
+          },
+          "since": {
+            "type": "number",
+            "description": "Only return captures with seq greater than this (catch-up cursor)."
+          }
+        }
+      },
+      "description_sha256": "9a3fcdeca39d5707400ae4846d92513f7d7393b2aeff2db265eaa6b8cae58879",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/captures",
+          "query": [
+            "node",
+            "since"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/captures/*"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "inspect_capture",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/inspect_capture.js",
+      "description": "Drill into a capture's RAW DOM \u2014 the on-demand tier of tab-stream storage. get_captures gives you the distilled summary; reach for this only when you need detail the profile dropped. Scope your read so you don't pull the whole page back into context: pass `selector` (CSS selector \u2192 matching elements), `query` (text \u2192 surrounding context windows), or `profile` (re-run a named profile, e.g. 'tables', over the raw). With no scope it returns the raw DOM (capped) \u2014 prefer scoping. A box grab's capture (kind 'box-grab', from get_captures) returns its clipped outerHTML here, with the picture the user saw attached as an image beside it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "capture_id": {
+            "type": "string",
+            "description": "The capture id (e.g. 'cap3'), from get_captures or the tab_capture store key."
+          },
+          "selector": {
+            "type": "string",
+            "description": "CSS selector; returns matching elements (tag, text, html), capped."
+          },
+          "query": {
+            "type": "string",
+            "description": "Text to find; returns occurrences with surrounding context windows."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Re-run a named profile over the raw DOM (e.g. tables). The re-run gets the capture's own URL, so url-derived fields resolve exactly as they did at ingest."
+          },
+          "max": {
+            "type": "number",
+            "description": "Max matches/snippets to return (default 20)."
+          },
+          "context": {
+            "type": "number",
+            "description": "Chars of context around each query hit (default 200)."
+          }
+        },
+        "required": [
+          "capture_id"
+        ]
+      },
+      "description_sha256": "67073f464d26acccd57731b47c3d4f0d9d2e401d02263a0163428610b69242dc",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/captures/:id/raw",
+          "query": [
+            "selector",
+            "query",
+            "profile",
+            "max",
+            "context"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/captures/*"
+          },
+          "timeout_ms": null
+        },
+        {
+          "when": "the capture's url is element:<id> (a box grab)",
+          "method": "GET",
+          "path": "/api/elements/:id/grab",
+          "query": [
+            "as"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/elements/*",
+            "need": "read"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "a box grab answers MCP content: one text item and one image item (the grab's PNG), passed through by lib/mcp/index.js isContentResult",
+      "content": [
+        "text",
+        "image"
+      ]
+    },
+    {
+      "name": "set_theme",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/set_theme.js",
+      "description": "Restyle the web-chat surface (chrome + pane content) by setting design tokens and/or a raw-CSS escape hatch at a scope. A theme = { tokens: {\"--wc-\u2026\":\"value\"}, css?: \"raw css\" }. Cascade is pane \u2192 node \u2192 global: the most specific layer wins per token, and unset tokens fall through to the layer below (then to built-in defaults). Scopes: \"global\" sets the web-chat-wide default (persists in the project theme.json); \"node\" attaches a theme to a graph node by its stored id (travels with the node, shows on its surface and glance preview); \"pane\" themes one mount by its id (does NOT re-render its content). Tokens cross BOTH chrome and shadow-DOM pane content (they inherit through shadow roots). Raw CSS does NOT cross the shadow boundary: at global/node scope `css` styles chrome only; at pane scope `css` styles that pane's content only \u2014 so tokens are the only lever that reaches both. Set `clear:true` to remove the theme at that scope. Core token vocabulary (CSS custom properties, all `--wc-` prefixed; values are partial \u2014 unset ones fall through to defaults): --wc-bg (stage background), --wc-fg / --wc-fg-bright (text / headings), --wc-panel-bg (panes, drawer, popovers), --wc-header-bg (topbar, pane & section headers), --wc-muted / --wc-muted-dim (secondary / tertiary text), --wc-border / --wc-border-light / --wc-border-soft, --wc-accent / --wc-accent-dark / --wc-accent-fg / --wc-accent-text (interactive colour, its shade, ink on it, accent labels), --wc-gold / --wc-gold-bg / --wc-gold-fg (bookmarks, viewing, lock), --wc-green / --wc-green-fg (live, success, commit), --wc-comment (comment pins, errors), --wc-rust (captures), --wc-edge (graph edges), --wc-scrim (modal backdrop), --wc-radius / --wc-radius-sm / --wc-radius-lg (corner radii), --wc-shadow, --wc-font / --wc-mono / --wc-display / --wc-reading (UI, monospace, heading and prose font stacks), --wc-content-bg / --wc-content-fg / --wc-content-accent (tokens pane CONTENT opts into), --wc-theme-transition (swap-animation duration, e.g. \"280ms\" or \"0ms\" to disable). The chrome reads finer ones too (text ramp, depth layers, elevation, topbar/rail/keycap surfaces) \u2014 get_theme on a builtin pack shows them all. Light/dark: pass `modes: {light: {tokens, css?}, dark: {tokens, css?}}` for per-mode values over the mode-free `tokens`; declare one mode only for a single-mode theme (the viewer's \u25d1 toggle is then disabled).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "node",
+              "pane"
+            ],
+            "description": "Which layer to set."
+          },
+          "target": {
+            "type": "string",
+            "description": "For scope \"node\": the node's stored id. For scope \"pane\": the mount id. Omit for \"global\"."
+          },
+          "tokens": {
+            "type": "object",
+            "description": "Partial map of --wc-* token \u2192 CSS value. Unset tokens fall through the cascade."
+          },
+          "css": {
+            "type": "string",
+            "description": "Raw CSS escape hatch. Global/node = chrome only; pane = that pane's content only."
+          },
+          "modes": {
+            "type": "object",
+            "description": "Optional per-mode layers { light?: {tokens, css?}, dark?: {tokens, css?} } applied over `tokens`/`css` in that mode."
+          },
+          "clear": {
+            "type": "boolean",
+            "description": "Remove the theme at this scope (ignores tokens/css)."
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "description_sha256": "9c3f1d70133c25da79977d164b625a4a131dbb8978e2ac374e8a610a0539965a",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/theme",
+          "query": [],
+          "body": "the tool arguments as given",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "POST /api/theme"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "get_theme",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/get_theme.js",
+      "description": "Read the resolved theme at a scope, after the pane \u2192 node \u2192 global cascade. scope \"global\" returns the web-chat-wide default; \"node\" returns global \u2295 that node's theme; \"pane\" returns the effective global \u2295 active-node \u2295 pane tokens that the pane actually sees, plus its content `css` and the inherited `chromeCss`. Resolved at one light/dark `mode` (default light; a single-mode theme resolves to its own) \u2014 the result reports `mode` and the global theme's `modes`. Use this to see what a pane/node currently resolves to before adjusting it with set_theme.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "node",
+              "pane"
+            ],
+            "description": "Which layer to resolve. Defaults to \"global\"."
+          },
+          "target": {
+            "type": "string",
+            "description": "Node id (scope \"node\") or mount id (scope \"pane\")."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark"
+            ],
+            "description": "Which mode to resolve. Defaults to light."
+          }
+        }
+      },
+      "description_sha256": "41f768969a9b2d047dc7a3de2d47b395457871765c4b2e3c6834f5e501c78282",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/theme",
+          "query": [
+            "scope",
+            "target",
+            "mode"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/theme"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "save_theme",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/save_theme.js",
+      "description": "Save a named, reusable theme to the local (this project's .web-chat) or system (~/.web-chat) library so it can be re-applied later with apply_theme. A theme = { tokens: {\"--wc-\u2026\":\"value\"}, css?: \"raw css\", modes?: {light, dark} } \u2014 see set_theme for the token vocabulary and modes. Pass set_default:true to also make it the web-chat-wide default at that location (project or system), which takes effect immediately. Use when you compose a look worth keeping; otherwise set_theme applies an ad-hoc theme without saving.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Theme name (letters, digits, space, dot, dash; becomes <name>.json)."
+          },
+          "location": {
+            "type": "string",
+            "enum": [
+              "local",
+              "system"
+            ],
+            "description": "local = this project; system = ~/.web-chat (all projects). Defaults to local."
+          },
+          "tokens": {
+            "type": "object",
+            "description": "Partial map of --wc-* token \u2192 CSS value."
+          },
+          "css": {
+            "type": "string",
+            "description": "Optional raw-CSS escape hatch baked into the saved theme."
+          },
+          "modes": {
+            "type": "object",
+            "description": "Optional per-mode layers { light?: {tokens, css?}, dark?: {tokens, css?} } \u2014 see set_theme."
+          },
+          "set_default": {
+            "type": "boolean",
+            "description": "Also set this as the web-chat-wide default at the chosen location."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "description_sha256": "e0128dfcf3e7de9670462918829647032091cbdb69e956d661f802d89ae2847a",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/themes",
+          "query": [],
+          "body": "the tool arguments as given",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "POST /api/themes"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "list_themes",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/list_themes.js",
+      "description": "List every named theme apply_theme can resolve: the ones web-chat ships (`location:\"builtin\"`) plus the local (this project) and system (~/.web-chat) libraries, each with its name, location, mode-free tokens and css, and the light/dark `modes` it declares (names only \u2014 one entry means a single-mode theme). The builtins are the packs, each with a light and a dark mode: earthy (the stock look), paper and georgetown-blue (`georgetown` is its old name and still applies it). Builtin rows carry a display `title`. A builtin name always means the builtin: a theme saved under one before it became a builtin is not applied, and shows only as `shadows` + a `hint` on the builtin's row. Check this before composing a theme from scratch \u2014 there may already be a saved one to apply_theme.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "description_sha256": "e5fcb4ebb1e43db74af0b3a687daa1f69f56b42a372611f98d7236be7087a4e6",
+      "routes": [
+        {
+          "when": "always",
+          "method": "GET",
+          "path": "/api/themes",
+          "query": [],
+          "body": null,
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "GET /api/themes"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "apply_theme",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/apply_theme.js",
+      "description": "Apply a named theme at a scope. The name resolves builtin first (case-insensitively), then the local library (this project), then system (~/.web-chat) \u2014 so a builtin name cannot be shadowed by a saved theme; list_themes shows which is which. Same scopes and pane \u2192 node \u2192 global cascade as set_theme: \"global\" sets the web-chat-wide default, \"node\" attaches it to a node id, \"pane\" themes a mount id. Use list_themes to discover names. To apply an ad-hoc (unsaved) theme, use set_theme instead.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of a saved theme."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "node",
+              "pane"
+            ],
+            "description": "Which layer to apply it at."
+          },
+          "target": {
+            "type": "string",
+            "description": "Node id (scope \"node\") or mount id (scope \"pane\")."
+          }
+        },
+        "required": [
+          "name",
+          "scope"
+        ]
+      },
+      "description_sha256": "00d53e7bd3b69ff9e19c1b84fd33e0ca252e22841af89195e9ef8f3bb33556d0",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/theme/apply",
+          "query": [],
+          "body": "the tool arguments as given",
+          "portal_v12": {
+            "verdict": "allowed",
+            "rule": "POST /api/theme/apply"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "export",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/export.js",
+      "description": "Export rendered work to a file the user can attach to a message or email. format 'html' (default) writes ONE page (a graph node) as a self-contained, interactive .html \u2014 every pane's HTML/JS, the store snapshot and the resolved theme inlined, opening in any browser with no server and no network; pass `node` as a hierarchical label (e.g. n1.7), a stored id, 'active' (default \u2014 where the next turn commits), or 'live' (the current uncommitted surface). format 'replay' writes a REPLAY \u2014 the surface played forward node by node down one lineage, `from` an earlier node `to` a later one \u2014 as one self-contained .html player; format 'gif' renders that replay to an animated GIF, and 'mp4' / 'webm' to a video (every one needs a Chrome-family browser on the machine, answering {error, code:'chrome-not-found', hint} when there is none; mp4/webm also need ffmpeg, answering code:'ffmpeg-not-found' without it \u2014 a GIF uses ffmpeg when present and a built-in encoder otherwise). For a replay, `to` (or `node`) defaults to the active node and `from` to the nearest bookmarked ancestor, else the root; captions show Claude's reply summary and each node's label and time, and leave the user's prompts OUT unless include_prompts is true \u2014 pass it only when the user asked for their prompts in the file. Files land under .web-chat/exports/ and the absolute path is returned. Use when the user wants to share, save, or send a page \u2014 or show how the work evolved.\n\nREPLAY SCRIPTS \u2014 direct the replay instead of playing every node at one pace. Reach for `script` when the user wants a walkthrough, a demo, or a README GIF of how something evolved. How: call get_graph, pick the two moments that bound the story (`from`, `to`), then write `steps` in path order \u2014 one step per meaningful moment (`node`), GROUP runs of trivial or in-between nodes into one beat (`nodes: [...]`, consecutive, shown as the group's last node), give the important moments longer holds (`hold_ms`, e.g. 4000\u20136000; quick beats 1000\u20131500), and write a SHORT caption per step (a few words: what changed and why it matters \u2014 it replaces the automatic reply line). Nodes no step names are not shown. Every node must lie on the from \u2192 to lineage, in order, each once; a group must be consecutive. Each frame smooth-scrolls to what its step changed \u2014 the newest pane's top to the top of the window, then down to changes below the fold; a step's `scroll` overrides that: 'none' holds still, or name one pane/markdown id on that node's page to look at it instead. Holds clamp to 500\u201320000 ms. A bad script is refused with {error, code, step} naming the step \u2014 fix it and call again. Without `steps` a script plays every drawn node at `default_hold_ms`. `open: true` shows the replay in the user's browser player (play/pause/scrub, their own \u21a7 GIF) WITHOUT writing a file \u2014 use it to let the user watch before you export; it needs a browser on the surface (`viewers: 0` means nobody saw it). With `script` and no `format`, the file is a 'replay' .html; pass format 'gif' / 'mp4' / 'webm' for a GIF or video of the same script.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "html",
+              "replay",
+              "gif",
+              "mp4",
+              "webm"
+            ],
+            "description": "'html' (default): one page. 'replay': the lineage as a self-contained .html player. 'gif': the lineage as an animated GIF. 'mp4' (H.264) / 'webm' (VP9): the lineage as a video \u2014 needs ffmpeg on the machine."
+          },
+          "node": {
+            "type": "string",
+            "description": "For 'html': which node to export \u2014 a hierarchical label ('n1.7'), a stored id, 'active' (default), or 'live'. For a replay format it means the same as `to`."
+          },
+          "from": {
+            "type": "string",
+            "description": "Replay formats: the node to start from (label or id). Default: the nearest bookmarked ancestor of `to`, else its root."
+          },
+          "to": {
+            "type": "string",
+            "description": "Replay formats: the node to arrive at (label or id). Default: the active node."
+          },
+          "hold_ms": {
+            "type": "number",
+            "description": "Replay formats: how long each node is held, in ms (500\u201320000, default 2500)."
+          },
+          "transition": {
+            "type": "string",
+            "enum": [
+              "cut",
+              "fade"
+            ],
+            "description": "Replay formats: 'cut' (default) or 'fade' between nodes."
+          },
+          "captions": {
+            "type": "string",
+            "enum": [
+              "on",
+              "none"
+            ],
+            "description": "Replay formats: 'on' (default) \u2014 a caption per node: its label, time and Claude's reply summary (plus the prompt when include_prompts is true) \u2014 or 'none' for no caption bar."
+          },
+          "include_prompts": {
+            "type": "boolean",
+            "description": "Replay formats: true puts the user's own prompts in the captions (they may be private). Default false: no prompt text anywhere in the file."
+          },
+          "width": {
+            "type": "number",
+            "description": "'gif'/'mp4'/'webm': output width in px (320\u20131920, default 960); the height follows `size` (16:10 by default), and a frame of more than 1920 by 1200 px in area shrinks to fit, keeping its shape. The result gives the width and height drawn."
+          },
+          "fps": {
+            "type": "number",
+            "description": "'gif'/'mp4'/'webm': frames per second for motion \u2014 a fade, and the scroll to each change \u2014 and a video's frame rate (1\u201330, default 10). Left out, a replay too long for the 1000-frame cap is drawn at the highest fps that fits; a named fps is kept, and a replay over the cap at it is refused."
+          },
+          "size": {
+            "type": "string",
+            "description": "Replay formats: the page size each frame is laid out at, 'WxH' in CSS px \u2014 digits and a lowercase x, e.g. '1280x800' (the default); a width beyond 320\u20133840 or a height beyond 240\u20132160 is clamped, and any other form is refused. It also gives a GIF or video its shape; a width of 900 or less lays the page out as a narrow screen does."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark"
+            ],
+            "description": "Draw the file in this light/dark mode of the theme. Default: light, whatever the user's browser shows \u2014 pass 'dark' only when the user asks for a dark copy."
+          },
+          "script": {
+            "type": "object",
+            "description": "A replay SCRIPT (see above): the two moments and, optionally, timed and captioned beats between them. Replaces `from`/`to` (a top-level from/to/include_prompts fills in what the script leaves out).",
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "The first moment: a node label or id, an ancestor of `to`. Default: the nearest bookmarked ancestor, else the root."
+              },
+              "to": {
+                "type": "string",
+                "description": "The last moment: a node label or id. Default: the active node."
+              },
+              "title": {
+                "type": "string",
+                "description": "A title shown over the captions and naming the document (\u2264120 chars)."
+              },
+              "default_hold_ms": {
+                "type": "number",
+                "description": "Hold for steps that set none (500\u201320000; default 2500)."
+              },
+              "include_prompts": {
+                "type": "boolean",
+                "description": "Put the user's own prompts in the captions. Default false."
+              },
+              "steps": {
+                "type": "array",
+                "description": "The beats, in path order. Omit to play every node on the path at the default hold.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "node": {
+                      "type": "string",
+                      "description": "One node (label or id) \u2014 this beat shows it."
+                    },
+                    "nodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "A group of CONSECUTIVE nodes played as one beat: shows the last, the caption lists them all."
+                    },
+                    "hold_ms": {
+                      "type": "number",
+                      "description": "How long this beat is held (500\u201320000 ms)."
+                    },
+                    "caption": {
+                      "type": "string",
+                      "description": "A short caption for this beat (\u2264280 chars)."
+                    },
+                    "transition": {
+                      "type": "string",
+                      "enum": [
+                        "cut",
+                        "fade"
+                      ],
+                      "description": "How this beat comes in."
+                    },
+                    "scroll": {
+                      "type": "string",
+                      "description": "Where the frame looks during this beat: 'auto' (default \u2014 scroll to what the node added, then what it changed), 'none' (hold still), or the id of one pane or markdown item on the node's page."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "open": {
+            "type": "boolean",
+            "description": "true: open the replay (the `script`, or from/to) in the user's browser player instead of writing a file \u2014 nothing is written and `format` is ignored."
+          }
+        }
+      },
+      "description_sha256": "2c72acb7a0b4d9f1178b2392c7ff614ea9231599c984c0330429e4ab07b71c72",
+      "routes": [
+        {
+          "when": "format 'html' (the default) and no open",
+          "method": "GET",
+          "path": "/api/export/:ref",
+          "query": [
+            "format",
+            "mode"
+          ],
+          "body": null,
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "GET /api/export/:ref",
+            "note": "refused by its query rule: format=file"
+          },
+          "timeout_ms": null
+        },
+        {
+          "when": "a replay format (replay, gif, mp4, webm) and no open",
+          "method": "POST",
+          "path": "/api/replay/render",
+          "query": [],
+          "body": "{format, script?|from?,to?, hold_ms, transition, captions, include_prompts, width, fps, size, mode}",
+          "timeout_ms": 360000,
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/replay/render"
+          }
+        },
+        {
+          "when": "open: true",
+          "method": "POST",
+          "path": "/api/replay/open",
+          "query": [],
+          "body": "{script?|from?,to?, include_prompts?}",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/replay/open"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": "html: {ok, path, label, hint} or {error, ref}; replay formats: {ok, format, path, label, frames, encoder, bytes, fps?, width?, height?, include_prompts, hint}; a refusal the route explains: {error, code, step?, which?, hint?}; open: {ok, opened, from, to, steps, viewers, hint}",
+      "content": [
+        "text"
+      ]
+    },
+    {
+      "name": "write_markdown",
+      "source": "web-chat-dev.worktrees/ae-int/lib/mcp/tools/write_markdown.js",
+      "description": "Write a chunk of MARKDOWN prose onto the page, between or around panes. The page is one ordered sequence of markdown items and panes: consecutive panes form a grid run, and markdown sits between runs \u2014 so use this for the headings and short connective prose that organise a page (\"## Options\", one sentence of framing, a caption under a chart), and `render` for anything interactive or visual. `#`/`##` HEADINGS BUILD THE PAGE'S CONTENTS NAV (`###` is a sub-heading with no row) and the first `#` is the page's title \u2014 a page with several parts opens with one `#` title and heads each part with `##`. Replace-by-id like render: give headings stable ids (`md-title`, `md-results`) and reuse one to rewrite it in place (it keeps its position unless you pass `after`); omit `id` and the server assigns `md-<n>` (returned as `id`). `after` positions the item: the id of any pane or markdown item already on the page, or \"start\"; omitted, a new item goes at the end. An unknown `after` still writes (appended) and returns a `warning`. `render`/`use_component` take the same `after`, so you can build a page top to bottom: heading \u2192 panes \u2192 heading \u2192 panes. Subset: paragraphs, `#`\u2013`###` headings, **strong**, *em*, `code`, fenced code blocks, `-` and `1.` lists, [links](https://\u2026) (http/https/mailto/relative only) \u2014 no tables or images: render those as a pane. Everything is ESCAPED \u2014 raw HTML shows as literal text, never markup; put markup in a pane. Keep prose short: the text is capped (a longer write is refused with `too_large`), and the chat is where reasoning belongs. A markdown item is part of the surface like a pane: the write folds into this turn's node, `clear` removes one by id (and a page-wide `clear {}` takes them all, except the markdown directly above a pinned pane, which stays with it), and `list_mounts` lists them with their headings. Panes and markdown share one id space \u2014 an id a pane already holds is refused with `conflict`, and \"start\" (the page-top anchor) is never an id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The markdown. `#`/`##` headings become entries in the page's Contents nav (`###` is a sub-heading with no row); the first `#` is the page title."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable item id \u2014 reuse to replace in place. Omitted: the server assigns md-<n>. Must not be a pane's id or a reserved shell element id."
+          },
+          "after": {
+            "type": "string",
+            "description": "Place the item right after this pane/markdown id, or \"start\" for the top. Omitted: a new item appends; a replaced item keeps its position."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Replace an item another writer (owner:\"service:<name>\") owns. Without it, that write soft-rejects with {ok:false, owned:true, owner}."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "description_sha256": "9626e442288daacd1319ede57d50ec49f8a04d9d454c4c230df2b98a3e2f1e63",
+      "routes": [
+        {
+          "when": "always",
+          "method": "POST",
+          "path": "/api/markdown",
+          "query": [],
+          "body": "{text, id, after, force}",
+          "portal_v12": {
+            "verdict": "refused",
+            "rule": "* /api/markdown"
+          },
+          "timeout_ms": null
+        }
+      ],
+      "shaping": null,
+      "content": [
+        "text"
+      ]
+    }
+  ]
+}

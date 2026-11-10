@@ -1,0 +1,18 @@
+{
+  "ts": "2026-10-28T15:22:05Z",
+  "first_ts": "2026-10-28T15:22:05Z",
+  "count": 1,
+  "enforcer": "connector",
+  "sink": "log",
+  "principal": {"v": 1, "user": "usr_01jbznq4s6t8v0w2x4y6z8a0b2", "machine": null, "chat": null, "session": "srf_01jbzrt7w9x1y3z5a7b9c1d3e5", "writer_class": "remote", "verified": true, "verified_by": "hub", "via": "shell"},
+  "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "decision_id": "dec_01jbzgj9m1n3p5q7r9s1t3v5w7",
+  "origin": "session",
+  "method": "POST",
+  "path": "/api/shutdown",
+  "rule": "* /api/shutdown",
+  "need": "host_only",
+  "reason": "host-only",
+  "status": 403
+}

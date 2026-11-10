@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/08-frame-message.json",
+  "title": "Chrome embedding: the frame bridge message set (stage A)",
+  "description": "The postMessage set between the hub shell (the parent window, at embed_parent) and the embedded chrome (the framed surface endpoint) in stage A of contract 08. It is 06's bridge (schemas/06-embed-message.json, C-06.36) plus 08's additions, under the same bridge version: wc_embed stays 1, so an alpha.3 chrome (web-chat-dev.worktrees/ae-int/public/app/embed-bridge.js BRIDGE_VERSION) drops a kind it does not know and the shell greys out what a ready without `features` cannot do. Every message valid against 06's schema is valid here (06 section 5: C-06.36 remains a subset). The guards are 06's: the chrome accepts a message only when event.isTrusted, event.source === window.parent and event.origin === embed_parent, and posts only with targetOrigin embed_parent; the shell accepts a message only from the frame's contentWindow at the chat's origin (ServerWebChat lib/shell/public/model.mjs readBridgeMessage). Nothing here grants anything: a command is a chrome action the user can already take in the frame, whoami and theme change what the chrome shows and says, hotkeys only unbinds, and status is display only, because pane scripts share the chrome's realm (C-08.5).",
+  "oneOf": [
+    { "$ref": "#/$defs/command" },
+    { "$ref": "#/$defs/mode" },
+    { "$ref": "#/$defs/whoami" },
+    { "$ref": "#/$defs/theme" },
+    { "$ref": "#/$defs/hotkeys" },
+    { "$ref": "#/$defs/ready" },
+    { "$ref": "#/$defs/status" },
+    { "$ref": "#/$defs/key" }
+  ],
+  "$defs": {
+    "command": {
+      "type": "object",
+      "description": "Shell to chrome: run one chrome action (06 C-06.36, unchanged). The enum is 06's; 08 adds no action.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "action"],
+      "properties": {
+        "wc_embed": { "const": 1, "description": "Bridge version (06's, kept)." },
+        "type": { "const": "command" },
+        "action": {
+          "enum": ["chrome.palette", "chrome.graph", "chrome.add", "chrome.bookmark", "chrome.replay", "chrome.prev", "chrome.next", "chrome.rail", "chrome.push", "chrome.chat", "chrome.legend", "chrome.mode", "chrome.settings", "chrome.export", "chrome.wipe", "chrome.new-graph", "chrome.escape"],
+          "description": "An action id of the chrome's hotkey registry, run through runAction(id) with its enabled and context honoured (public/app/hotkeys.js:314, public/app/embed-bridge.js:124). chrome.sessions is deliberately absent."
+        }
+      }
+    },
+    "mode": {
+      "type": "object",
+      "description": "Shell to chrome: set light or dark (06 C-06.36, unchanged). The shell sends it after every ready.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "mode"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "mode" },
+        "mode": { "enum": ["light", "dark"] }
+      }
+    },
+    "whoami": {
+      "type": "object",
+      "description": "Shell to chrome (C-08.9): who is looking, as the hub knows it. Sent after every ready, after mode. The chrome keeps it for what it shows and says (an identity line, the composer's wording) and never decides access from it; access is the relay's and the daemon's (04). The object is the one the module takes at mount in stage B (08-mount-options.json $defs/whoami), so the two stages share one shape.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "whoami"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "whoami" },
+        "whoami": { "$ref": "08-mount-options.json#/$defs/whoami" }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "description": "Shell to chrome (C-08.10): the tokens the hub's theme supplies for this chat, applied by the chrome as the shell layer of its cascade: above the daemon's global layer (a hub token beats the project's global theme for that token), below node and pane. Names are --wc-* custom properties from CANONICAL_TOKENS (lib/server/theme-packs.js:25), appended to the served module by its route; the chrome applies sanitizeTokenValue to every value and drops any value refusedTokenValue refuses (url(, src(, image-set(, a backslash and the rest, lib/core/theme-values.js:34-58), the strip and the refusal both, since the chrome serves no CSP; both from lib/core/theme-values.js served as an ES module through a browserModuleSource, as lib/core/markdown, anchors and tier-merge are (lib/server/routes/page.js:22-24, :72-82). An empty tokens object clears the layer. Light or dark stays the mode message's.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "tokens"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "theme" },
+        "tokens": { "$ref": "#/$defs/tokens", "description": "The mode-free tokens." },
+        "modes": {
+          "type": "object",
+          "description": "Tokens that hold in one mode only, over `tokens`, as a theme's `modes` do.",
+          "additionalProperties": false,
+          "properties": {
+            "light": { "type": "object", "additionalProperties": false, "required": ["tokens"], "properties": { "tokens": { "$ref": "#/$defs/tokens" } } },
+            "dark": { "type": "object", "additionalProperties": false, "required": ["tokens"], "properties": { "tokens": { "$ref": "#/$defs/tokens" } } }
+          }
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "description": "Custom property name to value. At most 128 entries; a value is at most 256 characters and is sanitized by the receiver.",
+      "maxProperties": 128,
+      "propertyNames": { "pattern": "^--wc-[a-z][a-z0-9-]{0,62}$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "hotkeys": {
+      "type": "object",
+      "description": "Shell to chrome (C-08.11): the chords the shell reserves. The chrome's registry binds none of them (a reserved chord reads as unbound in the merged bindings) and, when one is pressed inside the frame, the chrome posts `key`. Chords are spelt as public/app/hotkeys.js chordOf spells them (`Mod+K`, `Shift+X`, `K`, `?`, `Shift+?`, `Mod+/`), on lib/core/toolbar-record.js validChord's grammar with an optional Mod+: an uppercase letter, a digit, one of [ ] / ? , . ; ' - = \\ and the backtick, Space, Enter, the four arrows or F1 to F12; Escape and Tab are never chords (hotkeys.js NOT_KEYS). Replaces the previous set each time; an empty list reserves nothing.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "reserved"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "hotkeys" },
+        "reserved": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(Mod\\+|Shift\\+)?([A-Z0-9]|[\\[\\]/?,.;'=\\\\`-]|Space|Enter|Arrow(Up|Down|Left|Right)|F([1-9]|1[0-2]))$" }
+        }
+      }
+    },
+    "ready": {
+      "type": "object",
+      "description": "Chrome to shell: the bridge is listening (06 C-06.36), sent once health says embedded and again after each reconnect. 08 adds `features`: which of this contract's additions the chrome implements, so the shell knows what to send and what to expect; absent means an alpha.3 chrome, 06's set only (C-08.6).",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "package_version", "actions"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "ready" },
+        "package_version": { "type": "string", "maxLength": 64, "description": "The web-chat release the page runs (the daemon's: GET /api/health package_version, else the running build)." },
+        "actions": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}$" },
+          "description": "The command actions this chrome accepts now."
+        },
+        "features": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "enum": ["status.chat_state", "status.active_node", "status.auth", "whoami", "theme", "hotkeys"] },
+          "description": "status.chat_state: status carries chat_state, waiting_kind and asks_pending. status.active_node: status carries active_node. status.auth: status carries auth. whoami, theme, hotkeys: the chrome applies that message; hotkeys implies it posts key."
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "description": "Chrome to shell: display state, on change, at most every 250 ms (06 C-06.36; public/app/embed-bridge.js STATUS_MIN_MS). 06's fields unchanged; 08 adds chat_state, waiting_kind, asks_pending, active_node and auth (C-08.5, C-08.15). Display only: the shell's Today cards and sidebar dots come from the hub's own index (the connector's status poll and the asks index, 05 and 10), and this message only makes the open tab's dot, badge and breadcrumb quicker.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "conn", "mode"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "status" },
+        "conn": { "enum": ["live", "connecting", "reconnecting"], "description": "The socket's state (view.conn, public/app/state.js:22)." },
+        "pill": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cls", "text"],
+          "properties": {
+            "cls": { "type": "string", "maxLength": 32 },
+            "text": { "type": "string", "maxLength": 64 }
+          },
+          "description": "The topbar status pill as topbar.js pillState() computes it."
+        },
+        "node_label": { "type": ["string", "null"], "maxLength": 64, "description": "The label of the node on screen (#node-label)." },
+        "title": { "type": ["string", "null"], "maxLength": 200, "description": "The page title, its first # heading. Agent-written text: the shell sets it as text only." },
+        "previewing": { "type": "boolean", "description": "A detached preview of an older node is on screen." },
+        "mode": { "enum": ["light", "dark"] },
+        "mode_toggleable": { "type": "boolean" },
+        "queue_count": { "type": "integer", "minimum": 0, "description": "Items in the queue rail (public/app/queue.js queueSnapshot)." },
+        "chat_state": {
+          "enum": ["working", "needs_you", "idle"],
+          "description": "The chat's state as the chrome's mirror store aggregates it (public/app/chat-state.js mirror.aggregate.state, the daemon's lib/server/mirror/emit.js AGGREGATE_ORDER), folded as the hub folds it (05 C-05.42; ServerWebChat swc/int lib/chat/state.js:12, :71): waiting and question are needs_you; working and compacting are working; idle, suspended, ended, none, unknown and any word the chrome does not know are idle. Absent while the socket is not live and before the chrome's first mirror snapshot (its aggregate starts unknown, chat-state.js:691)."
+        },
+        "waiting_kind": { "type": ["string", "null"], "enum": ["permission", "question", "plan", "other", null], "description": "When chat_state is needs_you, what it waits on (emit.js WAITING_KINDS); null otherwise." },
+        "asks_pending": { "type": "integer", "minimum": 0, "description": "Asks in state pending the chrome knows (chat-state.js awaitingOf)." },
+        "active_node": { "type": ["string", "null"], "maxLength": 64, "description": "The ACTIVE node's label, resolved in the bridge as nodeById(view.activeId)?.label (public/app/labels.js:27), else null: never labelFor's placeholder or the stored id it returns while the graph cache lacks the node. It moves when a turn commits; the shell shows new activity on a tab that is not selected when it changes, and never parses pill.text. node_label is the node on screen and equals it unless previewing." },
+        "auth": { "enum": ["ok", "refused"], "description": "refused once a request or the socket of this frame, admitted before, is answered 401, or 403 without a JSON body (the relay's gate's bodiless 403 when the surface session ended or was revoked, ServerWebChat lib/auth/surface.js:16-20; the daemon's own 403s carry a JSON refusal and stay forbidden); the socket's case is learned by a GET /api/health through request after the socket fails to reopen. The shell mints a fresh ticket and reloads the frame (C-08.15). ok otherwise." }
+      }
+    },
+    "key": {
+      "type": "object",
+      "description": "Chrome to shell (C-08.11): a reserved chord was pressed inside the frame. The chrome ran nothing for it; the shell runs its own action (the palette on Mod+K) and may answer with a command.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "chord"],
+      "properties": {
+        "wc_embed": { "const": 1 },
+        "type": { "const": "key" },
+        "chord": { "type": "string", "pattern": "^(Mod\\+|Shift\\+)?([A-Z0-9]|[\\[\\]/?,.;'=\\\\`-]|Space|Enter|Arrow(Up|Down|Left|Right)|F([1-9]|1[0-2]))$", "description": "Spelt as chordOf spells it, on validChord's grammar with an optional Mod+ (the hotkeys message's pattern)." }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "type": "PushQueue",
+  "request_id": "rq_01JBX7K4M2",
+  "error": {
+    "code": "conflict",
+    "message": "This Idempotency-Key was used for a PushQueue within the last 24 hours, so the push was not sent again.",
+    "hint": "Read the queue (ReadQueue) to see what the first push did.",
+    "daemon_status": 200
+  }
+}

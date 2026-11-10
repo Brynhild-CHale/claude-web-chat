@@ -1,0 +1,24 @@
+{
+  "decision_id": "dec_01jbzhk0n2p4q6r8s0t2v4w6x8",
+  "version": 1,
+  "issued_at": "2026-10-28T14:00:00Z",
+  "expires_at": "2026-10-28T14:05:00Z",
+  "principal": {"v": 1, "user": null, "machine": null, "chat": null, "session": null, "writer_class": null, "verified": false, "verified_by": null, "via": "hub"},
+  "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "relation": "hub",
+  "chat_state": "active",
+  "levels": [],
+  "sources": {},
+  "specifics": {
+    "status": true,
+    "steer": false,
+    "destructive": false,
+    "private": "none"
+  },
+  "daemon_level": "basic",
+  "origins": {
+    "surface": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4.hub.example.com",
+    "answer": null
+  }
+}

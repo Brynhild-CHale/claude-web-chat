@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-auth.json",
+  "title": "Connector link authentication and key rotation",
+  "description": "The signed challenge that authenticates a machine on every connection, and key rotation (C-05.4 to C-05.9). TLS, terminated by Caddy at the hub, authenticates the hub; these frames prove the machine's Ed25519 key. Nothing web-chat emits today: the portal admits a viewer with a Cloudflare Access JWT (web-chat-dev.worktrees/ae-int/lib/portal/access-jwt.js) and has no machine credential.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/auth_challenge"
+    },
+    {
+      "$ref": "#/$defs/auth_response"
+    },
+    {
+      "$ref": "#/$defs/auth_ok"
+    },
+    {
+      "$ref": "#/$defs/auth_refused"
+    },
+    {
+      "$ref": "#/$defs/key_rotate"
+    },
+    {
+      "$ref": "#/$defs/key_rotated"
+    }
+  ],
+  "$defs": {
+    "auth_challenge": {
+      "type": "object",
+      "description": "The hub's first frame after the upgrade (C-05.5). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "auth.challenge",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "32 random bytes, base64url, single use, bound to this socket."
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The nonce dies 10 s after issue; no auth.response by then closes the link with 4401."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "nonce",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "auth_response": {
+      "type": "object",
+      "description": "The connector proves its key (C-05.5). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "auth.response",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The machine's hub id (contract 03: `mch_` and 26 lowercase Crockford base32 characters)."
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The key's id (contract 03 section 2, prefix `mky`): `mky_` and the first 26 characters of the Crockford base32 of SHA-256 over the raw public key, computed the same way by both sides. Names a key without carrying it."
+        },
+        "public_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "An Ed25519 public key: the raw 32 bytes, base64url without padding (contract 03 `machine.public_key.value`)."
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Over `web-chat-connector-auth/1\\n<hub host the connector dialled>\\n<nonce>\\n<machine_id>\\n<key_id>`."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "machine_id",
+        "key_id",
+        "public_key",
+        "signature"
+      ],
+      "additionalProperties": false
+    },
+    "auth_ok": {
+      "type": "object",
+      "description": "The key is one the machine record accepts; hello must follow (C-05.5, C-05.7). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "auth.ok",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The machine's hub id (contract 03: `mch_` and 26 lowercase Crockford base32 characters)."
+        },
+        "connection": {
+          "type": "string",
+          "pattern": "^cxs_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The connector session (contract 03 `connector_session`): one authenticated link."
+        },
+        "expires_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When this connector session ends (contract 03: at most 24 h). The hub closes with 4440 then and the connector dials again at once."
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The machine's current key (contract 03 section 2, prefix `mky`). Differs from the key the connector signed with only while a rotation is being completed (C-05.7)."
+        },
+        "rotate": {
+          "type": "boolean",
+          "description": "True when the hub wants a new key on this connection (C-05.7)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "machine_id",
+        "connection",
+        "expires_at",
+        "key_id"
+      ],
+      "additionalProperties": false
+    },
+    "auth_refused": {
+      "type": "object",
+      "description": "Authentication failed; the hub closes with the code C-05.9 names next. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "auth.refused",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "unknown_machine",
+            "bad_signature",
+            "nonce_expired",
+            "key_held",
+            "machine_revoked",
+            "rate_limited",
+            "unavailable"
+          ],
+          "description": "key_held: a valid signature by a key the machine record does not hold; it is now held for the owner to accept (C-05.8)."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "For the person at the machine."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "key_rotate": {
+      "type": "object",
+      "description": "The connector proposes a new key (C-05.7). Both keys sign, so neither alone can rotate. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "key.rotate",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "new_public_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "description": "An Ed25519 public key: the raw 32 bytes, base64url without padding (contract 03 `machine.public_key.value`)."
+        },
+        "new_key_id": {
+          "type": "string",
+          "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The key's id (contract 03 section 2, prefix `mky`): `mky_` and the first 26 characters of the Crockford base32 of SHA-256 over the raw public key, computed the same way by both sides. Names a key without carrying it."
+        },
+        "sig_old": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "By the current key, over `web-chat-connector-rotate/1\\n<hub host>\\n<machine_id>\\n<new_key_id>`."
+        },
+        "sig_new": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "By the new key, over the same string."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "new_public_key",
+        "new_key_id",
+        "sig_old",
+        "sig_new"
+      ],
+      "additionalProperties": false
+    },
+    "key_rotated": {
+      "type": "object",
+      "description": "The hub committed the new key as current; the old one stays accepted for 24 h for authentication only (C-05.7). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "key.rotated",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The key's id (contract 03 section 2, prefix `mky`): `mky_` and the first 26 characters of the Crockford base32 of SHA-256 over the raw public key, computed the same way by both sides. Names a key without carrying it."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "key_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

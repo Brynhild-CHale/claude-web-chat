@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "type": "GetChatAttach",
+  "request_id": "rq_01JBX5D4T7",
+  "result": {
+    "chat_id": "cht_01jbzam3n5p7q9r1s3t5v7w9x1",
+    "machine": {
+      "id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+      "name": "studio-mbp",
+      "tailnet_name": "studio-mbp.yak-bebop.ts.net",
+      "login": "dev-hale",
+      "online": true
+    },
+    "folder": null,
+    "session": null,
+    "launch": "connector",
+    "commands": {
+      "terminal": "ssh -t dev-hale@studio-mbp.yak-bebop.ts.net claude-web-chat connect attach 01jbzam3n5p7q9r1s3t5v7w9x1",
+      "shell": "ssh -t dev-hale@studio-mbp.yak-bebop.ts.net claude-web-chat connect shell 01jbzam3n5p7q9r1s3t5v7w9x1",
+      "code": null,
+      "unavailable": {
+        "code": "owned-root"
+      }
+    }
+  }
+}

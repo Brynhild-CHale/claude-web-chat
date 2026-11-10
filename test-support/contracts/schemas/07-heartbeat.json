@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-heartbeat.json",
+  "title": "Connector heartbeat",
+  "description": "Connector to hub every interval_ms (C-07.34, C-07.35). The per-chat fields come from the connector's supervision (06), GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js: boot, viewers) and GET /api/queue/policy (lib/server/routes/queue.js:191: channel_connected). No pid crosses (C-07.36).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "machine_id",
+    "beat",
+    "interval_ms",
+    "connector_now",
+    "chats"
+  ],
+  "properties": {
+    "type": {
+      "const": "heartbeat",
+      "description": "Discriminator."
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The machine's hub id. Contract 03 fixes the grammar; this pattern is the widest it may take."
+    },
+    "beat": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Counter per link connection, from 1. A lower value means a new connection."
+    },
+    "interval_ms": {
+      "type": "integer",
+      "minimum": 5000,
+      "maximum": 30000,
+      "description": "The interval the connector is beating at, as the hub set it at attach in hello.ack heartbeat_ms: 15000 in protocol 1 (C-05.17, C-07.34), so stale after 37.5 s and offline after 60 s."
+    },
+    "connector_now": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Connector wall clock when sent. Used only to estimate skew_ms (C-07.33)."
+    },
+    "echo_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The at of the last hub ping the connector received, echoed so the hub can time the round trip."
+    },
+    "chats": {
+      "type": "array",
+      "maxItems": 256,
+      "description": "One row per chat the connector supervises on this machine.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chat_id",
+          "daemon"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+            "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+          },
+          "daemon": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "running",
+              "stopped",
+              "crashed"
+            ],
+            "description": "The daemon's state as the connector's supervision sees it (06): one of C-07.5's chat.daemon states."
+          },
+          "boot": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "A daemon's per-boot token, read from the X-WC-Boot response header where the daemon sends it (C-07.9, Q-07.1), else from GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js:131). Today `${pid}:${Date.now()}` from lib/server/index.js:156; from alpha.4 random per createServer and without the pid (C-07.15, Q-07.8). Opaque to the hub: compared for equality only, never parsed (C-07.36)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The running daemon's boot, null when not running."
+          },
+          "viewers": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "Connected sockets per GET /api/health viewers (relayed chrome included)."
+          },
+          "ring_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The highest ring position the connector has read for this boot (C-07.12, C-07.35)."
+          },
+          "channel_connected": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a Push would wake Claude now (queue policy channel_connected)."
+          }
+        }
+      }
+    }
+  }
+}

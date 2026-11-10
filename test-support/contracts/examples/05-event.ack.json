@@ -1,0 +1,24 @@
+{
+  "ch": "events",
+  "kind": "events.ack",
+  "id": "h401",
+  "seq": 1,
+  "re": "c400",
+  "ack": {
+    "type": "events.ack",
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "batch_id": "b_01JBF6T9X8W7V6T5S4R3Q2P1N0",
+    "cursor": {
+      "type": "source",
+      "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+      "ring": "main",
+      "boot": "48211:1793169000000",
+      "seq": 314,
+      "capture_seq": 58,
+      "element_seq": 902
+    },
+    "ingested": 3,
+    "duplicates": 0,
+    "last_hub_seq": 4185
+  }
+}

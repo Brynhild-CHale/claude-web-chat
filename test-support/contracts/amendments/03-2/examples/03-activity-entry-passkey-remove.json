@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_jxneq1pfmcev9gskmeyx6aakyd",
+  "at": "2026-10-30T10:05:19.040Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_saq2atxt1vhxhv8hm2xrwvg201",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "passkey.remove",
+  "target": {
+    "type": "credential",
+    "id": "pky_sbt1z4wr7y3794rzv2fcp2d2tz"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Passkey removed: 1 session ended",
+    "source": "template",
+    "template": "passkey.removed",
+    "chars": 32,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

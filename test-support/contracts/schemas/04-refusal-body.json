@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/04-refusal-body.json",
+  "title": "Authority refusal body (contract 04)",
+  "description": "The JSON body of the 403 the connector (or the hub, when it pre-checks) answers a refused request with (C-04.20). It is lib/core/remote-policy.js refusalBody's shape ({ok:false, remote:true, hint, mirror?}, web-chat-dev.worktrees/ae-int), which the chrome already reads to tell a remote refusal from any other 403, plus one `authority` object. A refused WebSocket upgrade carries the same body on its HTTP refusal (lib/portal/ws-relay.js refuseUpgrade). The daemon's own refusals keep their shapes (lib/server/audience.js requireMirror: {ok:false, mirror, remote, hint}).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "remote", "hint", "authority"],
+  "properties": {
+    "ok": { "const": false, "description": "Always false." },
+    "remote": { "const": true, "description": "Refused because the request came through the hub, as refusalBody says for the portal." },
+    "hint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "What would let this principal in, in the hub's words (for example: ask the chat's owner for Message), never a host command the viewer cannot run. host_only and retired rows say the act happens on the machine itself, or that the page predates an upgrade."
+    },
+    "mirror": {
+      "enum": ["basic", "read", "full"],
+      "description": "The daemon level this principal holds, when the refusal is for a level (reason 'level'), as refusalBody adds it for a 'mirror' refusal."
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "need", "rule", "decision_id"],
+      "description": "Why, in this contract's terms.",
+      "properties": {
+        "reason": { "$ref": "https://web-chat-contracts/schemas/04-deny-record.json#/$defs/reason", "description": "The deny reason (04-deny-record.json)." },
+        "need": {
+          "description": "The table level the matched row needs, or null for a default deny or a malformed path.",
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["status", "read", "message", "write_page", "files", "host_only", "retired"] }
+          ]
+        },
+        "requires": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["steer", "destructive"] },
+          "description": "The specifics the row needs that the decision lacks (reason 'requires')."
+        },
+        "rule": {
+          "description": "The row that decided, as remote-policy keyOf() prints it, or null for a default deny.",
+          "oneOf": [ { "type": "null" }, { "type": "string", "pattern": "^(\\*|[A-Z]+(\\|[A-Z]+)*) /" } ]
+        },
+        "decision_id": {
+          "description": "The decision the request was judged with, or null when there was none current (reason 'expired' or 'no-decision').",
+          "oneOf": [ { "type": "null" }, { "type": "string", "pattern": "^dec_[0-9a-hjkmnp-tv-z]{26}$" } ]
+        }
+      }
+    }
+  }
+}

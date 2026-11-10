@@ -1,0 +1,25 @@
+{
+  "ch": "events",
+  "kind": "resync",
+  "id": "c1",
+  "seq": 1,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "boot": "48302:1793181402551",
+  "daemon_seq": null,
+  "daemon_at": 1793181600000,
+  "reason": "reconnect",
+  "dropped": 0,
+  "record": {
+    "rev": 91,
+    "aggregate": "idle",
+    "conversations": [
+      {
+        "id": "c1",
+        "state": "idle",
+        "since": 1793181531500
+      }
+    ]
+  },
+  "turn_in_flight": false,
+  "open_asks": []
+}

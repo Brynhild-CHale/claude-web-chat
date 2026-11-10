@@ -1,0 +1,10 @@
+{
+  "kind": "compat",
+  "state": "behind",
+  "protocol": 1,
+  "window": { "min": "0.9.0-alpha.5", "max": "0.9.0", "protocol": { "min": 1, "max": 1 }, "claude_code_min": "2.1.287" },
+  "hub": { "version": "0.1.0", "web_chat": "0.9.0-alpha.5" },
+  "reasons": [ { "code": "package_below_min", "detail": "connector 0.9.0-alpha.4 is older than the hub's minimum 0.9.0-alpha.5" } ],
+  "restrictions": ["no_new_chats", "no_queue_delivery", "read_only_relay"],
+  "message": { "text": "This machine runs web-chat 0.9.0-alpha.4. The hub needs 0.9.0-alpha.5 or newer. Its chats stay readable and messages wait until you update.", "command": "claude-web-chat update" }
+}

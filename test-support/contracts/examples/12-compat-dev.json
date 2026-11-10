@@ -1,0 +1,10 @@
+{
+  "kind": "compat",
+  "state": "ok",
+  "protocol": 1,
+  "window": { "min": "0.9.0-alpha.4", "max": "0.9.0", "protocol": { "min": 1, "max": 1 }, "claude_code_min": "2.1.287" },
+  "hub": { "version": "0.1.0", "web_chat": "0.9.0-alpha.4" },
+  "reasons": [ { "code": "install_dev", "detail": "connector runs dev build 0.10.0-dev.202611051432.70e1cd5; judged by its connector protocol range and Claude Code, not the package window" } ],
+  "restrictions": [],
+  "message": { "text": "Connected. This machine runs a web-chat dev build (0.10.0-dev.202611051432.70e1cd5), so the hub checks only its connector protocol and its Claude Code, and both pass.", "command": null }
+}

@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "type": "DecideAsk",
+  "request_id": "rq_01JBX4W9P1",
+  "error": {
+    "code": "answer_in_frame",
+    "message": "This hub answers asks in the chat's answer frame.",
+    "hint": "Open the ask and choose Allow or Deny there.",
+    "frame_url": "https://chat-01jbzdf6h8j0k2m4n6p8q0r2s4-a.hub.example.org/answer/ask/a12?layout=card"
+  }
+}

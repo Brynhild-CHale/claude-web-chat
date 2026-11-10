@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-error.json",
+  "title": "Connector link error frame",
+  "description": "The one generic refusal frame (C-05.10). Channel-specific answers (relay.ws.refused, a contract 07 queue.ack outcome, a contract 06 status reason) are used where they exist.",
+  "$ref": "#/$defs/error",
+  "$defs": {
+    "error": {
+      "type": "object",
+      "description": "A frame the receiver could not act on (C-05.10). With `fatal` the sender closes with 4400 next. Direction: both directions.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "control.error",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "bad_frame",
+            "unknown_kind",
+            "unknown_channel",
+            "unknown_stream",
+            "unknown_chat",
+            "too_large",
+            "window_exceeded",
+            "seq_gap",
+            "not_allowed",
+            "internal"
+          ],
+          "description": "What was wrong."
+        },
+        "fatal": {
+          "type": "boolean",
+          "description": "True when the link closes next."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Hub to connector only: in words. A connector's error carries the code and ids only (contract 11, C-11.6)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "code",
+        "fatal"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

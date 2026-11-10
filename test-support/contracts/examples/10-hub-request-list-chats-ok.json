@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "type": "ListChats",
+  "request_id": "rq_01JBX4V0C8",
+  "result": {
+    "chats": [
+      {
+        "chat_id": "cht_01jbzdf6h8j0k2m4n6p8q0r2s4",
+        "title": "release notes 0.9",
+        "workspace_id": "ws_main",
+        "project_id": "pj_webchat",
+        "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+        "scope": {
+          "kind": "folder",
+          "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+          "path": "/Users/dev-hale/Dev/web-chat-dev"
+        },
+        "state": "needs_you",
+        "queue": 1,
+        "unseen_activity": 4,
+        "last_activity_at": 1793167410000,
+        "surface_origin": "https://chat-01jbzdf6h8j0k2m4n6p8q0r2s4.hub.example.org",
+        "answer_origin": "https://chat-01jbzdf6h8j0k2m4n6p8q0r2s4-a.hub.example.org",
+        "stale": false
+      }
+    ]
+  }
+}

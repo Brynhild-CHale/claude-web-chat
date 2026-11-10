@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/11-activity-summary.json",
+  "title": "Activity summary (contract 11)",
+  "description": "The one content-bearing field an Activity entry may carry (C-11.12, C-11.13). Every other field of the entry (id, at, actor, machine, chat, kind, target, outcome, status) is metadata whose shape contract 03 owns (schemas/03-activity-entry.json, C-03.26); contract 04 owns only the deny record (04-deny-record.json), which carries this object when its sink is activity. A summary is a single line of at most 200 characters, built by the hub from a closed set of sources: for a user-text source, host paths masked first (lib/core/paths.js redactHostPaths from ./core/paths, the chat's folder as root and the home its display implies); then the hub's own redactor (lib/core/redact createRedactor with the hub's known values only, never a machine's); then one line by lib/core/text.js stripControls (./core/text); then the cut. It never quotes pane HTML, params, store values, form_state, mirror text or an ask's subject. Not something web-chat emits today: the nearest shapes are the text-free queue labels of lib/core/remote-policy.js TEXT_RULES.items and lib/server/domain/queue.js publicItem (web-chat-dev.worktrees/ae-int).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "text",
+    "source",
+    "chars",
+    "truncated",
+    "redaction"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f]*$",
+      "description": "The summary as shown in the Activity panel, the Today board and a push notification: one line, no control characters, at most 200 characters (the cap, C-11.13), after redaction and after cutting. A cut text ends with the character U+2026."
+    },
+    "source": {
+      "enum": [
+        "template",
+        "user-text",
+        "daemon-label"
+      ],
+      "description": "Where the words came from (C-11.12): 'template' is hub-authored text whose slots hold only ids, names and counts; 'user-text' is the acting principal's own words the hub already holds (the head of a queue message they wrote), with host paths masked (C-11.8); 'daemon-label' is a label carried in a field the connector kept under C-11.15's field list (schemas/06-chat-status.json) or C-11.18's audit table (a state word, a tool kind, a mount id, a store key name, a text-free queue label, or one of C-11.18's label fields)."
+    },
+    "template": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9.-]{0,63}$",
+      "description": "The hub template's id when source is 'template' (for example 'queue.delivered'), so a viewer's locale or a later wording change can re-render the line. Absent for the other sources."
+    },
+    "chars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1048576,
+      "description": "Length in characters of the source text before redaction and cutting, the way a queue message item reports `chars` (lib/server/domain/queue.js PUBLIC_MESSAGE_KEYS). Lets a reader see how much was left out without holding it."
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "True when the cap cut the redacted text."
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pass",
+        "masks"
+      ],
+      "description": "Proof of the hub-side pass (C-11.8). It names the pass and how many masks it applied, never what was masked: a mask names its rule only (lib/core/redact.js MASK).",
+      "properties": {
+        "pass": {
+          "const": "hub-rules",
+          "description": "The hub's redactor ran over the text: every rule of lib/core/redact.js RULES plus the hub's own known values, after host-path masking for a user-text source (C-11.8). A machine's known values are never part of it (C-11.7)."
+        },
+        "masks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many masks or withholdings the redactor applied to this text. Host-path replacements made before it are not counted."
+        },
+        "rules_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+          "description": "The web-chat package version whose lib/core/redact.js ran, for example 0.9.0-alpha.2, so a later rule change can tell which summaries an older rule set produced."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "const": "template"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "template": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "template"
+        ]
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "template": false
+        }
+      }
+    }
+  ]
+}

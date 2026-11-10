@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-hub-event.json",
+  "title": "Hub event",
+  "description": "One record in a hub stream (contract 07, C-07.1 to C-07.6). Events with origin daemon are main-ring entries of a web-chat daemon (web-chat-dev.worktrees/ae-int/lib/core/bus.js emit builds them as {seq, ts, ...event}); the hub lifts seq, ts and kind out into source and kind, and keeps the rest in data after contract 11's projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stream",
+    "seq",
+    "epoch",
+    "id",
+    "at",
+    "origin",
+    "kind"
+  ],
+  "properties": {
+    "stream": {
+      "type": "string",
+      "pattern": "^(chat:cht_[0-9a-hjkmnp-tv-z]{26}|machine:mch_[0-9a-hjkmnp-tv-z]{26}|hub)$",
+      "description": "The hub stream: chat:<chat_id>, machine:<machine_id>, or hub (C-07.1, section 2)."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Hub seq: position in the stream, assigned on receipt, gapless within an epoch (C-07.2)."
+    },
+    "epoch": {
+      "type": "string",
+      "pattern": "^ep_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "The stream's epoch: ep_ and a ULID, re-minted only when the stream's numbering is rewritten (C-07.4)."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^ev_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "The event's hub id: ev_ and a ULID. Stable for references from other records; never used for order."
+    },
+    "at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hub clock at commit, epoch milliseconds. Authoritative time for display; never used for order (C-07.3)."
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "daemon",
+        "connector",
+        "hub"
+      ],
+      "description": "Who made the fact: a daemon ring entry, the connector's own observation, or the hub (C-07.5)."
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "For origin daemon, the ring entry's kind verbatim (the open set at bus.js:24-130: store, render, clear, pane, dom, graph, comment, capture, queue, wake, wake-ack, packs, brand, project, control, script-error, element kinds). For connector and hub, one of the C-07.5 table's kinds."
+    },
+    "op": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "The entry's op when it has one (a queue entry's add, update, remove, clear or receipt; a control entry's interrupt). Copied from data for indexing; data keeps it too."
+    },
+    "chat_id": {
+      "type": "string",
+      "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The chat id (contract 03 section 2: `cht_` and 26 lowercase Crockford base32 characters). Hub streams and hub events carry the id; link bodies carry the label. The chat the event concerns. Present on every chat-stream event and on chat.daemon events in a machine stream."
+    },
+    "machine_id": {
+      "type": "string",
+      "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The machine the event concerns or came through. Present when the event came over a link."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ring",
+        "boot",
+        "seq",
+        "ts",
+        "key",
+        "via"
+      ],
+      "description": "Provenance of an origin daemon event (C-07.1, C-07.12).",
+      "properties": {
+        "ring": {
+          "type": "string",
+          "enum": [
+            "main"
+          ],
+          "description": "The source ring. Only the main ring crosses in v1 (C-07.7)."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token, read from the X-WC-Boot response header where the daemon sends it (C-07.9, Q-07.1), else from GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js:131). Today `${pid}:${Date.now()}` from lib/server/index.js:156; from alpha.4 random per createServer and without the pid (C-07.15, Q-07.8). Opaque to the hub: compared for equality only, never parsed (C-07.36)."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The entry's seq as the daemon served it. For a capture entry before Q-07.2's rename (alpha.4) this is the capture counter, not the ring position (bus.js:156-158, lib/server/domain/captures.js:131); after it, the ring position, with the counter as capture_seq in data."
+        },
+        "ts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The entry's ts on the daemon's clock (bus.js:168). Kept for display and diagnostics only."
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^(main/[^/]{1,128}/[0-9]{1,16}|capture/[1-9][0-9]{0,8}/cap[0-9]{1,16})$",
+          "description": "The dedupe key, unique per chat (C-07.12): main/<boot>/<seq>, or capture/<surface_gen>/<capture_id> for a capture entry, boot-free (C-07.12a)."
+        },
+        "via": {
+          "type": "string",
+          "enum": [
+            "ring",
+            "reconcile"
+          ],
+          "description": "ring: read from GET /api/events or its stream. reconcile: rebuilt from GET /api/captures?since (lib/server/routes/capture.js:280-289) after a catch-up read or a batch that was not contiguous (C-07.12)."
+        }
+      }
+    },
+    "actor": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true,
+      "description": "Who did it, as contract 03 defines a principal. Open here because 03 is normative for its shape. Null for an origin daemon event until the daemon copies 03's actor onto the entries it makes from a relayed request (C-03.21 to C-03.23, C-07.1, Q-07.7); until then only hub records carry one."
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The fact's body. For origin daemon, the ring entry less seq, ts and kind, reduced to contract 11's C-11.18 allowlist by the connector before it sends and by the hub again before it stores (C-07.8). For connector and hub kinds, the fields the C-07.5 table lists."
+    },
+    "withheld": {
+      "type": "boolean",
+      "description": "True when this reader may not see the event's body (C-07.22): data is then absent and seq and kind still hold the place."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "const": "daemon"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": {
+        "required": [
+          "source",
+          "chat_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "enum": [
+              "connector",
+              "hub"
+            ]
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "source.gap",
+              "chat.daemon",
+              "machine.liveness",
+              "queue.enqueued",
+              "queue.delivering",
+              "queue.accepted",
+              "queue.refused",
+              "queue.expired",
+              "queue.receipt"
+            ]
+          }
+        },
+        "not": {
+          "required": [
+            "source"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "withheld": {
+            "const": true
+          }
+        },
+        "required": [
+          "withheld"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "data"
+          ]
+        }
+      }
+    }
+  ]
+}

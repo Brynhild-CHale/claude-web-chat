@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "user": null,
+  "machine": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t",
+  "chat": "cht_r618kehfmbv66mnewa5ndwhe72",
+  "session": null,
+  "writer_class": "service",
+  "owner": "service:git-dashboard",
+  "verified": true,
+  "verified_by": "daemon",
+  "via": "connector"
+}

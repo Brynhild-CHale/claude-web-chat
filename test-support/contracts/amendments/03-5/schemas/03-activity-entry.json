@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-activity-entry.json",
+  "title": "Activity entry",
+  "description": "One action as the hub records it (contract 03, C-03.25 to C-03.29). This file is amendment A-03.5's replacement: amendment A-10.1's file (amendments/10-1/schemas/03-activity-entry.json, itself A-03.2's plus attach.read) plus the kind chat.update, a SetChatScope call (10 C-10.14) recorded once per call with the closed list of field names it set in fields, never a value (C-03.26 as A-03.5 amends it). The relayed-request part generalises the portal's remote access log line {ts, email, instance, method, path, status} (web-chat-dev.worktrees/ae-int/lib/portal/access-log.js) with a principal in place of the email and hub ids in place of the instance id; targets keep ids only, as the control audit's auditTarget does (lib/server/control/index.js). No field holds body content, a secret or a query string; the optional summary is the one field that may hold words, under contract 11.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "id",
+    "at",
+    "actor",
+    "machine",
+    "chat",
+    "kind",
+    "target",
+    "outcome"
+  ],
+  "properties": {
+    "v": {
+      "description": "Entry format version.",
+      "const": 1
+    },
+    "id": {
+      "description": "The entry id, minted before a relayed request is forwarded so it can ride X-WC-Actor.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "at": {
+      "description": "When the hub recorded the outcome, RFC 3339 UTC. Ordering across entries is contract 07's.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "description": "Who did it.",
+      "$ref": "https://web-chat-contracts/schemas/03-principal.json"
+    },
+    "machine": {
+      "description": "The machine the action touched (the chat's machine for a relayed request), or null for a hub-only action.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "chat": {
+      "description": "The chat the action touched, or null.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "kind": {
+      "description": "What happened. Relayed routes map to kinds by the table in C-03.27; the allowlist and role kinds user.allow, user.remove and user.role are C-03.27a's (amendment A-03.1); the passkey kinds passkey.add and passkey.remove are C-03.27b's (amendment A-03.2), and a passkey sign-in is auth.sign_in or auth.sign_in_refused with a credential target; attach.read is a served read of a chat's terminal attach details (10 C-10.14a, amendment A-10.1), the one recorded read beside relay.open and relay.close; the rest are hub and connector events. A closed list for round v1; a new kind is an amendment; chat.update is one SetChatScope call (10 C-10.14), the entry carrying the field names it set in fields (C-03.26, amendment A-03.5).",
+      "enum": [
+        "auth.sign_in",
+        "auth.sign_in_refused",
+        "auth.sign_out",
+        "auth.epoch_bump",
+        "session.revoke",
+        "session.expire",
+        "surface.enter",
+        "key.create",
+        "key.revoke",
+        "key.expire",
+        "machine.pair",
+        "machine.connect",
+        "machine.disconnect",
+        "machine.rotate_key",
+        "machine.revoke",
+        "machine.settings",
+        "chat.create",
+        "chat.start",
+        "chat.stop",
+        "chat.archive",
+        "chat.update",
+        "relay.open",
+        "relay.close",
+        "relay.refused",
+        "relay.write",
+        "message.send",
+        "message.release",
+        "queue.push",
+        "queue.edit",
+        "queue.remove",
+        "ask.decide",
+        "control.action",
+        "element.write",
+        "store.write",
+        "page.write",
+        "graph.write",
+        "settings.write",
+        "attachment.add",
+        "grant.set",
+        "grant.revoke",
+        "device.register",
+        "device.revoke",
+        "user.allow",
+        "user.remove",
+        "user.role",
+        "passkey.add",
+        "passkey.remove",
+        "attach.read"
+      ]
+    },
+    "target": {
+      "description": "What the action was on. ids only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "description": "The kind of thing acted on.",
+          "enum": [
+            "route",
+            "relay",
+            "message",
+            "ask",
+            "control",
+            "element",
+            "chat",
+            "machine",
+            "credential",
+            "device",
+            "grant",
+            "user"
+          ]
+        },
+        "id": {
+          "description": "Its id when it has one: a hub id, a daemon id from the path (ask id, element id, queue item id), or a credential id (a passkey's pky_ id, never its WebAuthn credential id). Never a secret.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_:.@-]+$"
+        },
+        "action": {
+          "description": "For control.action: the action name as the daemon's control table names it (lib/server/control/index.js), or task-stop.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "method": {
+          "description": "For a relayed request: the HTTP method, or WS for an upgrade (as access-log.js writes it).",
+          "enum": [
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE",
+            "WS"
+          ]
+        },
+        "path": {
+          "description": "For a relayed request: the path without query or fragment, at most 512 characters (access-log.js).",
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^/[^?#]*$"
+        },
+        "origin": {
+          "description": "For a relayed request: which chat origin it arrived on.",
+          "enum": [
+            "session",
+            "answer"
+          ]
+        }
+      }
+    },
+    "fields": {
+      "description": "chat.update only: the closed list of the chat's field names the call set, in the request's order, never a value (11 C-11.12). scope in v1 (SetChatScope); a later field is added by amendment.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "scope"
+        ]
+      }
+    },
+    "outcome": {
+      "description": "accepted, refused:<code> (the hub's or the daemon's refusal word, or the HTTP status), or failed (upstream error, timeout).",
+      "type": "string",
+      "pattern": "^(accepted|failed|refused:[a-z0-9_-]{1,40})$"
+    },
+    "status": {
+      "description": "For a relayed request: the HTTP status returned to the client (101 for an accepted upgrade). Absent for hub-only actions.",
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "related": {
+      "description": "Another entry this one belongs with: a relay.close names its relay.open, a message.release names the message.send that queued it, a revocation's cascade names the event that caused it.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "close_code": {
+      "description": "For relay.close: the WebSocket close code sent to the viewer (4401, 4403, 4503 as in lib/portal/ws-relay.js, or a standard code).",
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 4999
+    },
+    "summary": {
+      "description": "At most one summary, the only field of an entry that may hold words; its sources, cap and redaction are contract 11's (C-11.12, C-11.13).",
+      "$ref": "https://web-chat-contracts/schemas/11-activity-summary.json"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "passkey.add",
+              "passkey.remove"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "credential",
+                "description": "A passkey kind's target is the passkey (C-03.27b)."
+              },
+              "id": {
+                "pattern": "^pky_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "passkey.remove"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "auth.sign_in",
+              "auth.sign_in_refused"
+            ]
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "credential"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "properties": {
+              "id": {
+                "description": "A sign-in whose target is a credential was a passkey assertion; the id is the passkey's (C-03.27b).",
+                "pattern": "^pky_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "attach.read"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "string",
+            "description": "The chat's machine (10 C-10.14a, A-10.1)."
+          },
+          "chat": {
+            "type": "string",
+            "description": "The chat whose attach details were read."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "chat",
+                "description": "An attach.read's target is the chat (10 C-10.14a)."
+              },
+              "id": {
+                "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "relay.open",
+              "relay.write",
+              "message.send",
+              "queue.push",
+              "queue.edit",
+              "queue.remove",
+              "ask.decide",
+              "control.action",
+              "element.write",
+              "store.write",
+              "page.write",
+              "graph.write",
+              "settings.write",
+              "attachment.add"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "machine": {
+            "type": "string"
+          },
+          "chat": {
+            "type": "string"
+          },
+          "target": {
+            "required": [
+              "type",
+              "method",
+              "path"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "user.allow",
+              "user.remove",
+              "user.role"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "user",
+                "description": "An allowlist or role kind's target is the account the entry admits (C-03.27a)."
+              },
+              "id": {
+                "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "chat.update"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "fields"
+        ],
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "The chat whose fields were set (A-03.5)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "chat",
+                "description": "A chat.update's target is the chat (C-03.26, A-03.5)."
+              },
+              "id": {
+                "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "kind": {
+              "const": "chat.update"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "fields"
+          ]
+        },
+        "description": "fields rides chat.update only (A-03.5)."
+      }
+    }
+  ]
+}

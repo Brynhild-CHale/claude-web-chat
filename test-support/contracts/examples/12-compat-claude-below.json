@@ -1,0 +1,10 @@
+{
+  "kind": "compat",
+  "state": "behind",
+  "protocol": 1,
+  "window": { "min": "0.9.0-alpha.4", "max": "0.9.0", "protocol": { "min": 1, "max": 1 }, "claude_code_min": "2.1.287" },
+  "hub": { "version": "0.1.0", "web_chat": "0.9.0-alpha.4" },
+  "reasons": [ { "code": "claude_code_below_min", "detail": "Claude Code 2.1.250 is below the hub's floor 2.1.287 for queue delivery" } ],
+  "restrictions": ["no_queue_delivery"],
+  "message": { "text": "This machine runs Claude Code 2.1.250. The hub delivers messages only to Claude Code 2.1.287 or newer. Its chats stay open and messages wait until you update Claude Code.", "command": "claude update" }
+}

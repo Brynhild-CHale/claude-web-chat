@@ -1,0 +1,32 @@
+{
+  "ch": "relay",
+  "kind": "relay.http.request",
+  "id": "h201",
+  "seq": 2,
+  "stream": 18,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "surface": "session",
+  "method": "POST",
+  "path": "/api/store",
+  "headers": {
+    "content-type": "application/json",
+    "content-length": "48",
+    "origin": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4.hub.hale.dev",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors"
+  },
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "via": "shell",
+    "activity": "act_fmy9tydx1y4s2xef4dgfcg8b2g"
+  },
+  "decision_ref": {
+    "decision_id": "dec_01jbzeg7j9k1m3n5p7q9r1s3t5",
+    "version": 3
+  },
+  "device": "desktop",
+  "body": "eyJmb3JtX3N1Ym1pdCI6eyJzZXEiOjMsInBheWxvYWQiOnsicGljayI6IkIifX19",
+  "end": true
+}

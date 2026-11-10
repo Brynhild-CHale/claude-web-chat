@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/08-module-state.json",
+  "title": "Chrome embedding: the module's state snapshot (stage B)",
+  "description": "What mountSurface's handle reports as `state` (a frozen snapshot, read at any time) and what each `onSignal` call carries whole (08 C-08.24). The field names are stage A's status message (08-frame-message.json $defs/status) so a shell written against the frame reads the module without translation; `key` and the version pair are the module's own. Display only: the shell acts on the hub's own index, never on this.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "chat", "conn", "mode", "mode_toggleable", "previewing", "queue_count", "auth", "versions"],
+  "properties": {
+    "v": { "const": 1 },
+    "chat": { "type": "string", "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat this instance is mounted on." },
+    "conn": { "enum": ["live", "connecting", "reconnecting", "refused"], "description": "The socket's state as the frame's status reports it, plus refused: the module did not connect because the surface is outside options.compat (C-08.30); versions.surface and versions.surface_protocol say what it found." },
+    "chat_state": { "enum": ["working", "needs_you", "idle"], "description": "As the frame's status defines it (unknown and any unrecognised word fold to idle); absent until the first mirror snapshot on a live socket." },
+    "waiting_kind": { "type": ["string", "null"], "enum": ["permission", "question", "plan", "other", null] },
+    "asks_pending": { "type": "integer", "minimum": 0 },
+    "queue_count": { "type": "integer", "minimum": 0 },
+    "active_node": { "type": ["string", "null"], "maxLength": 64, "description": "The active node's label (the graph's, until pages replace it under 01 and 02)." },
+    "node_label": { "type": ["string", "null"], "maxLength": 64, "description": "The node on screen, under stage A's name (08-frame-message.json status.node_label); equals active_node unless previewing. The topbar's pill is not in the module." },
+    "previewing": { "type": "boolean", "description": "preview(node) is in effect (C-08.16)." },
+    "title": { "type": ["string", "null"], "maxLength": 200, "description": "The page title, agent-written: text only." },
+    "mode": { "enum": ["light", "dark"] },
+    "mode_toggleable": { "type": "boolean" },
+    "auth": { "enum": ["ok", "refused"], "description": "refused once a request or the socket, admitted before, was answered 401, or 403 without a JSON body (C-08.15; the daemon's own 403s carry a JSON refusal and stay forbidden); the shell re-signs in or re-mints and mounts again." },
+    "key": { "type": ["string", "null"], "pattern": "^(Mod\\+|Shift\\+)?([A-Z0-9]|[\\[\\]/?,.;'=\\\\`-]|Space|Enter|Arrow(Up|Down|Left|Right)|F([1-9]|1[0-2]))$", "description": "On an onSignal call made for a reserved chord, made at once outside the throttle: that chord, spelt as chordOf spells it on validChord's grammar with an optional Mod+ (C-08.23, C-08.24). Null on every other call and in `state`." },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "surface", "protocol"],
+      "properties": {
+        "module": { "type": "string", "maxLength": 64, "description": "The web-chat release the module is built from: the hub's dependency's package version (12 ./package.json), the module's one version number (C-08.26)." },
+        "surface": { "type": ["string", "null"], "maxLength": 64, "description": "The surface's web-chat release (GET /api/health package_version), once read; null before." },
+        "surface_protocol": { "type": ["integer", "null"], "minimum": 1, "description": "The surface protocol the surface reports (GET /api/health surface_protocol; 1 when the field is absent), once read; null before. Optional." },
+        "protocol": { "type": "integer", "minimum": 1, "description": "The surface protocol the module speaks (lib/core/versions.js SURFACE_PROTOCOL_VERSION, 1 at its first release; health reports it as surface_protocol, absent means 1). Never PROTOCOL_VERSION, the capture hub's self-heal counter health reports as version (versions.js:47, routes/health.js:93-95). The skew rule is C-08.30's." }
+      }
+    }
+  }
+}

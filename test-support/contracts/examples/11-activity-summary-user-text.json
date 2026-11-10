@@ -1,0 +1,11 @@
+{
+  "text": "Rerun the deploy check in <project>/scripts with NPM_TOKEN=‹redacted:env-value› and post the failing step on the Releases dashboa…",
+  "source": "user-text",
+  "chars": 286,
+  "truncated": true,
+  "redaction": {
+    "pass": "hub-rules",
+    "masks": 1,
+    "rules_version": "0.9.0-alpha.2"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "id": "act_pz85q3h8qb8ybx1zbwq9xvsv9x",
+  "at": "2026-10-30T10:05:19.052Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_saq2atxt1vhxhv8hm2xrwvg201",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "session.revoke",
+  "target": {
+    "type": "credential",
+    "id": "ses_cm6rrjjgrqh499v2saj7essyam"
+  },
+  "outcome": "accepted",
+  "related": "act_jxneq1pfmcev9gskmeyx6aakyd",
+  "summary": {
+    "text": "Session ended: its passkey was removed",
+    "source": "template",
+    "template": "session.revoked-passkey",
+    "chars": 38,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

@@ -1,0 +1,1326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-event.json",
+  "title": "Connector events: ring batches, derived signals, deny records",
+  "description": "The events channel (C-05.37 to C-05.43). Three families: contract 07's durable ring batches for Activity, the connector's derived live signals for the sidebar's state dots, Needs you and Today, and contract 04's deny records. The derived signals come from the connector's one ring read (web-chat-dev.worktrees/ae-int/lib/server/routes/events.js GET /api/events/stream, lib/core/bus.js) and from the status poll (GET /api/mirror/status, GET /api/asks), and carry no word a user or an agent wrote (contract 11).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/batch"
+    },
+    {
+      "$ref": "#/$defs/batch_ack"
+    },
+    {
+      "$ref": "#/$defs/turn_begun"
+    },
+    {
+      "$ref": "#/$defs/turn_ended"
+    },
+    {
+      "$ref": "#/$defs/ask_opened"
+    },
+    {
+      "$ref": "#/$defs/ask_updated"
+    },
+    {
+      "$ref": "#/$defs/ask_closed"
+    },
+    {
+      "$ref": "#/$defs/conversations"
+    },
+    {
+      "$ref": "#/$defs/resync"
+    },
+    {
+      "$ref": "#/$defs/signals_ack"
+    },
+    {
+      "$ref": "#/$defs/authority_log"
+    }
+  ],
+  "$defs": {
+    "batch": {
+      "type": "object",
+      "description": "Main-ring entries of one chat's daemon for the hub's durable chat stream (contract 07, C-07.11). Never dropped by the link (C-05.24). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "events.batch",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "batch": {
+          "$ref": "07-source-batch.json",
+          "description": "Contract 07's batch body."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "batch"
+      ],
+      "additionalProperties": false
+    },
+    "batch_ack": {
+      "type": "object",
+      "description": "The hub committed one batch (contract 07, C-07.11). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "events.ack",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "ack": {
+          "$ref": "07-ack.json#/$defs/eventsAck",
+          "description": "Contract 07's events ack body."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "ack"
+      ],
+      "additionalProperties": false
+    },
+    "turn_begun": {
+      "type": "object",
+      "description": "A turn took the chat's lock (C-05.39). Derived from the ring entry {kind:'graph', op:'turn-begin'} (web-chat-dev.worktrees/ae-int/lib/server/domain/turns.js). A turn-begin with upgraded_wake_lock: true is the same turn and derives nothing (turns.js:573-577); one with stole_stale_lock: true derives turn.ended with outcome superseded for the held turn first, then this frame. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "turn.begun",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "author": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "description": "user (the ring entry omits author for a user turn), wake, task, or a later word."
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Claude Code session id, when the entry carries one."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "author"
+      ],
+      "additionalProperties": false
+    },
+    "turn_ended": {
+      "type": "object",
+      "description": "A turn let the lock go (C-05.39). Derived from the ring entries {kind:'graph', op:'turn-end'}, {op:'turn-skipped', reason:'no-change'} and {op:'unlock', had:true}, and, as superseded, from {op:'turn-begin', stole_stale_lock:true}, which ends the held turn with no turn-end (turns.js:480-490). A turn-skipped with reason other-session, a turn-begin with upgraded_wake_lock and an unlock with had: false derive nothing. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "turn.ended",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "committed",
+            "skipped_no_change",
+            "superseded",
+            "unlocked"
+          ],
+          "description": "committed: op turn-end. skipped_no_change: op turn-skipped with reason no-change (reason other-session leaves the held turn running and derives nothing, turns.js:870-885). superseded: a turn-begin with stole_stale_lock: true took a stale lock; node, ended and ended_by are null and daemon_seq is that turn-begin's seq, or null when the status poll found the lock gone (a guardReaim steal, turns.js:673-682, writes no turn entry; C-05.39). unlocked: op unlock with had: true (had: false derives nothing, turns.js:620-630)."
+        },
+        "node": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The node a committed turn made, else null."
+        },
+        "ended": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "stop",
+                "failed",
+                "interrupted",
+                "session-ended"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "turns.js ENDED."
+        },
+        "ended_by": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "terminal",
+                "web",
+                "hook"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "turns.js ENDED_BY."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "outcome",
+        "node",
+        "ended",
+        "ended_by"
+      ],
+      "additionalProperties": false
+    },
+    "ask_opened": {
+      "type": "object",
+      "description": "Something waits on the user (C-05.40). Derived from the status poll's GET /api/asks diff (C-05.40), the transition emitAsk sends a socket as {type:'mirror:ask', op:'open'} (lib/server/domain/asks.js emitAsk). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "ask.opened",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "ask": {
+          "type": "object",
+          "description": "One ask as GET /api/asks serves it to a local caller (C-05.40, C-05.48: lib/server/domain/asks.js publicOf, whole, at asks.js:1444-1449), cut by the connector to these fields before it leaves the machine (contract 11). Never its tool name, subject, input, questions, plan or tool input.",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "description": "The ask's id (lib/server/domain/asks.js)."
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Its conversation."
+            },
+            "kind": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "permission, question, plan, elicitation, or a later word."
+            },
+            "tool_kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The class of tool, never its full name."
+            },
+            "state": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "pending or decided (lib/server/domain/asks.js:73); a resolved ask leaves the list (asks.js:1446), so it is never sent."
+            },
+            "answerable": {
+              "type": "boolean",
+              "description": "Whether the ask can be answered from the answer surface now (publicOf answerable)."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The ask's version (publicOf version); with id and state it is C-05.40's diff key."
+            },
+            "created_at": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "When the ask was published, epoch milliseconds (publicOf created_at)."
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "state",
+            "answerable",
+            "version",
+            "created_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "ask"
+      ],
+      "additionalProperties": false
+    },
+    "ask_updated": {
+      "type": "object",
+      "description": "An ask's version or state moved, a decision included (C-05.40). Derived from the status poll's GET /api/asks diff (C-05.40). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "ask.updated",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "ask": {
+          "type": "object",
+          "description": "One ask as GET /api/asks serves it to a local caller (C-05.40, C-05.48: lib/server/domain/asks.js publicOf, whole, at asks.js:1444-1449), cut by the connector to these fields before it leaves the machine (contract 11). Never its tool name, subject, input, questions, plan or tool input.",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "description": "The ask's id (lib/server/domain/asks.js)."
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Its conversation."
+            },
+            "kind": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "permission, question, plan, elicitation, or a later word."
+            },
+            "tool_kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The class of tool, never its full name."
+            },
+            "state": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "pending or decided (lib/server/domain/asks.js:73); a resolved ask leaves the list (asks.js:1446), so it is never sent."
+            },
+            "answerable": {
+              "type": "boolean",
+              "description": "Whether the ask can be answered from the answer surface now (publicOf answerable)."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The ask's version (publicOf version); with id and state it is C-05.40's diff key."
+            },
+            "created_at": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "When the ask was published, epoch milliseconds (publicOf created_at)."
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "state",
+            "answerable",
+            "version",
+            "created_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "ask"
+      ],
+      "additionalProperties": false
+    },
+    "ask_closed": {
+      "type": "object",
+      "description": "An ask left GET /api/asks: it resolved (C-05.40). Derived from the status poll's GET /api/asks diff (C-05.40). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "ask.closed",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "ask": {
+          "type": "object",
+          "description": "One ask as GET /api/asks serves it to a local caller (C-05.40, C-05.48: lib/server/domain/asks.js publicOf, whole, at asks.js:1444-1449), cut by the connector to these fields before it leaves the machine (contract 11). Never its tool name, subject, input, questions, plan or tool input. On ask.closed: the last row the connector saw before the ask left the list.",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "description": "The ask's id (lib/server/domain/asks.js)."
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Its conversation."
+            },
+            "kind": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "permission, question, plan, elicitation, or a later word."
+            },
+            "tool_kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The class of tool, never its full name."
+            },
+            "state": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+              "description": "pending or decided (lib/server/domain/asks.js:73); a resolved ask leaves the list (asks.js:1446), so it is never sent."
+            },
+            "answerable": {
+              "type": "boolean",
+              "description": "Whether the ask can be answered from the answer surface now (publicOf answerable)."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The ask's version (publicOf version); with id and state it is C-05.40's diff key."
+            },
+            "created_at": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "When the ask was published, epoch milliseconds (publicOf created_at)."
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "state",
+            "answerable",
+            "version",
+            "created_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "ask"
+      ],
+      "additionalProperties": false
+    },
+    "conversations": {
+      "type": "object",
+      "description": "The chat's conversation states (C-05.41). Coalescable: only the newest per chat matters. Derived from the status poll's GET /api/mirror/status (C-05.41) (lib/server/mirror/emit.js). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "conversations",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "record": {
+          "type": "object",
+          "description": "The chat's conversation state record, replaced whole (contract 07, C-07.7, asks 05 for its shape; C-05.41): GET /api/mirror/status's rev, its aggregate.state as aggregate, and its conversations rows each without counts.",
+          "properties": {
+            "rev": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The status revision (lib/server/mirror/emit.js); with boot it orders records."
+            },
+            "aggregate": {
+              "type": "string",
+              "enum": [
+                "ended",
+                "suspended",
+                "question",
+                "waiting",
+                "compacting",
+                "working",
+                "idle",
+                "unknown"
+              ],
+              "description": "The body's aggregate.state: a conversation state (lib/server/mirror/live.js STATES)."
+            },
+            "conversations": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "description": "One of the body's conversations rows as STATUS_ROW_SCHEMA types it (lib/core/remote-policy.js:667-673), without its counts (C-05.41).",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                    "description": "The conversation id."
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "ended",
+                      "suspended",
+                      "question",
+                      "waiting",
+                      "compacting",
+                      "working",
+                      "idle",
+                      "unknown"
+                    ],
+                    "description": "A conversation state (lib/server/mirror/live.js STATES)."
+                  },
+                  "since": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "When the state began."
+                  },
+                  "quiet": {
+                    "type": "boolean",
+                    "description": "The row's quiet flag."
+                  },
+                  "step_kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The kind of step, as a word."
+                  },
+                  "waiting_kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "What it waits on, as a word."
+                  },
+                  "last_activity_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Epoch milliseconds."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Last activity."
+                  },
+                  "ended_reason": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Why it ended, as a word."
+                  }
+                },
+                "required": [
+                  "id",
+                  "state"
+                ],
+                "additionalProperties": false
+              },
+              "description": "One row per conversation."
+            }
+          },
+          "required": [
+            "rev",
+            "aggregate",
+            "conversations"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "record"
+      ],
+      "additionalProperties": false
+    },
+    "resync": {
+      "type": "object",
+      "description": "The signal feed for this chat has a hole (C-05.43): the hub replaces what it derived from earlier signals of this chat with this snapshot. Derived from one status poll (C-05.38: GET /api/mirror/status, GET /api/asks, GET /api/health as a local caller). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "resync",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "A daemon's per-boot token as GET /api/health serves it, opaque to the hub (contract 07 and 12-compat.json treat it so; Q-07.8 asks for a random one). Today `<pid>:<epoch ms>` (web-chat-dev.worktrees/ae-int/lib/server/index.js:156 bootId). A new value means the ring's seq space restarted (lib/core/bus.js)."
+        },
+        "daemon_seq": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The ring seq of the entry this was derived from, so the hub can join it to contract 07's key main/<boot>/<seq>; null when it came from the status poll."
+        },
+        "daemon_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The source's own time (a ring entry's ts, a status frame's now), else the connector's receipt time."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "reconnect",
+            "backpressure",
+            "reset",
+            "poll_recovered"
+          ],
+          "description": "reconnect: a new link. backpressure: the connector dropped signals (C-05.24). reset: the daemon's boot changed. poll_recovered: the status poll (C-05.38) or the hold answered again after failing."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Signals known dropped; 0 when unknowable."
+        },
+        "record": {
+          "type": "object",
+          "description": "The chat's conversation state record, replaced whole (contract 07, C-07.7, asks 05 for its shape; C-05.41): GET /api/mirror/status's rev, its aggregate.state as aggregate, and its conversations rows each without counts.",
+          "properties": {
+            "rev": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The status revision (lib/server/mirror/emit.js); with boot it orders records."
+            },
+            "aggregate": {
+              "type": "string",
+              "enum": [
+                "ended",
+                "suspended",
+                "question",
+                "waiting",
+                "compacting",
+                "working",
+                "idle",
+                "unknown"
+              ],
+              "description": "The body's aggregate.state: a conversation state (lib/server/mirror/live.js STATES)."
+            },
+            "conversations": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "description": "One of the body's conversations rows as STATUS_ROW_SCHEMA types it (lib/core/remote-policy.js:667-673), without its counts (C-05.41).",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                    "description": "The conversation id."
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "ended",
+                      "suspended",
+                      "question",
+                      "waiting",
+                      "compacting",
+                      "working",
+                      "idle",
+                      "unknown"
+                    ],
+                    "description": "A conversation state (lib/server/mirror/live.js STATES)."
+                  },
+                  "since": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "When the state began."
+                  },
+                  "quiet": {
+                    "type": "boolean",
+                    "description": "The row's quiet flag."
+                  },
+                  "step_kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "The kind of step, as a word."
+                  },
+                  "waiting_kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "What it waits on, as a word."
+                  },
+                  "last_activity_at": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Epoch milliseconds."
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Last activity."
+                  },
+                  "ended_reason": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Why it ended, as a word."
+                  }
+                },
+                "required": [
+                  "id",
+                  "state"
+                ],
+                "additionalProperties": false
+              },
+              "description": "One row per conversation."
+            }
+          },
+          "required": [
+            "rev",
+            "aggregate",
+            "conversations"
+          ],
+          "additionalProperties": false
+        },
+        "turn_in_flight": {
+          "type": "boolean",
+          "description": "GET /api/health lock set and lock_stale false, without the lock's text."
+        },
+        "open_asks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "description": "One ask as GET /api/asks serves it to a local caller (C-05.40, C-05.48: lib/server/domain/asks.js publicOf, whole, at asks.js:1444-1449), cut by the connector to these fields before it leaves the machine (contract 11). Never its tool name, subject, input, questions, plan or tool input.",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                "description": "The ask's id (lib/server/domain/asks.js)."
+              },
+              "conversation_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Its conversation."
+              },
+              "kind": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                "description": "permission, question, plan, elicitation, or a later word."
+              },
+              "tool_kind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The class of tool, never its full name."
+              },
+              "state": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                "description": "pending or decided (lib/server/domain/asks.js:73); a resolved ask leaves the list (asks.js:1446), so it is never sent."
+              },
+              "answerable": {
+                "type": "boolean",
+                "description": "Whether the ask can be answered from the answer surface now (publicOf answerable)."
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The ask's version (publicOf version); with id and state it is C-05.40's diff key."
+              },
+              "created_at": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "When the ask was published, epoch milliseconds (publicOf created_at)."
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "state",
+              "answerable",
+              "version",
+              "created_at"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Every open ask now."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "boot",
+        "daemon_seq",
+        "daemon_at",
+        "reason",
+        "dropped",
+        "record",
+        "turn_in_flight",
+        "open_asks"
+      ],
+      "additionalProperties": false
+    },
+    "signals_ack": {
+      "type": "object",
+      "description": "The hub applied every derived signal up to `up_to` on this connection (C-05.24). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "signals.ack",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "up_to": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The highest events-channel seq of a derived signal applied."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "up_to"
+      ],
+      "additionalProperties": false
+    },
+    "authority_log": {
+      "type": "object",
+      "description": "The connector's coalesced deny records, shipped to the hub's audit store (contract 04, C-04.27). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "events",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "authority.log",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "records": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {
+            "$ref": "04-deny-record.json",
+            "description": "One deny record, enforcer connector."
+          },
+          "description": "Records since the last frame."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "records"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

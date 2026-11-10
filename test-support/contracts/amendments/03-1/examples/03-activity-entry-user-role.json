@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "id": "act_wtckt4j0rxfa6s9nns0qjm2ebb",
+  "at": "2026-10-28T16:25:37.540Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_j7q61jdj9tf4793xr8emqz64v6",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "user.role",
+  "target": { "type": "user", "id": "usr_xt28rtks3f0se86pb8c10105b9" },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Role admin granted",
+    "source": "template",
+    "template": "user.role-granted",
+    "chars": 18,
+    "truncated": false,
+    "redaction": { "pass": "hub-rules", "masks": 0 }
+  }
+}

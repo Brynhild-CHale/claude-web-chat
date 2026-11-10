@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "StartChat",
+  "request_id": "rq_01JBX6D4N7",
+  "error": {
+    "code": "conflict",
+    "message": "This chat is not on any machine yet.",
+    "hint": "Assign it to a machine first (AssignChatToMachine), which also starts it."
+  }
+}

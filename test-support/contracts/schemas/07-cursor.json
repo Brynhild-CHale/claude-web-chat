@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-cursor.json",
+  "title": "Cursor",
+  "description": "A position in an ordered log (contract 07). type hub: a reader's place in a hub stream (C-07.18 to C-07.21). type source: the hub's durable place in one chat's daemon ring, sent to the connector at attach (C-07.10) and returned in events.ack (C-07.11).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/hub"
+    },
+    {
+      "$ref": "#/$defs/source"
+    }
+  ],
+  "$defs": {
+    "hub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "stream",
+        "epoch",
+        "seq"
+      ],
+      "description": "A hub stream cursor. seq 0 means before the first event.",
+      "properties": {
+        "type": {
+          "const": "hub",
+          "description": "Discriminator: a hub stream cursor."
+        },
+        "stream": {
+          "type": "string",
+          "pattern": "^(chat:cht_[0-9a-hjkmnp-tv-z]{26}|machine:mch_[0-9a-hjkmnp-tv-z]{26}|hub)$",
+          "description": "The hub stream: chat:<chat_id>, machine:<machine_id>, or hub (C-07.1, section 2)."
+        },
+        "epoch": {
+          "type": "string",
+          "pattern": "^ep_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "The stream's epoch: ep_ and a ULID, re-minted only when the stream's numbering is rewritten (C-07.4)."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The last hub seq the reader holds."
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "chat_id",
+        "ring",
+        "boot",
+        "seq",
+        "capture_seq",
+        "element_seq"
+      ],
+      "description": "The hub's source cursor for one chat's daemon. boot null means none held yet (first attach: read from since 0).",
+      "properties": {
+        "type": {
+          "const": "source",
+          "description": "Discriminator: a daemon ring cursor held by the hub."
+        },
+        "chat_id": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+        },
+        "ring": {
+          "type": "string",
+          "enum": [
+            "main"
+          ],
+          "description": "The ring the cursor is in."
+        },
+        "boot": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "A daemon's per-boot token, read from the X-WC-Boot response header where the daemon sends it (C-07.9, Q-07.1), else from GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js:131). Today `${pid}:${Date.now()}` from lib/server/index.js:156; from alpha.4 random per createServer and without the pid (C-07.15, Q-07.8). Opaque to the hub: compared for equality only, never parsed (C-07.36)."
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The boot the seq belongs to, or null when nothing has been ingested."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The highest ring position known for that boot (C-07.11, C-07.12): in a live stream every entry counts one position, captures included; in a catch-up replay a capture's position is unknown, so only non-capture entries move it, and a counted position is a lower bound. A poll's latest (lib/core/bus.js:213, nextSeq - 1) is exact, and the connector MAY set the cursor from it."
+        },
+        "capture_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Highest capture counter ingested, for GET /api/captures?since (capture.js:280-289). Boot-independent: the counter is seeded past everything on disk at boot (lib/server/graph.js:432-452). A capture next_cursor or a capture entry's counter below it, read at a boot change, is a re-initialised surface. Set to 0 when surface_gen is raised (C-07.12a)."
+        },
+        "element_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Highest element log seq reconciled, for GET /api/elements?since (lib/server/routes/elements.js:73-74; next_cursor is elements().maxSeq(), :701). Boot-independent: the log is append-only. Set to 0 when surface_gen is raised, and alone, leaving surface_gen, when an element next_cursor read at a boot change is below it (C-07.12a)."
+        },
+        "surface_gen": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The chat's surface generation (C-07.12a): from 1, raised by 1 when a batch reports reinit (the chat's .web-chat/ was removed and initialised again). Part of every capture key, capture/<surface_gen>/<capture_id>. Absent means 1."
+        }
+      }
+    }
+  }
+}

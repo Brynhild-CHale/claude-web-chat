@@ -1,0 +1,22 @@
+{
+  "type": "queue.deliver",
+  "hub_msg_id": "hm_01JBF7A0B1C2D3E4F5G6H7J8K9",
+  "chat_id": "01jbzbd4f6g8h0j2k4m6n8p0q2",
+  "attempt": 1,
+  "enqueued_at": 1793169400000,
+  "deliver_within_ms": 3600000,
+  "from": {
+    "class": "user",
+    "id": "u_cah"
+  },
+  "message": {
+    "text": "Morning check-in: rerun the flaky test and post the result as a pane.",
+    "skill": null,
+    "files": [
+      "test/queue-held.test.js"
+    ],
+    "send": "auto",
+    "conversation_id": null,
+    "device": "mobile"
+  }
+}

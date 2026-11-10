@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-actor-header.json",
+  "title": "X-WC-Actor header value",
+  "description": "The JSON value of the X-WC-Actor header the connector copies, verbatim, from the hub's relay frame (the frame's actor field, schemas/05-relay-http.json, schemas/05-relay-ws.json) onto every relayed request and WebSocket upgrade (contract 03, C-03.19 to C-03.23a). One header line, compact JSON, ASCII only, at most 512 bytes. A daemon honours it only on a request that carries a valid relay credential (C-03.21: a loopback peer, X-WC-Remote set, web-chat-dev.worktrees/ae-int/lib/core/cors.js isRemoteRequest, and exactly one X-WC-Relay equal to the relay secret handed at spawn); it is attribution only and never changes a writer class, level or gate (C-15-3, lib/server/domain/writers.js). The daemon stores it, without name, in an actor field beside provenance, never inside it (C-03.23). Sent beside the 0.9 headers, never instead of them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "user",
+    "session",
+    "via",
+    "activity"
+  ],
+  "properties": {
+    "v": {
+      "description": "Header format version.",
+      "const": 1
+    },
+    "user": {
+      "description": "The account the hub authenticated for this request: a user or a service user (svc_home is Home). null only when the actor is another chat's agent holding an agent token, which then names its chat.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_[0-9a-hjkmnp-tv-z]{26}|svc_home)$"
+        }
+      ]
+    },
+    "chat": {
+      "description": "The acting agent's own chat, present only when session is an agent token (agt_).",
+      "type": "string",
+      "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "session": {
+      "description": "The hub credential checked for this request: a surface session (srf_) for the shell and phone, an API key (key_) for api and Home's mcp, an agent token (agt_) for another chat's agent by grant, a user session (ses_) for a notification action or a scheduler release made on the sender's behalf.",
+      "type": "string",
+      "pattern": "^(srf|key|ses|agt)_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "via": {
+      "description": "How the request entered the hub (the principal's via, restricted to the paths that relay to a daemon).",
+      "enum": [
+        "shell",
+        "phone",
+        "notification",
+        "api",
+        "mcp",
+        "scheduler"
+      ]
+    },
+    "activity": {
+      "description": "The hub's Activity entry id for this request (for an upgrade, the relay.open entry), so daemon records join hub Activity.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "name": {
+      "description": "Optional. The display name the account chose on the hub, never an email (so no @), which contract 11 lists as content-free. The hub sends it only for an account, never for another chat's agent, and only where 11 allows it. The daemon prints it as by=<name> on the Pushed from: line and after the marker in the message block's header (C-03.23a). It is never kept in a stored actor record (C-03.23): the daemon carries it as its own field by on the queued message item and on the push's wake, park and ack, never in actor and never in provFields. Printable ASCII without double quote, backslash or @, starting with a non-space character, at most 64 characters.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._'+-][A-Za-z0-9 ._'+-]{0,63}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "session": {
+            "pattern": "^agt_"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat"
+        ],
+        "properties": {
+          "user": {
+            "const": null
+          },
+          "via": {
+            "const": "mcp"
+          }
+        },
+        "not": {
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "chat"
+          ]
+        },
+        "properties": {
+          "user": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

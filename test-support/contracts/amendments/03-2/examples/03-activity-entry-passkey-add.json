@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_4aaxa439f72vyqzctyxy6g4y9b",
+  "at": "2026-10-29T15:02:11.384Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_j7q61jdj9tf4793xr8emqz64v6",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "passkey.add",
+  "target": {
+    "type": "credential",
+    "id": "pky_fc9n46xpxhb362pn5hcfnev7a4"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Passkey added (synced, user verified)",
+    "source": "template",
+    "template": "passkey.added",
+    "chars": 37,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-connector-state.json",
+  "title": "Connector record",
+  "description": "The connector's local record for one paired hub, at ~/.web-chat/connector/<hub-id>.json (mode 0600, directory 0700), written atomically as lib/core/fsjson writes registry files. Never sent to the hub as a whole; the hub learns only what contract 05 messages carry. Its absolute path is handed to each daemon the connector spawns as the environment variable WEB_CHAT_CONNECTOR_RECORD (a path, not a secret; C-06.19), and such a daemon reads only `ceiling` from it, following the file through lib/core/watch (C-06.23a). The private key is NOT in this file: it lives beside it at ~/.web-chat/connector/<hub-id>.key (0600). No relay secret is in this file or any other: each one travels to its daemon on fd 3 at spawn (C-06.7, C-06.19). Times are epoch milliseconds, as web-chat's registry rows use (lib/util/registry.js).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "hub", "credential", "workdir", "settings", "folders", "chats"],
+  "properties": {
+    "v": { "const": 1, "description": "Record format version. A connector that reads a higher v refuses to run and says which build wrote it." },
+    "hub": {
+      "type": "object",
+      "description": "The hub this record pairs with.",
+      "additionalProperties": false,
+      "required": ["id", "origin"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,62}$", "description": "The hub's id as contract 05's hello names it; also the file name of this record and of the key." },
+        "origin": { "type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?$", "description": "The hub's https origin, as typed to `claude-web-chat connect <hub>` and normalised. The connector dials only this origin." },
+        "name": { "type": "string", "maxLength": 120, "description": "Display name the hub gave itself, for CLI output only." }
+      }
+    },
+    "machine": {
+      "type": ["object", "null"],
+      "description": "This machine as the hub registered it at pairing; null before pairing completes.",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$", "description": "The hub-minted machine id (contract 03 section 2: mch_ and 26 lowercase Crockford base32 characters)." },
+        "name": { "type": "string", "maxLength": 120, "description": "The name the user gave the machine on the hub." }
+      }
+    },
+    "credential": {
+      "type": "object",
+      "description": "The machine key pair's public half and pairing state. Algorithm and handshake are contract 05's.",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["unpaired", "pending", "paired", "revoked"], "description": "unpaired: no key yet; pending: a pairing code is shown and not yet confirmed; paired: the hub holds the public key; revoked: the hub or `connect disconnect` revoked it and the key file is deleted." },
+        "algorithm": { "type": "string", "enum": ["ed25519"], "description": "Key algorithm. ed25519 is the proposal; contract 05 may widen the enum." },
+        "key_file": { "type": "string", "description": "Absolute path of the private key file (PKCS#8 PEM, mode 0600). Never logged, never sent." },
+        "key_id": { "type": "string", "pattern": "^mky_[0-9a-hjkmnp-tv-z]{26}$", "description": "The key's id as pairing or rotation returned it (contract 03 section 2, prefix mky; 05 C-05.3, C-05.7). Sent in auth.response." },
+        "public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$", "description": "The public key in contract 03's wire form (C-03.8): the raw 32 bytes, base64url without padding." },
+        "fingerprint": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$", "description": "Contract 03's display form (C-03.8): `SHA256:` and the unpadded base64 of SHA-256 over the raw key, shown by `connect status` and on the hub's machine page so a user can compare them." },
+        "paired_at": { "type": ["number", "null"], "description": "When the hub confirmed pairing." },
+        "revoked_at": { "type": ["number", "null"], "description": "When the credential was revoked, if it was." }
+      }
+    },
+    "workdir": { "type": "string", "description": "Absolute directory the connector owns for repo clones and space directories (default ~/web-chat-hub/<hub-id>), mode 0700, never inside ~/.web-chat and never inside an offered folder; no offered folder may contain it (C-06.13, C-06.18). Its paths are never reported to the hub." },
+    "ceiling": { "enum": ["read", "full"], "default": "full", "description": "The machine's ceiling (contract 04 C-04.11, a MUST under OQ-1's ruling B; contract 06 C-06.23a): the most any hub principal reaches on this machine's chats. One value per machine in v1, applying to every offered folder and owned root. Absent means full. Pairing and `connect offer` write the default and never change a value the user set; `connect ceiling <read|full>` sets it at the machine, and no hub frame does. A daemon the connector spawned takes the lesser of X-WC-Level and this value, only beside the relay credential (03 C-03.21)." },
+    "settings": {
+      "type": "object",
+      "description": "The machine settings the hub sets (contract 05 carries them) as last received, plus the one local ceiling. The connector enforces them while offline from the hub too.",
+      "additionalProperties": false,
+      "required": ["agents_at_once", "accept_new_chats", "let_home_start_agents", "paused"],
+      "properties": {
+        "agents_at_once": { "type": "integer", "minimum": 0, "maximum": 64, "description": "The hub's agents-at-once cap for this machine." },
+        "local_cap": { "type": ["integer", "null"], "minimum": 0, "maximum": 64, "description": "A local cap set on the machine with `connect cap <n>`; the effective cap is the lesser of this and agents_at_once. Null: no local cap. Not the level ceiling, which is the top-level `ceiling`." },
+        "accept_new_chats": { "type": "boolean", "description": "False: new assignments are refused (reason not-accepting); chats already here are unaffected." },
+        "let_home_start_agents": { "type": "boolean", "description": "False: an assignment asking for a connector-launched session is refused (reason home-launch-off); manual sessions are unaffected." },
+        "paused": { "type": "boolean", "description": "True: deliveries and launches only (W3; C-06.23, contract 05 C-05.27): the hub sends no delivery and the connector launches no session; running turns finish, daemons stay up, the framed composer still queues, Send now and an immediate signal still wake the agent, and the chat can still be stopped." },
+        "rev": { "type": "integer", "minimum": 0, "description": "The hub's revision of these settings; an older revision is ignored." }
+      }
+    },
+    "folders": {
+      "type": "array",
+      "description": "Folders offered on this machine with `connect offer <path>`. The only paths the hub ever learns.",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/folder" }
+    },
+    "chats": {
+      "type": "array",
+      "description": "Every chat assigned to this machine and the local root it maps to.",
+      "maxItems": 1024,
+      "items": { "$ref": "#/$defs/chat" }
+    },
+    "service": {
+      "type": ["object", "null"],
+      "description": "The start-at-login unit `connect` installed, or null when it runs in the foreground only.",
+      "additionalProperties": false,
+      "required": ["kind", "unit_path", "installed_at"],
+      "properties": {
+        "kind": { "enum": ["launchd", "systemd-user"], "description": "launchd: a per-user LaunchAgent on macOS; systemd-user: a systemd user unit on Linux." },
+        "label": { "type": "string", "maxLength": 128, "description": "The launchd Label or systemd unit name." },
+        "unit_path": { "type": "string", "description": "Absolute path of the plist or unit file." },
+        "path_env": { "type": "string", "maxLength": 4096, "description": "The PATH written into the unit, captured at install so the service finds node, git, tmux and claude." },
+        "installed_at": { "type": "number", "description": "When the unit was last written." }
+      }
+    },
+    "last_reported": {
+      "type": ["object", "null"],
+      "description": "What the connector last reported about itself (contract 05 carries it; contract 12 negotiates versions).",
+      "additionalProperties": false,
+      "properties": {
+        "connector_version": { "type": "string", "maxLength": 64, "description": "packageVersion() of the build the connector process runs (lib/core/versions.js)." },
+        "install_kind": { "enum": ["managed", "dev", "unmanaged"], "description": "describeInstall's classification (lib/update/install-layout.js)." },
+        "claude_code_version": { "type": ["string", "null"], "maxLength": 64, "description": "`claude --version`, run through lib/core/claude-cli.js; null when claude is not found." },
+        "at": { "type": "number", "description": "When this was reported." }
+      }
+    }
+  },
+  "$defs": {
+    "folder": {
+      "type": "object",
+      "description": "One offered folder. Contract 05's machine report carries these objects by $ref, unchanged.",
+      "additionalProperties": false,
+      "required": ["id", "path", "display", "access", "offered_at"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^f_[0-9a-f]{16}$", "description": "Stable id minted at random on the machine when the folder is offered; never derived from the path." },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The folder's absolute real path." },
+        "display": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The path for display, with the home directory shown as ~ (the form lib/core/paths.js redactHostPaths uses; contract 11 C-11.6). The hub shows this beside the id." },
+        "label": { "type": "string", "maxLength": 120, "description": "Optional display label from `connect offer --label`." },
+        "access": { "enum": ["read-write"], "description": "What a chat may do in the folder. v1 has read-write only; read-only is deferred." },
+        "offered_at": { "type": "number", "description": "When the folder was offered." }
+      }
+    },
+    "chat": {
+      "type": "object",
+      "description": "One chat assigned here and its local root.",
+      "additionalProperties": false,
+      "required": ["chat_id", "rev", "scope_kind", "root", "owned_root", "desired"],
+      "properties": {
+        "chat_id": { "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat label (contract 03 section 2): the chat id without its cht_ prefix, as every 05 frame names a chat and as the chat-<label> origins carry it." },
+        "rev": { "type": "integer", "minimum": 0, "description": "The assignment revision last applied." },
+        "scope_kind": { "enum": ["folder", "repo", "space"], "description": "The chat's scope kind, from the assignment." },
+        "folder_id": { "type": "string", "pattern": "^f_[0-9a-f]{16}$", "description": "For a folder chat: the offered folder it uses." },
+        "root": { "type": "string", "minLength": 1, "maxLength": 4096, "description": "The chat root: the absolute directory its daemon is rooted at." },
+        "instance": { "type": ["string", "null"], "pattern": "^[0-9a-f]{8}$", "description": "instanceId(root) (lib/util/registry.js), cross-checked against the daemon's GET /api/health `instance`." },
+        "owned_root": { "type": "boolean", "description": "True when the connector made the root (a clone or a space) under workdir. stop_mode now and disconnect shut down any daemon on an owned root, whatever its started_by (C-06.22, C-06.9); a daemon adopted here is still started_by other until the connector's idle restart (C-06.19)." },
+        "desired": { "enum": ["running", "stopped"], "description": "The hub's last desired state for the chat's daemon." },
+        "manual_attach_at": { "type": ["number", "null"], "description": "When `connect attach` first ran a session in this root; null before. Connector mode is offered for the root only once this is set, because a manual session is where the user answers Claude Code's workspace trust dialog (C-06.26, reason needs-trust). Only the manual attach sets it: a registry MCP row (mcpSessionsFor) proves only that the MCP server loaded, not that the dialog was passed." },
+        "assigned_at": { "type": "number", "description": "When the chat was first assigned here." }
+      }
+    }
+  }
+}

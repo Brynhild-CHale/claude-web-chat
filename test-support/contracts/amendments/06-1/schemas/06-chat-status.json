@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-chat-status.json",
+  "title": "Chat status",
+  "description": "What the connector reports about one chat (contract 06 C-06.24). Contract 05 carries it as a message body; contract 07 owns how the hub orders and catches up on these (seq, boot). Every field is derived from host reads the connector makes over loopback through lib/client, with no X-WC-Remote, no Origin and no Sec-Fetch-* header, never through the relay (C-06.28): GET /api/health (lib/server/routes/health.js), GET /api/queue/policy (lib/server/routes/queue.js), GET /api/asks (lib/server/routes/asks.js), the registry's MCP presence rows (lib/util/registry.js mcpSessionsFor) and the retain stream's graph events (lib/server/routes/events.js). It carries counts, states and times only: no prompt text, no lock message, no path of an owned root (contract 11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "chat_id",
+    "rev",
+    "boot",
+    "seq",
+    "at",
+    "state"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "Body format version."
+    },
+    "chat_id": {
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The chat this is about, by its label (contract 03 section 2)."
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The assignment rev the connector has applied (0: none yet)."
+    },
+    "boot": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The connector process's boot token, opaque to the hub (contract 07 treats boot tokens so); today pid:start-ms, the daemon's bus bootId shape (lib/server/index.js). A new boot restarts seq."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per connector boot, increasing across all chats. The hub keeps the newest per chat."
+    },
+    "at": {
+      "type": "number",
+      "description": "When the connector composed this status, epoch ms."
+    },
+    "state": {
+      "enum": [
+        "preparing",
+        "starting",
+        "running",
+        "stopping",
+        "stopped",
+        "refused",
+        "failed"
+      ],
+      "description": "preparing: cloning, making a space or running init; starting: daemon spawned, identity not yet confirmed; running: daemon confirmed and held; stopping: hold released or shutdown sent; stopped: no daemon; refused: the assignment cannot be applied (see reason); failed: it was tried and did not work (see reason)."
+    },
+    "reason": {
+      "enum": [
+        "unknown-folder",
+        "folder-withdrawn",
+        "root-in-use",
+        "init-needed",
+        "init-failed",
+        "clone-failed",
+        "daemon-timeout",
+        "identity-mismatch",
+        "cap",
+        "paused",
+        "not-accepting",
+        "home-launch-off",
+        "no-tmux",
+        "needs-trust",
+        "no-claude",
+        "revoked",
+        "other"
+      ],
+      "description": "Why the state is refused or failed, or why a wanted session is not running (cap, paused, home-launch-off, no-tmux, needs-trust, no-claude). needs-trust: connector mode is wanted but no manual `connect attach` has run in this root yet (a registry MCP row does not count), so a launched session would stop at Claude Code's workspace trust dialog (C-06.26). clone-failed also covers a ref refused before git ran (C-06.16)."
+    },
+    "detail": {
+      "type": "string",
+      "maxLength": 280,
+      "description": "One sentence for the machine page. Never a path under workdir, never prompt text."
+    },
+    "daemon": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The chat's daemon, from GET /api/health; null when none answers.",
+      "additionalProperties": false,
+      "required": [
+        "up"
+      ],
+      "properties": {
+        "up": {
+          "type": "boolean",
+          "description": "A daemon answers as this root's instance."
+        },
+        "instance": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}$",
+          "description": "health.instance."
+        },
+        "package_version": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "health.package_version: the web-chat release the daemon runs."
+        },
+        "boot": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "health.boot: the daemon's per-boot id; a change means it restarted."
+        },
+        "viewers": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "health.viewers: open /ws sockets, local and relayed. The connector's own hold is not one."
+        },
+        "viewer_peers": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "health.viewer_peers (getViewerSummary, lib/server/ws.js; sent at the local level only, connector branch; Q-06.13): open sockets split by peer, so the machine page can tell a local viewer from a relayed one before a `now` stop. Null when the daemon predates the field.",
+          "additionalProperties": false,
+          "required": [
+            "local",
+            "remote"
+          ],
+          "properties": {
+            "local": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Sockets from a local, unrelayed browser."
+            },
+            "remote": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Sockets relayed by the connector or the portal."
+            }
+          }
+        },
+        "started_by": {
+          "enum": [
+            "connector",
+            "other"
+          ],
+          "description": "connector: this connector spawned it and handed it the relay secret (C-06.19). other: a daemon it adopted, on any root (the user's `claude-web-chat open`, or an MCP auto-spawn after a manual attach, an owned root included); the hub shows the chat as waiting for a restart until the connector's idle restart (a C-06.22 shutdown followed by a spawn) makes it a connector daemon. stop_mode now and disconnect shut down connector daemons and any daemon on an owned root (C-06.22); an other daemon on an offered folder is only released."
+        },
+        "held": {
+          "type": "boolean",
+          "description": "The connector's retain stream is open on it."
+        },
+        "mirror_enabled": {
+          "type": "boolean",
+          "description": "health.mirror.enabled: false when a marker file turned the chat's surface off on the machine (10 C-10.5a). The connector reports it and never removes a marker."
+        }
+      }
+    },
+    "session": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The Claude Code session(s) attached to the chat root, from the registry's role:'mcp' rows and GET /api/queue/policy, plus the connector's own tmux probe for `attach` (C-06.24, A-06.1). Non-null whenever an MCP presence row names the root or the probe finds the launched tmux session (then `attached` may be false and `count` 0: a launch window, or a Claude Code that has not loaded its MCP server), so a live session is never reported as none; null when neither.",
+      "additionalProperties": false,
+      "required": [
+        "attached"
+      ],
+      "properties": {
+        "attached": {
+          "type": "boolean",
+          "description": "At least one live MCP presence row names this root."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many sessions are attached."
+        },
+        "channel": {
+          "type": "boolean",
+          "description": "GET /api/queue/policy channel_connected: a Push wakes Claude now instead of parking."
+        },
+        "mod": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "GET /api/queue/policy mod_attached (ctx.bridge.any(), lib/server/domain/bridge.js; new on the connector branch, Q-06.6): the web-chat mod is attached (the composer's submit path). Null when the daemon's policy does not carry the field."
+        },
+        "launched_by": {
+          "enum": [
+            "connector",
+            "user"
+          ],
+          "description": "connector: launched by this connector under tmux (web-chat's tmux launcher, C-06.26); user: started by hand or with `connect attach`. With connector, `attach` names the multiplexer session (amendment A-06.1)."
+        },
+        "attach": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The multiplexer session a terminal can attach to (amendment A-06.1, C-06.26): non-null only when launched_by is connector and `tmux has-session -t '=<name>'` (the exact-match target) answers at the status tick (C-06.24), with or without an MCP presence row; null in manual mode (the user's own tmux, if any, is not the connector's to name), when the launched session is gone, or when tmux is absent. A connector from this amendment on MUST send it (null included); the schema leaves it optional so a status from an earlier build and the locked examples stay valid. The hub reads the name from here and never composes it; 10's GetChatAttach serves it as `session` (C-10.14a, A-10.1), the same object.",
+          "additionalProperties": false,
+          "required": [
+            "multiplexer",
+            "name"
+          ],
+          "properties": {
+            "multiplexer": {
+              "enum": [
+                "tmux"
+              ],
+              "description": "The multiplexer the launcher used. tmux in v1.1; another value (zellij) is an amendment."
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^wc-[0-9a-hjkmnp-tv-z]{26}$",
+              "description": "The session name as the launcher created it: wc-<chat-label> and nothing else (C-06.26, ruled SW2), so the pattern is `wc-` and contract 03's chat label; tmux keeps neither `.` nor `:` in a name and the pattern admits neither, and every character is inside 10 C-10.14a's safe set. The project's display path rides the session option @swc_project, not the name."
+            }
+          }
+        },
+        "package_versions": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "description": "The web-chat releases the attached MCP servers run (registry sessions() package_versions)."
+        },
+        "last_tool_at": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Latest tool call any attached session made (registry last_tool_at)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "launched_by": {
+                "const": "connector"
+              }
+            },
+            "required": [
+              "launched_by"
+            ]
+          },
+          "else": {
+            "properties": {
+              "attach": {
+                "type": "null",
+                "description": "A manual session (launched_by user, or none named) reports no multiplexer session (A-06.1)."
+              }
+            }
+          }
+        }
+      ]
+    },
+    "turn": {
+      "type": "object",
+      "description": "The graph's turn lock, from GET /api/health and the graph turn-begin / turn-end / unlock events.",
+      "additionalProperties": false,
+      "required": [
+        "in_flight"
+      ],
+      "properties": {
+        "in_flight": {
+          "type": "boolean",
+          "description": "health.lock is set and health.lock_stale is false."
+        },
+        "author": {
+          "enum": [
+            "user",
+            "wake",
+            "task"
+          ],
+          "description": "health.lock.author: a typed prompt, a channel-woken turn, or a task."
+        },
+        "started_at": {
+          "type": "number",
+          "description": "health.lock.started_at."
+        },
+        "active_label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "description": "health.active_label, e.g. n1.7."
+        },
+        "last_commit_at": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "health.last_commit_at."
+        }
+      }
+    },
+    "needs_you": {
+      "type": "object",
+      "description": "What waits on the user, from GET /api/asks as a host read, the read 05's status poll makes (counts only).",
+      "additionalProperties": false,
+      "required": [
+        "asks"
+      ],
+      "properties": {
+        "asks": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Open permission prompts, questions and plans."
+        }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "description": "The queue rail, from GET /api/queue/policy.",
+      "additionalProperties": false,
+      "required": [
+        "count"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "queue_count: items waiting for a Push."
+        }
+      }
+    },
+    "over_cap": {
+      "type": "boolean",
+      "description": "True when this chat's session is one more than the effective cap allows (a manual session the connector could not prevent)."
+    }
+  }
+}

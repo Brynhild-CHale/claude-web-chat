@@ -1,0 +1,291 @@
+{
+  "catalogue": "swc-home-tools",
+  "catalogue_version": "1.0.0",
+  "server_name": "hub",
+  "tools": [
+    {
+      "name": "list_chats",
+      "description": "List the chats on this hub, grouped as the user sees them: workspace, then project, then chat, with each chat's state (working, needs_you, idle, offline, archived), its queue count, its unseen Activity count, the machine it lives on and its scope. Archived chats are left out unless `include_archived` is true. Use this first to find a chat by name before read_chat or message_chat, and when the user asks what is running, what needs them, or what changed. Refer to chats by title and project when you talk to the user; the chat_id is for your next call, never for them. A chat whose machine is offline is listed with `stale:true`: its row is what the hub last heard, and its conversation cannot be read until the machine is back. Reading this touches no chat and wakes no agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "workspace": {
+            "type": "string",
+            "description": "A workspace name or id; only its chats."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project name or id; only its chats."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "working",
+              "needs_you",
+              "idle",
+              "offline",
+              "archived"
+            ],
+            "description": "Only chats in this state."
+          },
+          "include_archived": {
+            "type": "boolean",
+            "description": "Include archived chats (they are read only). Default false."
+          }
+        }
+      },
+      "backing": [
+        "ListChats",
+        "ListWorkspaces",
+        "ListProjects"
+      ],
+      "needs": "Read on every chat (Home's standing right)"
+    },
+    {
+      "name": "read_chat",
+      "description": "Read one chat at the level Home holds, which is Read: its status row, its queue (messages waiting, the hub's and its own), its pending asks (permission prompts and questions waiting on the user), and its conversation as the chat's mirror serves it at Read: the user's prompts and Claude's replies, with no file contents and no pane HTML. Pass `since` (epoch ms) to list only conversations active since then (the default is the last 24 hours); page a conversation's turns with `before`. When the chat's machine is offline you get the last status the hub saw with `stale:true` and no conversation. Use it to answer \"what is X doing\", to write the Today brief, or before message_chat so the message fits where the chat is. To show the user a pane, do not describe it from here: pin it with pin_to_dashboard. A pending ask is the user's to answer, never yours: tell them it is waiting.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "The chat, from list_chats."
+          },
+          "since": {
+            "type": "number",
+            "description": "Epoch ms; list only conversations active since then. Default: 24 hours back."
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "Which listed conversation's turns to return. Default: the most recently active one."
+          },
+          "before": {
+            "type": "number",
+            "description": "Page back: the `next_before` of your previous read of that conversation; turns before it. Default: the newest page."
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "status",
+                "queue",
+                "asks",
+                "conversation"
+              ]
+            },
+            "description": "Which parts to return. Default: all four."
+          }
+        },
+        "required": [
+          "chat_id"
+        ]
+      },
+      "backing": [
+        "GetChat",
+        "ReadQueue",
+        "ListPendingAsks",
+        "ReadChatMirror",
+        "ReadChatTurns"
+      ],
+      "needs": "Read on the chat"
+    },
+    {
+      "name": "read_activity",
+      "description": "Read Activity, the log of what happened: panes created, updated and removed, store keys set, comments answered, messages queued and delivered, asks raised and decided, machines going on and offline, each entry naming who did it (the user, a chat's agent, you) and when. `stream` is `chat:<chat_id>` for one chat, `machine:<machine_id>` for a machine, or `hub` for hub-wide entries. Pass `since` (the `latest` of your previous read of that stream) with its `epoch` to read only what is new. If the answer says `gap:true`, entries were dropped or the stream was renumbered: read again without `since` and rebuild what you derived. Entries you may not see in full come with `withheld:true` and no data. Use this for \"while you were away\" and to check that a delegated message was delivered.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stream": {
+            "type": "string",
+            "description": "chat:<chat_id>, machine:<machine_id>, or hub."
+          },
+          "since": {
+            "type": "number",
+            "description": "The last seq you read on this stream."
+          },
+          "epoch": {
+            "type": "string",
+            "description": "The epoch that since belongs to, from the previous answer."
+          },
+          "limit": {
+            "type": "number",
+            "description": "At most this many entries, up to 500. Default 100."
+          }
+        },
+        "required": [
+          "stream"
+        ]
+      },
+      "backing": [
+        "ReadActivity"
+      ],
+      "needs": "Read on the stream's chat"
+    },
+    {
+      "name": "message_chat",
+      "description": "Put a message in another chat's queue, as Home, under the Message grant: Home holds Message on every chat by default, the user can turn it off per chat, and an archived chat never takes one (the call answers forbidden). The chat's own agent does the work, inside its own scope; you do not get its answer in this call, so read_chat later to see it. Send only what the user asked you to delegate, or what a scheduled check-in the user set up says to send; never invent work for a chat. `reason` is shown to the user on Today under Delegated messages, and the message is marked as from Home in that chat: write both so the user can tell at a glance why it was sent. `send:\"auto\"` (default) delivers when that chat's Claude is free, `\"hold\"` leaves it in the queue for the user to release. When the chat's machine is offline the message waits on the hub and is delivered when the machine is back (`state:\"queued\"`); each message is delivered once. The text limit is 3000 characters.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "The chat, from list_chats."
+          },
+          "text": {
+            "type": "string",
+            "description": "The message, written as the user would write it to that chat. At most 3000 characters."
+          },
+          "reason": {
+            "type": "string",
+            "description": "One line for the user's Today board: why you sent it. At most 280 characters."
+          },
+          "send": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "now",
+              "hold"
+            ],
+            "description": "auto (default): when that Claude is free; now: at once; hold: queue it unsent for the user."
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "A conversation in that chat, if not its primary one."
+          }
+        },
+        "required": [
+          "chat_id",
+          "text",
+          "reason"
+        ]
+      },
+      "backing": [
+        "DelegateMessage"
+      ],
+      "needs": "Message on the chat"
+    },
+    {
+      "name": "pin_to_dashboard",
+      "description": "Pin a mirror of one chat's pane onto a dashboard. For now the mirror shows the pane as that chat last committed it, not each live change; following it live waits on a route web-chat has not built. Whatever draws it gives the pane's script no write to that chat's store, so nothing on the dashboard changes the chat. You manage every project's dashboards and the Home dashboards without a grant, and you can read every chat, so this works for any pane you can name: find the chat with list_chats and the pane's mount id from read_chat or from the user. `place` proposes where it sits on the dashboard's 12-column grid (two `span:6` side by side, `span:3` stat tiles); the user can rearrange. To put data from several chats in one pane, build it with render_dashboard_pane instead. Answers the pin, with its `pin_id`.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dashboard_id": {
+            "type": "string",
+            "description": "The dashboard (list it through the user's request or the Board)."
+          },
+          "chat_id": {
+            "type": "string",
+            "description": "The chat whose pane to mirror."
+          },
+          "mount_id": {
+            "type": "string",
+            "description": "The pane's mount id on that chat's page."
+          },
+          "title": {
+            "type": "string",
+            "description": "A label for the mirror; default the pane's own."
+          },
+          "place": {
+            "type": "object",
+            "description": "Proposed placement on the dashboard's 12-column grid, as web-chat's render takes it: col (1 to 12), span (2 to 12), rows (2 to 24 rows of 40px). Omit for full width.",
+            "properties": {
+              "col": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12
+              },
+              "span": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 12
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 24
+              }
+            }
+          }
+        },
+        "required": [
+          "dashboard_id",
+          "chat_id",
+          "mount_id"
+        ]
+      },
+      "backing": [
+        "PinPane"
+      ],
+      "needs": "Read on the chat; Home's standing right on dashboards"
+    },
+    {
+      "name": "render_dashboard_pane",
+      "description": "Render a built pane on a dashboard: a pane you write that pulls data across chats (a release tracker, open work by project, a check-in summary). It goes through the dashboard's driver API and is owned by you (`owner:\"service:swc-home\"` on that dashboard), so the user and other writers see it as Home's. The HTML/JS rules are web-chat's `render`: inline `<script>` runs with `store`, `root`, `params`, `mountId` and `api` injected; query the pane's DOM through `root`, never `document.querySelector` (it cannot see into the shadow root and the script dies at mount); build DOM from data with `document.createElement`. Put the data in `params` or in `store` (a patch merged into the dashboard's store before the render), not baked into the HTML, so a later call can refresh it without rewriting the markup. Reuse `id` to replace the pane in place. A pane the user locked, or one another writer owns, answers a soft reject (`ok:false` with `locked` or `owned`); pass `force:true` only when the user asked you to take it over. Dashboards have no agent of their own: nothing on them wakes you.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dashboard_id": {
+            "type": "string",
+            "description": "The dashboard."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable pane id on the dashboard; reuse it to update in place. Prefix it (e.g. \"home-releases\")."
+          },
+          "html": {
+            "type": "string",
+            "description": "The pane's HTML/JS, as web-chat's render takes it."
+          },
+          "params": {
+            "type": "object",
+            "description": "Injected into the pane script as `params`. `title` labels the pane header."
+          },
+          "store": {
+            "type": "object",
+            "description": "A patch merged into the dashboard's store before the render; the pane can read and subscribe to it."
+          },
+          "after": {
+            "type": "string",
+            "description": "Place the pane after this pane or markdown id, or \"start\"."
+          },
+          "place": {
+            "type": "object",
+            "description": "Proposed placement on the dashboard's 12-column grid, as web-chat's render takes it: col (1 to 12), span (2 to 12), rows (2 to 24 rows of 40px). Omit for full width.",
+            "properties": {
+              "col": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 12
+              },
+              "span": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 12
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 24
+              }
+            }
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Take over a pane another writer owns. Only when the user asked."
+          }
+        },
+        "required": [
+          "dashboard_id",
+          "id",
+          "html"
+        ]
+      },
+      "backing": [
+        "RenderDashboardPane"
+      ],
+      "needs": "Home's standing right on dashboards"
+    }
+  ]
+}

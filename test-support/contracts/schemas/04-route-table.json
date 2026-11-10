@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/04-route-table.json",
+  "title": "Connected route table (contract 04)",
+  "description": "Which daemon routes, and which inbound WebSocket messages, each table level reaches through the hub (C-04.13 to C-04.19). Derived row by row from web-chat-dev.worktrees/ae-int/lib/core/remote-policy.js RULES and ANSWER_RULES (with lib/core/element-policy.js FLOOR_RULES compiled into RULES) and from the message types lib/server/ws.js accepts on a socket. The row grammar is remote-policy's own (literal segments, ':name' one segment, a final '*' zero or more segments, HEAD read as GET, case-insensitive, one trailing slash ignored, malformed paths refused), FIRST MATCH WINS and DEFAULT DENY. The rows load into remote-policy classifier() after one mapping (allow is false for host_only and retired, refuse_query becomes refuseQuery), which finds the first matching row; the connector then checks the row's level and requires against the decision itself (C-04.13). The table ships with web-chat in the connector, because it must match the daemon's routes: a separate compiled table, lib/core/connected-policy.js, beside RULES and ANSWER_RULES, which stay byte-identical (C-04.19). The table is keyed by table_version and its sha256, never by a web-chat version. Its sha256 is taken over its canonical JSON: RFC 8785 (JCS), which for this document, holding only strings, integers, arrays and objects, is the members sorted by key at every depth with no whitespace, UTF-8 encoded. In web-chat it is lib/core/stable-json stableStringify(table) hashed with crypto sha256, never stableHash (a sha1) and never a second serializer (C-04.19).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["table_version", "derived_from", "grammar", "session", "answer", "ws_inbound"],
+  "properties": {
+    "table_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped on every change to any row; the ratchet in test/remote-policy.test.js pins the table's sha256, so a changed table without a bump fails. The connector reports it and the table's sha256 in its hello (contract 05), and a decision names the hub's copy by both (04-policy-decision.json table); the hub logs a skew when its own copy differs (C-04.19). It moves with each alpha that moves a row."
+    },
+    "derived_from": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["portal_protocol", "source"],
+      "description": "What the table was compiled from. Informative: the table's identity is table_version and its sha256 (C-04.19).",
+      "properties": {
+        "web_chat": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$",
+          "description": "Informative: the web-chat build whose tables were read, for example 0.9.0-alpha.2.1. Not a key: an interim build and a tag can share a package.json version (ae/int's reads 0.8.5 until the tag stamps it), so the table is matched by its sha256."
+        },
+        "portal_protocol": {
+          "type": "integer",
+          "minimum": 12,
+          "description": "lib/core/versions.js PORTAL_PROTOCOL_VERSION of that build (12 on ae/int, 10 on main 0.8.5). A table older than the daemon's protocol refuses the newer rows by default deny."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The tree and commit the rows were read at, and the files they were derived from, by path."
+        }
+      }
+    },
+    "grammar": {
+      "const": "remote-policy",
+      "description": "The matching grammar: lib/core/remote-policy.js normalize, segsMatch and decide (first match wins, default deny)."
+    },
+    "session": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Rows for the chat's surface origin (chat-<label>.<hub>), in first-match order. One row per RULES row, split where one RULES row covers routes of two levels (GET|POST /api/store, * /api/queue/*).",
+      "items": { "$ref": "#/$defs/row" }
+    },
+    "answer": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Rows for the chat's answer origin (chat-<label>-a.<hub>), in first-match order. Control actions get one literal row each (the action table in lib/server/control/index.js is the daemon's allowlist; the hub's needs the action's level), so an action no row names is refused by default deny.",
+      "items": { "$ref": "#/$defs/row" }
+    },
+    "ws_inbound": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The viewer-to-daemon message types the connector forwards on a relayed socket, by the level each needs (C-04.18). A type not listed, a binary frame, an unparseable frame or one over the size cap is dropped.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "level"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "^[a-z][a-z:-]{0,39}$",
+            "description": "The message's `type`, as lib/server/ws.js tests msg.type."
+          },
+          "level": {
+            "$ref": "#/$defs/level",
+            "description": "The table level a socket's decision needs for this message to be forwarded."
+          },
+          "note": {
+            "type": "string",
+            "description": "Why the message sits at that level."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "level": {
+      "enum": ["status", "read", "message", "write_page", "files", "host_only", "retired"],
+      "description": "status: the heartbeat, below Read, held by every Read holder and by the hub's status reader. read, message, write_page, files: the design's four levels. host_only: never reachable through the hub by any principal in any round (C-04.15). retired: a route the daemon no longer serves (it answers 410); refused like host_only."
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["methods", "path", "level", "from_rule"],
+      "properties": {
+        "methods": {
+          "description": "HTTP methods the row matches, or '*' for any. HEAD is matched as GET.",
+          "oneOf": [
+            { "const": "*" },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] }
+            }
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/([A-Za-z0-9._:-]+(/[A-Za-z0-9._:-]+)*(/\\*)?|\\*)?$",
+          "description": "The path pattern in remote-policy grammar: literal segments, ':name' for one segment, a final '*' for zero or more."
+        },
+        "level": {
+          "$ref": "#/$defs/level",
+          "description": "The table level a decision needs for this row to allow."
+        },
+        "requires": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "enum": ["steer", "destructive"] },
+          "description": "Specifics the decision must also carry as true (C-04.5). Absent: none."
+        },
+        "daemon_mirror": {
+          "enum": ["basic", "read", "full"],
+          "description": "The daemon level the daemon's own second lock needs today for this route, when it checks one (a RULES row's `mirror`, a route's requireMirror, ANSWER_RULES' full). Informative: the connector does not read it. Absent: the daemon checks no level for the route."
+        },
+        "refuse_query": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key", "value"],
+          "description": "A query value that refuses the request whatever the decision, read as remote-policy queryHas reads it (GET /api/export/:ref with format=file).",
+          "properties": {
+            "key": { "type": "string", "pattern": "^[a-z_]+$", "description": "The query key, lowercased, any qs spelling." },
+            "value": { "type": "string", "minLength": 1, "description": "The refused value, lowercased." }
+          }
+        },
+        "from_rule": {
+          "type": "string",
+          "pattern": "^(\\*|[A-Z]+(\\|[A-Z]+)*) /",
+          "description": "The RULES or ANSWER_RULES row this row derives from, as remote-policy keyOf() prints it, so a ratchet can check every daemon row is covered."
+        },
+        "note": {
+          "type": "string",
+          "description": "A body-level rule the daemon applies under X-WC-Remote, or why the row sits at its level."
+        }
+      }
+    }
+  }
+}

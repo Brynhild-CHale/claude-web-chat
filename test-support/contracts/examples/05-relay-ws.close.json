@@ -1,0 +1,9 @@
+{
+  "ch": "relay",
+  "kind": "relay.ws.close",
+  "id": "h240",
+  "seq": 40,
+  "stream": 19,
+  "code": 4403,
+  "reason": "access changed: sign in again from the chat"
+}

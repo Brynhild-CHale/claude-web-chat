@@ -1,0 +1,52 @@
+{
+  "v": 1,
+  "chat_id": "01jbz9a1b2c3d4e5f6g7h8j9k0",
+  "rev": 3,
+  "boot": "48211:1793181290000",
+  "seq": 61,
+  "at": 1793558522000,
+  "state": "running",
+  "daemon": {
+    "up": true,
+    "instance": "5b1e9c04",
+    "package_version": "0.9.0-alpha.3",
+    "boot": "48302:1793181402551",
+    "viewers": 1,
+    "viewer_peers": {
+      "local": 0,
+      "remote": 1
+    },
+    "started_by": "connector",
+    "held": true,
+    "mirror_enabled": true
+  },
+  "session": {
+    "attached": true,
+    "count": 1,
+    "channel": true,
+    "mod": true,
+    "launched_by": "connector",
+    "attach": {
+      "multiplexer": "tmux",
+      "name": "wc-01jbz9a1b2c3d4e5f6g7h8j9k0"
+    },
+    "package_versions": [
+      "0.9.0-alpha.3"
+    ],
+    "last_tool_at": 1793181455020
+  },
+  "turn": {
+    "in_flight": true,
+    "author": "wake",
+    "started_at": 1793181449870,
+    "active_label": "n1.12",
+    "last_commit_at": 1793181301442
+  },
+  "needs_you": {
+    "asks": 1
+  },
+  "queue": {
+    "count": 0
+  },
+  "over_cap": false
+}

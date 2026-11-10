@@ -1,0 +1,13 @@
+{
+  "wc_embed": 1,
+  "type": "theme",
+  "tokens": {
+    "--wc-accent": "#2f6f9f",
+    "--wc-accent-dark": "#24587f",
+    "--wc-accent-fg": "#ffffff",
+    "--wc-radius": "8px"
+  },
+  "modes": {
+    "dark": { "tokens": { "--wc-accent": "#5aa0d0", "--wc-accent-fg": "#0b1620" } }
+  }
+}

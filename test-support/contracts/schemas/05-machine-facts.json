@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-machine-facts.json",
+  "title": "Connector machine facts and settings",
+  "description": "What the machine reports about itself and what the hub sets on it (C-05.18, C-05.19), for the machine registry and Settings > Machines. Folder and settings objects are contract 06's (06-connector-state.json); versions travel in hello (contract 12).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/machine_facts"
+    },
+    {
+      "$ref": "#/$defs/machine_settings"
+    },
+    {
+      "$ref": "#/$defs/machine_revoked"
+    },
+    {
+      "$ref": "#/$defs/machine_leave"
+    }
+  ],
+  "$defs": {
+    "machine_facts": {
+      "type": "object",
+      "description": "The machine as the connector sees it (C-05.18). Sent after every hello.ack and whenever a value changes; always whole. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "machine.facts",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "hostname": {
+          "type": "string",
+          "maxLength": 253,
+          "description": "os.hostname()."
+        },
+        "folders": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "06-connector-state.json#/$defs/folder",
+            "description": "One offered folder, contract 06's object unchanged."
+          },
+          "description": "Every folder offered on the machine, whole. The only paths the hub learns."
+        },
+        "settings": {
+          "$ref": "06-connector-state.json#/properties/settings",
+          "description": "The settings in force: the hub's last machine.settings with the local ceiling applied (contract 06, C-06.23)."
+        },
+        "mcp_servers": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:@._-]{1,128}$",
+            "description": "One MCP server name."
+          },
+          "description": "The MCP servers installed for Claude Code on this machine, by name only (design panel F). Never a command line, an argument, an env value or a path."
+        },
+        "skills": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:@._-]{1,128}$",
+            "description": "One skill name."
+          },
+          "description": "The skills installed for Claude Code on this machine, by name only (design panel F). Never a command line, an argument, an env value or a path."
+        },
+        "ceiling": {
+          "type": "string",
+          "enum": [
+            "read",
+            "full"
+          ],
+          "description": "The machine's ceiling for relayed requests (06 C-06.23a, set by connect ceiling, default full): every daemon on this machine serves a relayed request at most at this level. Informative to the hub, which shows it on the machine page; it never raises a decision."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "hostname",
+        "folders",
+        "settings",
+        "mcp_servers",
+        "skills"
+      ],
+      "additionalProperties": false
+    },
+    "machine_settings": {
+      "type": "object",
+      "description": "The hub's settings for the machine (C-05.19). Sent after every hello.ack and on every change. The connector answers with machine.facts. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "machine.settings",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "settings": {
+          "type": "object",
+          "description": "What Settings > Machines sets (design panel F), in contract 06's field names.",
+          "properties": {
+            "agents_at_once": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64,
+              "description": "Agents at once."
+            },
+            "accept_new_chats": {
+              "type": "boolean",
+              "description": "Accept new chats."
+            },
+            "let_home_start_agents": {
+              "type": "boolean",
+              "description": "Let Home start agents here."
+            },
+            "paused": {
+              "type": "boolean",
+              "description": "Pause (C-05.27): the hub withholds its own queue deliveries and the connector launches no session; running turns finish. The framed composer still queues, Send now and a declared wake: 'immediate' signal still wake the agent, and a paused chat can still be stopped (Stop is a relayed control at Message)."
+            },
+            "rev": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The hub's revision of these settings; the connector ignores an older one."
+            }
+          },
+          "required": [
+            "agents_at_once",
+            "accept_new_chats",
+            "let_home_start_agents",
+            "paused",
+            "rev"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "machine_revoked": {
+      "type": "object",
+      "description": "Disconnect in Settings > Machines, or a revoke (C-05.9). The hub closes with 4403 next; the connector runs contract 06's C-06.9. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "machine.revoked",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "For the person at the machine."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "machine_leave": {
+      "type": "object",
+      "description": "`claude-web-chat connect disconnect` on the machine (contract 06, C-06.9): the hub revokes the machine credential and closes with 1000. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "machine.leave",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

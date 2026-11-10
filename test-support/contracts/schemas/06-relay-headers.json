@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-relay-headers.json",
+  "title": "Relay header sets",
+  "description": "The two header sets the connector controls on a relayed request: what it sends UPSTREAM to the loopback daemon (derived from lib/portal/proxy.js forwardHeaders and FORWARD, and lib/portal/ws-relay.js for the upgrade, both moving to lib/relay, C-06.4), and what it ADDS or REPLACES on the response it relays DOWNSTREAM to the hub (derived from proxy.js responseHeaders and securityHeaders, and lib/portal/index.js's X-WC-Answer-Origin). Header names are lowercase, as Node presents them. The upstream set is closed: anything not listed is dropped, which is the portal's allowlist rule. The upstream x-wc-* headers have two owners: contract 03 (x-wc-relay, x-wc-actor; schemas/03-actor-header.json) and contract 04 (x-wc-level, x-wc-grants, x-wc-decision; schemas/04-level-header.json); x-wc-remote is web-chat's own. This contract adds nothing upstream: its x-wc-embedded and x-wc-embed-parent are response headers on the relayed health (C-06.33), in the downstream set beside 04's x-wc-answer-origin. This file lists each whole set once so a request valid under 04-level-header.json is valid here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "upstream_request"
+  ],
+  "properties": {
+    "upstream_request": {
+      "type": "object",
+      "description": "Headers on the request the connector makes to 127.0.0.1:<port>. The x-wc-* headers are set AFTER the allowlist, so a viewer can neither send nor suppress them.",
+      "additionalProperties": false,
+      "required": [
+        "x-wc-remote",
+        "x-wc-level",
+        "x-wc-decision"
+      ],
+      "patternProperties": {
+        "^sec-fetch-[a-z-]+$": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Fetch metadata, forwarded as the portal forwards it (the daemon's browser test reads it)."
+        }
+      },
+      "properties": {
+        "accept": {
+          "type": "string",
+          "description": "Forwarded (FORWARD allowlist)."
+        },
+        "accept-language": {
+          "type": "string",
+          "description": "Forwarded."
+        },
+        "content-type": {
+          "type": "string",
+          "description": "Forwarded."
+        },
+        "content-length": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Forwarded."
+        },
+        "if-none-match": {
+          "type": "string",
+          "description": "Forwarded."
+        },
+        "if-modified-since": {
+          "type": "string",
+          "description": "Forwarded."
+        },
+        "range": {
+          "type": "string",
+          "description": "Forwarded."
+        },
+        "user-agent": {
+          "type": "string",
+          "description": "Forwarded; the daemon reads it only for push provenance."
+        },
+        "last-event-id": {
+          "type": "string",
+          "description": "Forwarded (SSE resume)."
+        },
+        "origin": {
+          "type": "string",
+          "pattern": "^http://(localhost|127\\.0\\.0\\.1):[0-9]{1,5}$",
+          "description": "Present only when the hub matched the viewer's Origin to the surface (or answer) origin; rewritten to the daemon's own loopback origin, as proxy.js does (answer mode: http://127.0.0.1:<answer port>)."
+        },
+        "x-wc-answer": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "The answer frame's nonce, forwarded in answer mode only (proxy.js ANSWER_HEADER)."
+        },
+        "x-wc-remote": {
+          "const": "1",
+          "description": "Set last, always (lib/core/cors REMOTE_HEADER)."
+        },
+        "x-wc-relay": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Contract 03's relay secret (C-03.19, C-03.22), 64 lowercase hex, the value handed to this daemon on fd 3 at spawn (C-06.19). Absent only while the connector holds no secret for the running daemon: it restarted while the daemon ran, or it adopted a daemon it did not spawn."
+        },
+        "x-wc-actor": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Contract 03's actor header (C-03.20): one line of compact ASCII JSON validating against schemas/03-actor-header.json, copied verbatim from the relay frame. Absent whenever x-wc-relay is."
+        },
+        "x-wc-level": {
+          "enum": ["basic", "read", "full"],
+          "description": "Contract 04's daemon level (C-04.9, schemas/04-level-header.json): the decision's daemon_level."
+        },
+        "x-wc-grants": {
+          "type": "string",
+          "pattern": "^(status|read|message|write_page|files|steer|destructive)(,(status|read|message|write_page|files|steer|destructive))*$",
+          "description": "Contract 04's held levels and true specifics (C-04.9). Absent for a basic decision."
+        },
+        "x-wc-decision": {
+          "type": "string",
+          "pattern": "^dec_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "Contract 04's decision_id (C-04.9)."
+        }
+      }
+    },
+    "downstream_response": {
+      "type": "object",
+      "description": "Headers the connector adds or replaces on the relayed response (the rest of the daemon's headers pass through minus hop-by-hop and Set-Cookie, as responseHeaders strips them). x-frame-options is not in this set: on every framed document in embedded mode it MUST be absent, because X-Frame-Options cannot name an allowed ancestor.",
+      "additionalProperties": false,
+      "properties": {
+        "content-security-policy": {
+          "description": "The frame-ancestors policy the connector appends (one string, or the daemon's policies plus this one). Session documents: frame-ancestors <shell>. Preview paths (/preview/node/*, /preview/pane/*, /replay): frame-ancestors 'self' <shell>. Answer host: frame-ancestors <surface> <shell>. CSP frame-ancestors is checked against every ancestor, so the shell origin must appear in each.",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "frame-ancestors "
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "x-wc-answer-origin": {
+          "type": "string",
+          "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+$",
+          "description": "Owned by contract 04 (C-04.9, schemas/04-level-header.json response.x-wc-answer-origin); repeated here so the downstream set is complete. On GET or HEAD /api/health at the surface origin, only when the decision's origins.answer is not null."
+        },
+        "x-wc-embedded": {
+          "const": "1",
+          "description": "This contract's (C-06.33). On a relayed GET or HEAD /api/health at the surface origin only, added after the daemon's headers and replacing any of the same name, the way x-wc-answer-origin is added. The chrome reads it with headerOf (public/app/remote.js) and applies the embedded layout only when it is also framed. A label: it widens nothing."
+        },
+        "x-wc-embed-parent": {
+          "type": "string",
+          "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?$",
+          "description": "This contract's (C-06.33). The shell origin from the chat assignment's origins.shell, never derived; on the same responses as x-wc-embedded. The chrome accepts bridge messages only from this origin and posts only to it (C-06.36)."
+        },
+        "referrer-policy": {
+          "const": "no-referrer",
+          "description": "As securityHeaders sets it."
+        },
+        "x-content-type-options": {
+          "const": "nosniff",
+          "description": "As securityHeaders sets it."
+        },
+        "cache-control": {
+          "const": "no-store",
+          "description": "On /api/* and the framed preview documents, as securityHeaders sets it."
+        }
+      }
+    }
+  }
+}
