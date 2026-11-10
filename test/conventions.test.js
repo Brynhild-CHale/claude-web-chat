@@ -1790,6 +1790,25 @@ const PATTERNS = [
       'public/app/element-types.js': 1,
     },
   },
+  {
+    // Running the service manager (tranche 6, U714; contract 06 C-06.6,
+    // C-06.11; LAUNCHD@stubbed). lib/setup/connector.js is the one home of
+    // the connector unit's launchctl and systemctl argv: pure builders
+    // (serviceArgv) run only through serviceRun's injected runner, whose
+    // default refuses under the Node test runner. A literal program name
+    // anywhere else is a second, unstubbed way to load or bounce a unit in
+    // the user's login session. Counted: either name quoted as a string.
+    name: "'launchctl' or 'systemctl' as a literal program",
+    home: 'lib/setup/connector.js — the argv builders, run only through deps.run',
+    what: 'running the service manager',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /['"`](?:launchctl|systemctl)['"`]/g,
+    baseline: {
+      // The two names, each spelled once (LAUNCHCTL, SYSTEMCTL); every argv
+      // is built from them.
+      'lib/setup/connector.js': 2,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
