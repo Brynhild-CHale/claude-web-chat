@@ -189,7 +189,9 @@ test('the edit half: a remote PATCH that sets shared: false is refused with the 
   const before = { c: now(c.id), h: now(h.id) };
   const seq = srv.elements.maxSeq();
   for (const [via, headers] of [['the portal', REMOTE], ['the hub', relayed()]]) {
-    for (const [id, body] of [[c.id, { shared: false }], [c.id, { payload: { shared: false } }], [h.id, { payload: { shared: false } }], [h.id, { shared: false }]]) {
+    // A comment reads `shared` by truth (`!!shared`), so a falsy non-false
+    // value would make it private too: refused, fail closed.
+    for (const [id, body] of [[c.id, { shared: false }], [c.id, { payload: { shared: false } }], [c.id, { shared: null }], [c.id, { shared: 0 }], [h.id, { payload: { shared: false } }], [h.id, { shared: false }]]) {
       const r = await d.anonApi.patch(`/api/elements/${id}`, body, headers);
       assert.equal(r.status, 403, `${id} ${JSON.stringify(body)} through ${via}: ${masked(r.text)}`);
       assert.deepEqual({ ok: r.json.ok, remote: r.json.remote, error: r.json.error }, { ok: false, remote: true, error: 'private elements are not available remotely' });
@@ -229,6 +231,9 @@ test('the actor sibling: only a valid credential\'s valid header, without its na
   const c = (await ok(d.anonApi.post('/api/elements', { type: 'comment', anchor: LOCATOR, payload: { text: 'thread', shared: true } }, relayed()), 'relayed comment')).pin;
   await ok(d.anonApi.post(`/api/elements/${c.id}/reply`, { text: 'a reply from the hub' }, relayed()), 'relayed reply');
   assert.deepEqual(versionsOn(root, c.id).map((r) => r.actor), [STORED, STORED]);
+  // A glyph move through the hub is a version too (routes/element-glyph).
+  await ok(d.anonApi.post(`/api/elements/${encodeURIComponent(c.id)}/glyph`, { dx: 12, dy: -8, corner: 'tr' }, relayed()), 'relayed glyph move');
+  assert.deepEqual(versionsOn(root, c.id).map((r) => r.actor), [STORED, STORED, STORED], 'the glyph move records the actor');
 
   // The same version written without one: the same hashes, no actor field.
   const local = await ok(d.anonApi.post('/api/elements', body), 'local highlight');
@@ -435,6 +440,17 @@ test('the queued message: actor and by on the item, in no projection; the wake d
   const pendLocal = (await d.api.get('/api/queue/pending')).text;
   carriesNoActor('GET /api/queue/pending, local', pendLocal);
   assert.ok(!pendLocal.includes('"by":'), 'the park is served without a by field');
+
+  // A channel reconnecting drains the park (drainPending): the wake it emits
+  // drops the actor and keeps by, and the ack it retains keeps the actor.
+  const drained = queue.drainPending(srv.state, srv.bus);
+  assert.ok(drained, 'the park drains');
+  const dsent = drained.batch.find((it) => it.id === q.id);
+  assert.ok(dsent && !('actor' in dsent), 'the drained wake\'s batch drops the actor');
+  assert.equal(drained.by, NAME, 'the drained wake keeps by');
+  const dpa = srv.state.pendingAck;
+  assert.deepEqual(dpa.batch.find((it) => it.id === q.id).actor, STORED, 'the drain\'s retained ack keeps the actor');
+  assert.equal(dpa.by, NAME);
 });
 
 test('by=: an unnamed actor, or a name that sanitises to nothing, prints no by= and changes neither line', () => {
