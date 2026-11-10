@@ -723,15 +723,64 @@ test('send() refuses a frame past 1 MiB encoded; a frame holding a registered se
 
   const secret = crypto.randomBytes(32).toString('hex');
   link.registerSecret(secret);
-  assert.strictEqual(link.send('control', 'control.error', { code: 'internal', fatal: false, hint: `a ${secret} b` }), null);
+  // U716b: a refused frame throws code 'secret' (null is only "no connection").
+  assert.throws(() => link.send('control', 'control.error', { code: 'internal', fatal: false, hint: `a ${secret} b` }),
+    (e) => e.code === 'secret' && !e.message.includes(secret));
   const d = m.privateKey.export({ format: 'jwk' }).d;
-  assert.strictEqual(link.send('control', 'control.error', { code: 'internal', fatal: false, hint: d }), null, 'the private key never leaves');
+  assert.throws(() => link.send('control', 'control.error', { code: 'internal', fatal: false, hint: d }),
+    (e) => e.code === 'secret' && !e.message.includes(d), 'the private key never leaves');
   assert.ok(link.send('control', 'control.error', { code: 'internal', fatal: false, hint: 'harmless' }));
   await waitUntil(() => fake.find('control.error', { dir: 'in' }).length === 1, { what: 'the harmless frame' });
   const all = JSON.stringify(fake.frames) + logs.join('\n');
   assert.ok(!all.includes(secret) && !all.includes(d));
   assert.strictEqual(logs.filter((l) => /code=secret/.test(l)).length, 2);
   assert.throws(() => link.registerSecret('short'), TypeError);
+});
+
+test('send onWritten: null from ws.send\'s callback once the frame is written; ELINKDOWN for a frame still queued when the connection closes; no connection returns null (U716b)', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link } = openLink(t, fake);
+  const writtenNow = (fn) => new Promise((resolve) => fn((err) => resolve(err)));
+
+  // Queued before hello.ack (the connection is in hand, not up): the stop
+  // closes it with the frame never written.
+  link.start();
+  let queuedErr;
+  const queued = writtenNow((cb) => {
+    const id = link.send('control', 'control.error', { code: 'internal', fatal: false, hint: 'queued' }, { onWritten: cb });
+    assert.ok(id, 'queued while the connection is opening');
+  });
+  const calls = [];
+  link.send('control', 'control.error', { code: 'internal', fatal: false, hint: 'queued too' }, { onWritten: (e) => calls.push(e) });
+  await link.stop();
+  queuedErr = await queued;
+  assert.strictEqual(queuedErr && queuedErr.code, 'ELINKDOWN');
+  assert.strictEqual(calls.length, 1, 'each frame hears once');
+  assert.strictEqual(calls[0].code, 'ELINKDOWN');
+  assert.ok(!fake.find('control.error', { dir: 'in' }).some((e) => /queued/.test(e.frame.hint || '')), 'never written');
+
+  // No connection in hand: null, and onWritten is never called.
+  let heard = false;
+  assert.strictEqual(link.send('control', 'control.error', { code: 'internal', fatal: false }, { onWritten: () => { heard = true; } }), null);
+  assert.throws(() => link.send('control', 'control.error', { code: 'internal', fatal: false }, { onWritten: 'x' }), TypeError);
+
+  // Up: the callback says written, after the frame went out.
+  const up = ready(link);
+  link.start();
+  await up;
+  const err = await writtenNow((cb) => {
+    assert.ok(link.send('control', 'control.error', { code: 'internal', fatal: false, hint: 'written' }, { onWritten: cb }));
+  });
+  assert.strictEqual(err, null);
+  await waitUntil(() => fake.find('control.error', { dir: 'in' }).some((e) => e.frame.hint === 'written'), { what: 'the written frame' });
+
+  // A secret: thrown, never queued, onWritten never called.
+  const secret = crypto.randomBytes(16).toString('hex');
+  link.registerSecret(secret);
+  assert.throws(() => link.send('control', 'control.error', { code: 'internal', fatal: false, hint: secret }, { onWritten: () => { heard = true; } }),
+    (e) => e.code === 'secret');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(heard, false);
 });
 
 test('a source scan of lib/connector: no option that relaxes TLS verification, and no non-loopback ws:// literal', () => {
