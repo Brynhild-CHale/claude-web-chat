@@ -394,6 +394,26 @@ test('a unit file that cannot be removed leaves record.service naming it', async
   assert.equal(setup.readRecord(HUB).value.service.unit_path, m.unitFile);
 });
 
+test('a running connector whose link is down: the leave is not sent, release-all still runs, and the hub keeps this machine (U716b)', async (t) => {
+  const m = pairedMachine(t);
+  const s = stubs(m);
+  const asked = [];
+  // The local socket's own answers: connector.leave with no link up, then the release.
+  const ask = async (request) => {
+    asked.push(request.type);
+    return request.type === 'connector.leave'
+      ? { ok: false, local: true, error: 'the connector is not connected to the hub' }
+      : { ok: true, local: true, type: request.type, result: { released: 2, left: [] } };
+  };
+  const r = await connect(['disconnect'], { disconnectDeps: s.deps, ask });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(asked, ['connector.leave', 'connector.release-all']);
+  assert.deepEqual(s.posts, [], 'the connector released: nothing posted directly');
+  assert.match(r.out, /the running connector released every hold/);
+  assert.ok(r.out.includes(setup.HUB_KEEPS), r.out);
+  assert.doesNotMatch(r.out, /the hub was told this machine is leaving/);
+});
+
 test('offline, with no connector answering, `connect disconnect` says the hub keeps this machine until it is revoked there (U716b)', async (t) => {
   const m = pairedMachine(t);
   const s = stubs(m);
