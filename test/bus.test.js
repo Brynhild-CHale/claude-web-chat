@@ -20,12 +20,15 @@ test('bus: seq is monotonic across emits', () => {
 });
 
 test('bus: an event field overrides the ring seq (matches pre-bus pushEvent)', () => {
-  // capture emits with its own `seq` field; the spread after `{seq: nextSeq++}`
-  // makes the event field win, while nextSeq still advances.
+  // The engine still lets an event field win: the spread after
+  // `{seq: nextSeq++}` makes it override, while nextSeq still advances (the hook
+  // tap relies on the same order for an envelope's own `ts`). No main-ring
+  // emitter uses it for `seq` since U750: a capture carries its counter as
+  // `capture_seq` (contract 07 C-07.12).
   const bus = createBus();
   bus.emit({ event: { kind: 'store' } });               // ring seq 1
-  const cap = bus.emit({ event: { kind: 'capture', seq: 99 } });
-  assert.equal(cap.seq, 99, 'event.seq overrides the ring seq');
+  const over = bus.emit({ event: { kind: 'x', seq: 99 } });
+  assert.equal(over.seq, 99, 'event.seq overrides the ring seq');
   assert.equal(bus.read().latest, 2, 'nextSeq still advanced to 2');
 });
 
