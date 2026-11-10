@@ -610,6 +610,28 @@ test('flow control: 256 streams per link and 64 per chat; credit waits for relay
   assert.strictEqual(link.batchSlot(ringChat), false);
 });
 
+test('the derived signals window: each signal sent takes a place, signals.ack frees every one up to its seq and no later one (C-05.24)', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link } = openLink(t, fake);
+  const up = ready(link);
+  link.start();
+  await up;
+  fake.events.holdSignals = true;
+  assert.strictEqual(link.signalRoom(), 256);
+  const { ch, kind, id, seq, at, re, ...body } = JSON.parse(JSON.stringify(validator.view.examples.get('05-event.turn-begun').data));
+  for (let i = 0; i < 3; i++) assert.ok(link.send(ch, kind, body));
+  assert.strictEqual(link.signalRoom(), 253);
+  await waitUntil(() => fake.find(kind, { dir: 'in' }).length === 3, { what: 'three signals at the fake' });
+  const seqs = fake.find(kind, { dir: 'in' }).map((e) => e.frame.seq);
+  fake.send({ ch: 'events', kind: 'signals.ack', up_to: seqs[0] });
+  await waitUntil(() => link.signalRoom() === 254, { what: 'the first signal acknowledged' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(link.signalRoom(), 254, 'the acknowledged seq is freed, the later two are not');
+  fake.send({ ch: 'events', kind: 'signals.ack', up_to: seqs[2] });
+  await waitUntil(() => link.signalRoom() === 256, { what: 'every signal acknowledged' });
+  fake.takeErrors((e) => e.kind === kind);   // the fake has no such chat
+});
+
 test("hello.ack's values are checked by the link: windows capped at 256 streams per link and 64 per chat (C-05.23)", async (t) => {
   const fake = await withFakeHub(t, {
     windows: {
