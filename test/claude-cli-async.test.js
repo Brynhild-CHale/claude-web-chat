@@ -212,7 +212,8 @@ test('one synchronous runner and one asynchronous one: runClaude is execFileSync
   assert.doesNotMatch(body('runClaudeAsync'), /execFile/);
   assert.match(body('runClaudeAsync'), /stdio: \['ignore', 'pipe', 'pipe'\]/);
   assert.equal(require('../lib/setup/registration').defaultRunClaude, runClaude, 'registration still runs the synchronous runner');
-  // A lib/core leaf: fs, path, child_process and ./paths only.
+  // A lib/core leaf: fs, os (the session command's signal numbers), path,
+  // child_process, ./paths and ./channels (the channel's one home) only.
   const reqs = [...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]).sort();
-  assert.deepEqual(reqs, ['./paths', 'child_process', 'fs', 'path']);
+  assert.deepEqual(reqs, ['./channels', './paths', 'child_process', 'fs', 'os', 'path']);
 });
