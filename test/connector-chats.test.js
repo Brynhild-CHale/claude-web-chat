@@ -230,6 +230,25 @@ test('a ref starting with - is refused clone-failed before git runs', async (t) 
   assert.deepStrictEqual(lifecycle.calls, []);
 });
 
+test('a ref starting with - on a new rev of a mapped repo chat is refused, the record and the daemon untouched', async (t) => {
+  paired(t);
+  const { git, calls } = stubGit(t);
+  const { chats, lifecycle } = make(t, { git, runInit: stubInit() });
+  const lbl = label('c2');
+  assert.deepStrictEqual(await chats.apply(assignment(lbl, { scope: { kind: 'repo', url: URL_OK } })),
+    { chat_id: lbl, rev: 1, state: 'running' });
+  const gitCalls = calls().length;
+  const lifecycleCalls = lifecycle.calls.length;
+  const before = recordBytes();
+  const o = await chats.apply(assignment(lbl, { rev: 2, desired: 'stopped', stop_mode: 'now', scope: { kind: 'repo', url: URL_OK, ref: '-x' } }));
+  assert.deepStrictEqual(o, { chat_id: lbl, rev: 1, state: 'refused', reason: 'other', code: 'invalid-assignment' });
+  assert.strictEqual(recordBytes(), before);
+  assert.strictEqual(chatOf(lbl).rev, 1);
+  assert.strictEqual(chatOf(lbl).desired, 'running');
+  assert.strictEqual(lifecycle.calls.length, lifecycleCalls);
+  assert.strictEqual(calls().length, gitCalls);
+});
+
 test('git exiting 128 is clone-failed, with none of git\'s text in the outcome or the log', async (t) => {
   paired(t);
   const { git, calls } = stubGit(t, { exit: 128 });
@@ -388,6 +407,13 @@ test('the hand check agrees with the locked schema (A-06.2) on the examples and 
   const dash = assignment(lbl, { scope: { kind: 'repo', url: URL_OK, ref: '-upload-pack=x' } });
   assert.strictEqual(validator.validateExample('06-chat-assignment', dash).ok, false);
   assert.strictEqual(assignmentProblem(dash), null);
+  // Only the first character: a dash ref the grammar breaks elsewhere too (a
+  // space, a NUL, a newline, its length) is refused by the hand check itself.
+  for (const ref of ['-a b', '-a\u0000b', '-a\nb', '-' + 'a'.repeat(200), '-' + '\u0000 \n'.repeat(1667)]) {
+    const bad = assignment(lbl, { scope: { kind: 'repo', url: URL_OK, ref } });
+    assert.strictEqual(validator.validateExample('06-chat-assignment', bad).ok, false, JSON.stringify(ref.slice(0, 8)));
+    assert.ok(assignmentProblem(bad), JSON.stringify(ref.slice(0, 8)));
+  }
 });
 
 test('rev order: rev 3 then rev 2 applies rev 3 and ignores rev 2; rev 3 again is ignored', async (t) => {
