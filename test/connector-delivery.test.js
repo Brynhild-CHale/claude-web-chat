@@ -444,6 +444,24 @@ test('a replayed hub_msg_id against a daemon that does not echo: the ledger answ
   assert.strictEqual(c.delivery.ledgerOf(held.hub_msg_id).dedupe, 'connector');
 });
 
+test('the ledger is durable: a restarted connector (a new delivery over the same file) answers a replay from it, duplicate with dedupe connector and no second POST', async (t) => {
+  const c = await setup(t, { stub: true });
+  const f = c.frame();
+  const first = await c.delivery.deliver(f, ackSink());
+  assert.deepStrictEqual([first.outcome, first.dedupe], ['accepted', 'connector']);
+  // The connector restarts: nothing in memory, only the ledger on disk.
+  const again = createDelivery({
+    relay: c.spy, ring: { cursorOf: () => null }, lifecycle: c.lifecycle, hubId: HUB, log: (line) => c.logs.push(line),
+  });
+  const ack = await again.deliver(c.frame({ hub: f.delivery.hub_msg_id, attempt: 2 }), ackSink());
+  ajvSays(QUEUE_ACK, ack, 'the replay after a restart');
+  assert.deepStrictEqual([ack.outcome, ack.dedupe, ack.attempt], ['duplicate', 'connector', 2]);
+  const { boot, msg_id: msgId, item_id: itemId } = first.daemon;
+  assert.deepStrictEqual(ack.daemon, { boot, msg_id: msgId, item_id: itemId }, 'the first msg_id, from the file');
+  assert.strictEqual(c.d.s.posts.length, 1, 'no second POST');
+  assert.strictEqual(c.calls.length, 1, 'one relay.request');
+});
+
 test('a link that closes while the daemon answers gets no ack for that frame; the replay waits for the answer and the ledger answers it duplicate', async (t) => {
   const c = await setup(t, { stub: true });
   const { s } = c.d;
