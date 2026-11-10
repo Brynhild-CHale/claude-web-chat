@@ -614,7 +614,8 @@ test('gracefulShutdown() leaves no open handle, in a non-git root', async (t) =>
 // `surface`, and the reset key-set test names them; nothing else changed.
 // Re-pinned by U311 (PLAN 2B.1): render frames gain `gen`, the hello's `surface` is scrubbed.
 // Re-pinned by U313 (PLAN 2B.2): the GOLDEN hello and the reset key-set gain `marks`.
-const BUS_GOLDEN_SHA256 = '9719ee75fd57f4206407e5dc561370d999d8fa74bb19b2161e31b1aed9450f11';
+// Re-pinned by U750 (PLAN 6B.4, contract 07 C-07.12): the capture entry carries `capture_seq: 1` and its ring `seq` 6.
+const BUS_GOLDEN_SHA256 = '79ad01e75c2156c9a0501e265dacf78166b5bc4c03671dce624b7d51fd0fffc5';
 
 test('test/bus-golden.test.js is byte-identical', () => {
   const src = fs.readFileSync(path.join(REPO, 'test', 'bus-golden.test.js'), 'utf8').replace(/\r\n/g, '\n');
