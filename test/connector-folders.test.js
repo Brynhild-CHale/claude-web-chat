@@ -338,6 +338,23 @@ test('with no record: offer, withdraw and folders say not paired and write nothi
   assert.ok(!fs.existsSync(userPaths().connectorDir), 'no connector directory was made');
 });
 
+// U721b: the hub choice is setup.soleHub's, refusal included — two records on
+// the machine and no hub named answer several-hubs (not not-paired), and the
+// named hub still answers.
+test('with two records and no hub named: offer, withdraw and folders say several-hubs and write nothing', async (t) => {
+  const { home } = paired(t);
+  const other = conn.newRecord({ hubId: 'hub-two', origin: 'https://other.example.com' });
+  other.credential = { state: 'paired', paired_at: 1793177400000 };
+  conn.writeRecord(other);
+  const before = recordBytes();
+  const dir = folder(home, 'projects/a');
+  assert.deepStrictEqual(await folders.offer(dir, { deps: { runInit: noInit } }), { ok: false, refused: 'several-hubs' });
+  assert.deepStrictEqual(folders.withdraw(dir), { ok: false, refused: 'several-hubs' });
+  assert.deepStrictEqual(folders.folders(), { ok: false, refused: 'several-hubs' });
+  assert.strictEqual(recordBytes(), before);
+  assert.strictEqual(folders.folders({ hubId: HUB }).ok, true);
+});
+
 test('install: a change written by another process is reported once; a withdraw names the id', async (t) => {
   const { home } = paired(t);
   const changed = [];
@@ -425,4 +442,29 @@ test('the three rows dispatch through the connect table: 0 on success, 1 on a re
   assert.deepStrictEqual(recordNow().folders, []);
   assert.strictEqual((await run(['withdraw', id])).code, 1);
   assert.strictEqual((await run(['folders'])).out, 'No folders offered');
+});
+
+// U721b: one root spelling, one hub choice and one cap rule in the connector.
+// A root's canonical spelling is lib/core/portfiles' canonicalRoot/sameRoot,
+// the hub choice lib/setup/connector.js soleHub and the effective cap its
+// effectiveCapOf; none of the three connector modules keeps a copy of its own.
+test('folders.js, lifecycle.js and chats.js define no canonical, sameRoot, soleHub or effectiveCap of their own', () => {
+  const NAMES = '(?:canonical|canonicalRoot|sameRoot|soleHub|pickSole|effectiveCapOf)';
+  const def = new RegExp(`\\b(?:function\\s+${NAMES}\\b|(?:const|let|var)\\s+${NAMES}\\s*=)`);
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  for (const name of ['folders.js', 'lifecycle.js', 'chats.js']) {
+    const src = strip(fs.readFileSync(path.join(REPO, 'lib', 'connector', name), 'utf8'));
+    assert.doesNotMatch(src, def, `${name} defines its own copy`);
+    // The copies' tells: a nearest-existing-ancestor realpath, a count of the
+    // machine's records, a min over the two caps.
+    assert.doesNotMatch(src, /\bnearestExisting\b/, `${name} spells a root itself`);
+    assert.doesNotMatch(src, /\blistRecords\s*\(/, `${name} picks the hub itself`);
+    assert.doesNotMatch(src, /Math\.min\([^)]*(?:local_cap|agents_at_once|cap\b)/, `${name} computes the cap itself`);
+  }
+  const lifecycle = strip(fs.readFileSync(path.join(REPO, 'lib', 'connector', 'lifecycle.js'), 'utf8'));
+  // lifecycle's effectiveCap() is its API (overCap reads it); its body is the record's rule.
+  assert.match(lifecycle, /const effectiveCap = \(\) => record\.effectiveCapOf\(settings\(\)\);/);
+  const foldersSrc = strip(fs.readFileSync(path.join(REPO, 'lib', 'connector', 'folders.js'), 'utf8'));
+  assert.match(foldersSrc, /require\('\.\.\/core\/portfiles'\)/);
+  assert.match(foldersSrc, /setup\.soleHub\(\)/);
 });
