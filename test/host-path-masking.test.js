@@ -517,3 +517,23 @@ test('GET /api/replay/html: the downloaded replay\'s captions and elements maske
 test('GET /api/export/:ref: the export\'s elements (the pinned comment) masked for a remote and a relayed read; whole for a local reader', async (t) => {
   await documentCase(t, (label) => `/api/export/${label}`, { prompt: false });
 });
+
+// A rendered replay .html (POST /api/replay/render, format 'replay') is built
+// once, for its file reader (RENDERED_FILE_LEVEL, below local), and served by
+// GET /api/replay/file/:name to any viewer at read and above: its captions
+// are masked in the file itself, as its elements are, whoever fetches it.
+test('GET /api/replay/file/:name: a rendered replay .html carries its captions (include_prompts) and elements masked for a remote and a relayed read', async (t) => {
+  const { p, api, label } = await documentScene(t);
+  const out = await api.post('/api/replay/render', { format: 'replay', from: label, to: label, include_prompts: true });
+  assert.strictEqual(out.status, 200, out.text);
+  assert.ok(out.json && out.json.path, out.text);
+  const u = `/api/replay/file/${encodeURIComponent(path.basename(out.json.path))}`;
+  for (const [who, h] of [['remote read', REMOTE], ['relayed read', RELAYED('read')]]) {
+    const r = await api.get(u, h);
+    assert.strictEqual(r.status, 200, `${who} ${u}: ${r.text.slice(0, 200)}`);
+    assert.ok(r.text.includes(p.text('pane')) && r.text.includes(p.text('store')), `${who} ${u}: the pane html and the store pass through`);
+    assert.ok(r.text.includes(maskedAs('prompt')), `${who} ${u}: the caption's prompt masked`);
+    assert.ok(r.text.includes(maskedAs('comment')), `${who} ${u}: the comment masked`);
+    assert.deepStrictEqual(rawIn(p, outsideSurfaceOf(p, r.text)), [], `${who} ${u}: no raw host path outside its pane html and store`);
+  }
+});
