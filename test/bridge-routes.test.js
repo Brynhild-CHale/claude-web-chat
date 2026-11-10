@@ -152,9 +152,7 @@ test('fake mod: hello → runOps answers a queued op through result → events r
     { kind: 'turn.start', at: Date.now() - 50, turn_id: 't1' },
     { kind: 'tool.call', at: Date.now() - 40, tool_use_id: 'toolu_1', tool: 'Read', input: { file_path: '/p/a.js' } },
   ]);
-  // lib/client request() also resolves the response's headers (U723); the
-  // answer this pins is its status and body.
-  assert.deepEqual({ status: r.status, body: r.body }, { status: 200, body: { ok: true, accepted: 2, dropped: 0 } });
+  assert.deepEqual(r, { status: 200, body: { ok: true, accepted: 2, dropped: 0 } });
   await waitUntil(() => h.published.length === 2, { what: 'two envelopes on the tap' });
   assert.deepEqual(h.published.map((e) => [e.event, e.synthetic, e.session_id, e.mod.kind]), [
     ['ModEvent', true, S1, 'turn.start'], ['ModEvent', true, S1, 'tool.call'],

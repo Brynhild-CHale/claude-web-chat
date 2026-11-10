@@ -15,12 +15,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { EventEmitter, once } = require('events');
 
 const realClient = require('../lib/client');
 const { createLifecycle } = require('../lib/connector/lifecycle');
 const {
-  createRing, mintBatchId, UNACKED_MAX_ENTRIES, BATCH_MAX_ENTRIES, POLL_IDLE_MS,
+  createRing, mintBatchId, UNACKED_MAX_ENTRIES, BATCH_MAX_ENTRIES, POLL_IDLE_MS, POLL_VIEWER_MS,
 } = require('../lib/connector/ring');
 const { createLink } = require('../lib/connector/link');
 const { hubOrigin, newRecord, keyIdOf, fingerprintOf } = require('../lib/setup/connector');
@@ -36,6 +39,10 @@ const BATCH_SCHEMA = 'https://web-chat-contracts/schemas/07-source-batch.json';
 const validator = createValidator({ folders: 'all' });
 const validBatch = validator.ajv.getSchema(BATCH_SCHEMA);
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+// The stub-driven chats' root: a real folder (track() takes its real path).
+const ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-ring-root-')));
+test.after(() => fs.rmSync(ROOT, { recursive: true, force: true }));
+const rootedRing = (opts) => { const r = createRing(opts); r.track({ id: CHAT, root: ROOT }); return r; };
 
 function assertOutsideBand(port) {
   assert.ok(![5170, 5171, 5172].includes(port) && !(port >= 5173 && port <= 5272), `port ${port} is outside the band`);
@@ -94,10 +101,10 @@ function stubLink({ autoAck = true, window = 4 } = {}) {
 
 // The lifecycle's surface the ring uses, driven by hand.
 function stubLifecycle({ boot = 'boot-a' } = {}) {
-  const lc = { listeners: new Set(), provider: null, boot, healthReads: 0 };
+  const lc = { listeners: new Set(), provider: null, boot, healthReads: 0, viewers: 0 };
   lc.subscribe = (fn) => { lc.listeners.add(fn); return () => lc.listeners.delete(fn); };
   lc.setCursorProvider = (fn) => { lc.provider = fn; };
-  lc.healthOf = async () => { lc.healthReads++; return { boot: typeof lc.boot === 'function' ? lc.boot() : lc.boot, viewers: 0 }; };
+  lc.healthOf = async () => { lc.healthReads++; return { boot: typeof lc.boot === 'function' ? lc.boot() : lc.boot, viewers: lc.viewers }; };
   lc.emit = (msg) => { for (const fn of lc.listeners) fn({ chatId: CHAT, ...msg }); };
   lc.open = (headers = { 'x-wc-boot': lc.boot }) => {
     const since = lc.provider(CHAT);
@@ -113,8 +120,10 @@ function recordsClient(records) {
   c.get = async (p, o) => {
     c.reads.push(p);
     if (p.startsWith('/api/events')) {
-      const events = records.ring || [];
-      const body = { events, latest: events.length ? events[events.length - 1].seq : 0, oldest: events.length ? events[0].seq : null, gap: false, dropped: 0 };
+      const ring = records.ring || [];
+      const since = Number(new URL(p, 'http://x').searchParams.get('since')) || 0;
+      const events = ring.filter((e) => e.seq > since);
+      const body = { events, latest: ring.length ? ring[ring.length - 1].seq : 0, oldest: ring.length ? ring[0].seq : null, gap: false, dropped: 0 };
       return o && o.withHeaders ? { body, headers: records.boot ? { 'x-wc-boot': records.boot } : {} } : body;
     }
     if (p.startsWith('/api/captures')) return { captures: records.captures || [], next_cursor: records.captureNext ?? 0 };
@@ -172,7 +181,11 @@ test('lib/client: request() resolves headers beside status and body; get(withHea
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.ok, true);
   assert.strictEqual(r.headers['x-wc-boot'], bootOf(d), 'X-WC-Boot rides the response');
-  const w = await realClient.get('/api/health', { port: d.port, noSpawn: true, withHeaders: true });
+  // Additively: a caller that keys, spreads or deep-compares the result sees
+  // {status, body}, what it always saw.
+  assert.deepStrictEqual(Object.keys(r), ['status', 'body']);
+  assert.deepStrictEqual({ ...r }, { status: 200, body: r.body });
+  const w =await realClient.get('/api/health', { port: d.port, noSpawn: true, withHeaders: true });
   assert.deepStrictEqual(Object.keys(w).sort(), ['body', 'headers']);
   assert.strictEqual(w.body.boot, bootOf(d));
   assert.strictEqual(w.headers['x-wc-boot'], bootOf(d));
@@ -241,7 +254,7 @@ test('resume: a cursor naming the live boot and seq n reads since n; the first b
 
 // ── restart, the header-less boot, eviction ─────────────────────────────────
 
-test('restart: a new daemon on the same root (a new boot) gives since 0, one restart gap, then the new ring; the old boot is not sent again', async (t) => {
+test('restart: a new daemon on the same root (a new boot) gives since 0, one restart gap, then the new ring once; the old boot is not sent again', async (t) => {
   const d1 = await withServer(t);
   for (let i = 0; i < 3; i++) emit(d1, { kind: 'store', patch: { a: i } });
   const h = await ringOn(t, d1);
@@ -252,11 +265,17 @@ test('restart: a new daemon on the same root (a new boot) gives since 0, one res
   await d1.graceful();
   const d2 = await withServer(t, { root: d1.root });
   assert.notStrictEqual(bootOf(d2), boot1);
-  for (let i = 0; i < 2; i++) emit(d2, { kind: 'store', patch: { b: i } });
+  // More entries on the new boot than the old cursor's seq: the hold reopens
+  // with the stale since, so the stream REPLAYS what the re-base poll from 0
+  // also reads — every new-boot position must still reach the link once.
+  const staleSince = latestOf(d1);
+  for (let i = 0; i < staleSince + 5; i++) emit(d2, { kind: 'store', patch: { b: i } });
+  assert.ok(latestOf(d2) > staleSince + 1, 'the stream replays from the stale since');
   h.state.port = d2.port;
   await waitUntil(() => h.link.batches().some((b) => b.boot === bootOf(d2)), { what: 'the new boot', timeout: 15000 });
   const newBoot = () => h.link.batches().filter((b) => b.boot === bootOf(d2)).flatMap((b) => b.entries);
   await waitUntil(() => newBoot().length >= latestOf(d2), { what: 'the new ring' });
+  await settle(150);   // a late duplicate would land here
   const after = h.link.batches().slice(sentBefore);
   after.forEach(assertSchema);
   const first = after.find((b) => b.boot === bootOf(d2));
@@ -268,6 +287,7 @@ test('restart: a new daemon on the same root (a new boot) gives since 0, one res
   const newSeqs = after.filter((b) => b.boot === bootOf(d2)).flatMap((b) => b.entries.map((e) => e.seq));
   assert.strictEqual(newSeqs[0], 1);
   newSeqs.forEach((s, i) => { if (i) assert.strictEqual(s, newSeqs[i - 1] + 1, 'the new ring in order, once'); });
+  assert.deepStrictEqual(newSeqs, Array.from({ length: latestOf(d2) }, (_, i) => i + 1), 'every new-boot position exactly once');
 });
 
 test('no header: the boot is read from health as the hold opens and again after the first entry; a boot that moves between the two discards the read and re-bases', async (t) => {
@@ -391,7 +411,7 @@ test('reconcile: an element record goes through projectAudit\'s element row to t
     captureNext: 4,
     elementNext: 9,
   });
-  const ring = createRing({ onElementRecords: (id, recs) => seen.push({ id, recs }), deps: { client, portOf: () => 40999, home: null } });
+  const ring = rootedRing({ onElementRecords: (id, recs) => seen.push({ id, recs }), deps: { client, portOf: () => 40999, home: null } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 2));
   lc.open();
@@ -413,7 +433,7 @@ test('reinit: at a boot change a capture next_cursor below the cursor\'s capture
   const lc = stubLifecycle({ boot: 'boot-b' });
   const link = stubLink();
   const client = recordsClient({ captureNext: 2, elementNext: 50, boot: 'boot-b', ring: [{ seq: 1, ts: 1, kind: 'store', patch: { z: 1 } }] });
-  const ring = createRing({ deps: { client, portOf: () => 40999, home: null } });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 40, { capture_seq: 5, element_seq: 30 }));
   assert.strictEqual(lc.open(), 40, 'since chosen against the cursor\'s boot');
@@ -435,7 +455,7 @@ test('element_reset: an element next_cursor below element_seq alone sets element
   const lc = stubLifecycle({ boot: 'boot-b' });
   const link = stubLink();
   const client = recordsClient({ captureNext: 5, elementNext: 3 });
-  const ring = createRing({ deps: { client, portOf: () => 40999, home: null } });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 0, { capture_seq: 5, element_seq: 30 }));
   lc.open();
@@ -447,7 +467,7 @@ test('element_reset: an element next_cursor below element_seq alone sets element
 
   const lc2 = stubLifecycle({ boot: 'boot-c' });
   const link2 = stubLink();
-  const ring2 = createRing({ deps: { client: recordsClient({ captureNext: 9, elementNext: 30 }), portOf: () => 40999, home: null } });
+  const ring2 = rootedRing({ deps: { client: recordsClient({ captureNext: 9, elementNext: 30 }), portOf: () => 40999, home: null } });
   ring2.install({ lifecycle: lc2, link: link2 });
   ring2.setCursor(CHAT, cursor('boot-a', 0, { capture_seq: 5, element_seq: 30 }));
   lc2.open();
@@ -459,10 +479,10 @@ test('element_reset: an element next_cursor below element_seq alone sets element
 
 // ── the unacknowledged buffer, the ack, a reconnect ──────────────────────────
 
-test('the unacknowledged buffer: past 2000 entries the oldest are dropped and the next batch goes not contiguous; an events.ack moves the cursor', async () => {
+test('the unacknowledged buffer: past 2000 entries the oldest are dropped; when the ring no longer holds them the re-read is abandoned and the next batch goes not contiguous; an events.ack moves the cursor', async () => {
   const lc = stubLifecycle();
   const link = stubLink({ autoAck: false });
-  const ring = createRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  const ring = rootedRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 0));
   lc.open();
@@ -480,6 +500,9 @@ test('the unacknowledged buffer: past 2000 entries the oldest are dropped and th
 
   link.ack(held[0]);
   assert.deepStrictEqual(ring.cursorOf(CHAT), { ...cursor('boot-a', BATCH_MAX_ENTRIES), capture_seq: 0, element_seq: 0 }, 'the ack moves the cursor');
+  // The ack starts the re-read from the hub's cursor; this stub's ring holds
+  // nothing, so it is abandoned and what was kept goes on.
+  await waitUntil(() => link.batches().length >= 5, { what: 'the batch after the abandoned re-read' });
   const next = link.batches()[4];
   assertSchema(next);
   assert.strictEqual(next.contiguous, false, 'the dropped entries are not papered over');
@@ -490,10 +513,83 @@ test('the unacknowledged buffer: past 2000 entries the oldest are dropped and th
   assert.strictEqual(new Set(all).size, all.length, 'no duplicate');
 });
 
+test('the unacknowledged buffer: what the cap dropped is re-read from the hub\'s cursor after each ack, in order, once — every seq reaches the link', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false });
+  const total = UNACKED_MAX_ENTRIES + 600;
+  const ringEntries = Array.from({ length: total }, (_, i) => ({ seq: i + 1, ts: i + 1, kind: 'store', patch: { a: i + 1 } }));
+  const client = recordsClient({ ring: ringEntries, boot: 'boot-a' });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  for (const e of ringEntries) lc.emit({ type: 'entry', entry: e });
+  await settle();
+  assert.strictEqual(ring.stats(CHAT).dropped, 600, 'the cap dropped the oldest pending');
+  assert.strictEqual(ring.stats(CHAT).reread, true, 'a re-read is owed');
+  assert.ok(!client.reads.some((p) => p.startsWith('/api/events')), 'no re-read before an ack');
+  // The hub acks each batch in turn; the ring re-reads after the acks.
+  let acked = 0;
+  for (let i = 0; i < 400 && link.entries().length < total; i++) {
+    const sent = link.batches();
+    if (acked < sent.length) link.ack(sent[acked++]);
+    else await settle(5);
+  }
+  await settle();
+  const seqs = link.entries().map((e) => e.seq);
+  assert.deepStrictEqual(seqs, ringEntries.map((e) => e.seq), 'every seq 1..total once, in order');
+  link.batches().forEach(assertSchema);
+  assert.ok(link.batches().every((b) => b.contiguous), 'the hole was filled from the ring, so nothing is reported missing');
+  const rereads = client.reads.filter((p) => p.startsWith('/api/events'));
+  assert.ok(rereads.length >= 1 && rereads.every((p) => /^\/api\/events\?since=\d+$/.test(p)), 'one-shot polls from the hub\'s cursor');
+  assert.ok(Number(rereads[0].split('=')[1]) >= BATCH_MAX_ENTRIES, 'the first re-read starts at the acked cursor');
+  assert.strictEqual(ring.stats(CHAT).reread, false);
+});
+
+// ── the root: nothing is projected before it is known ──────────────────────
+
+test('the root: a label holding the chat\'s root leaves as <project>, never the path', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink();
+  const ring = rootedRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  lc.emit({ type: 'entry', entry: { seq: 1, ts: 1, kind: 'graph', op: 'bookmark', id: 'n1', name: `${ROOT}/plan` } });
+  lc.emit({ type: 'entry', entry: { seq: 2, ts: 2, kind: 'capture', capture_id: 'cap1', capture_seq: 1, label: `see ${ROOT}/doc.md` } });
+  await waitUntil(() => link.entries().length >= 2, { what: 'the two entries' });
+  const [g, c] = link.entries();
+  assert.strictEqual(g.name, '<project>/plan');
+  assert.strictEqual(c.label, 'see <project>/doc.md');
+  const wire = JSON.stringify(link.batches());
+  assert.ok(!wire.includes(ROOT), 'the root path never leaves');
+});
+
+test('the root: a ring installed without track sends nothing until track names the root; then the held read goes, masked', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink();
+  const logs = [];
+  const ring = createRing({ log: (l) => logs.push(l), deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  lc.emit({ type: 'entry', entry: { seq: 1, ts: 1, kind: 'graph', op: 'bookmark', id: 'n1', name: `${ROOT}/plan` } });
+  lc.emit({ type: 'entry', entry: { seq: 2, ts: 2, kind: 'store', patch: { a: 1 } } });
+  await settle(60);
+  assert.strictEqual(link.sent.length, 0, 'nothing leaves before the root is known');
+  assert.ok(logs.some((l) => /read held: no root/.test(l)), 'the hold is logged as a code');
+  assert.ok(!logs.some((l) => l.includes(ROOT)), 'the log line carries no path');
+  ring.track({ id: CHAT, root: ROOT });
+  await waitUntil(() => link.entries().length >= 2, { what: 'the held read' });
+  assert.deepStrictEqual(link.entries().map((e) => e.seq), [1, 2], 'in order, nothing lost');
+  assert.strictEqual(link.entries()[0].name, '<project>/plan');
+  assert.ok(!JSON.stringify(link.batches()).includes(ROOT));
+});
+
 test('a link reconnect resends every unacknowledged batch first, in order, with its batch id', async () => {
   const lc = stubLifecycle();
   const link = stubLink({ autoAck: false });
-  const ring = createRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  const ring = rootedRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 0));
   lc.open();
@@ -511,7 +607,7 @@ test('a link reconnect resends every unacknowledged batch first, in order, with 
 
 // ── the poll fallback ───────────────────────────────────────────────────────
 
-test('the poll: three failed opens while health answers poll /api/events?since with latest as the cursor, every 10 s with no viewer, until the stream opens', async () => {
+test('the poll: three failed opens while health answers poll /api/events?since with latest as the cursor, every 10 s with no viewer and 2 s with one, until the stream opens', async () => {
   const lc = stubLifecycle();
   const link = stubLink();
   const timers = [];
@@ -525,7 +621,7 @@ test('the poll: three failed opens while health answers poll /api/events?since w
       return { captures: [], next_cursor: 0, elements: [] };
     },
   };
-  const ring = createRing({ deps: { client, portOf: () => 40999, home: null, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {} } });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {} } });
   ring.install({ lifecycle: lc, link });
   ring.setCursor(CHAT, cursor('boot-a', 5));
   for (let i = 0; i < 3; i++) { lc.provider(CHAT); lc.emit({ type: 'close' }); }
@@ -535,8 +631,12 @@ test('the poll: three failed opens while health answers poll /api/events?since w
   await waitUntil(() => link.batches().length >= 1, { what: 'the poll batch' });
   assertSchema(link.batches()[0]);
   assert.strictEqual(link.batches()[0].contiguous, true);
+  // A viewer arrives: the next poll is armed at the viewer cadence.
+  lc.viewers = 1;
   timers[0].fn();
   await waitUntil(() => client.reads.includes('/api/events?since=7'), { what: 'the poll from latest' });
+  await waitUntil(() => timers.length >= 2, { what: 'the poll after it armed' });
+  assert.strictEqual(timers[1].ms, POLL_VIEWER_MS, 'every 2 s with a viewer');
   assert.ok(ring.stats(CHAT).polling);
   lc.open();
   assert.strictEqual(ring.stats(CHAT).polling, false, 'the stream opened again: the poll stops');
