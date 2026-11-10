@@ -163,7 +163,9 @@ test('machineFacts with two offered folders validates against A-05.2; HOME appea
     hub: { id: 'hub-one', origin: 'https://hub.example' },
     workdir: path.join(home, 'web-chat-hub', 'hub-one'),
     settings: { agents_at_once: 2, accept_new_chats: true, let_home_start_agents: false, paused: false, rev: 7, local_cap: 1 },
-    folders: [folder(a, 'f_0123456789abcdef', { label: 'Work' }), folder(b, 'f_fedcba9876543210')],
+    // A key 06's folder object does not name (a later build's, or a torn
+    // write's) never rides along: the folder goes out as 06's object only.
+    folders: [folder(a, 'f_0123456789abcdef', { label: 'Work' }), folder(b, 'f_fedcba9876543210', { chat_root: path.join(home, 'web-chat-hub', 'hub-one', 'chat') })],
     chats: [{ id: CHAT, root: path.join(home, 'web-chat-hub', 'hub-one', 'chat') }],
     service: { path_env: `${path.join(home, 'bin')}:/usr/bin` },
     ceiling: 'read',
@@ -183,7 +185,8 @@ test('machineFacts with two offered folders validates against A-05.2; HOME appea
   assert.deepStrictEqual(body.settings, record.settings);
   assert.deepStrictEqual(body.mcp_servers, ['gh-x', 'web-chat']);
   assert.deepStrictEqual(body.skills, ['alpha']);
-  assert.deepStrictEqual(body.folders, record.folders);
+  const { chat_root: _dropped, ...secondAsOffered } = record.folders[1];
+  assert.deepStrictEqual(body.folders, [record.folders[0], secondAsOffered]);
 
   // HOME (either spelling) only inside folders[i].path; display is `~`.
   const homes = [...new Set([home, realpath(home)].filter(Boolean))];
