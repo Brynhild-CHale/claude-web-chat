@@ -25,6 +25,8 @@ const { acquireWakeLock } = require('../lib/server/domain/turns');
 const { projectToolInput, inputHash } = require('../lib/core/tool-input');
 const { withServer, waitUntil } = require('../test-support/helpers');
 const { createValidator } = require('../test-support/contracts-loader');
+const { writePortfileFile, probeHealth } = require('../lib/core/portfiles');
+const { projectPaths } = require('../lib/core/paths');
 
 const CHAT = '01jbzam3n5p7q9r1s3t5v7w9y2';
 const MACHINE = 'mch_01jbz3k9q4w8r2t6v0x5m7n8p1';
@@ -104,8 +106,10 @@ function supervisorFor(state, startedBy) {
 }
 
 // A daemon under the real lifecycle (its tick captured), signals installed,
-// a stub link and, unless a test passes its own, the real registry.
-async function rig(t, d, { startedBy = 'connector', registry = realRegistry, ring = null } = {}) {
+// a stub link and, unless a test passes its own, the real registry. With
+// injectPort false nothing stands in for deps.portOf: signals finds the port
+// through the registry, as in production.
+async function rig(t, d, { startedBy = 'connector', registry = realRegistry, ring = null, injectPort = true } = {}) {
   const state = { port: d.port };
   const client = clientSpy();
   const ticks = [];
@@ -120,7 +124,7 @@ async function rig(t, d, { startedBy = 'connector', registry = realRegistry, rin
   });
   const link = stubLink();
   const logs = [];
-  const signals = createSignals({ log: (l) => logs.push(l), deps: { client, registry, portOf: () => state.port } });
+  const signals = createSignals({ log: (l) => logs.push(l), deps: { client, registry, ...(injectPort ? { portOf: () => state.port } : {}) } });
   const ctx = { link, supervisor, ...(ring ? { ring } : {}) };
   lifecycle.install(ctx);
   const uninstall = signals.install(ctx);
@@ -430,6 +434,35 @@ test('the status poll: one health read per tick (shared with the idle check); X-
   assert.strictEqual(conv[0].boot, 'boot-from-header');
   conformsTo('05', conv[0]);
   for (const row of conv[0].record.conversations) assert.ok(!('counts' in row), 'rows without counts');
+});
+
+test('the status poll with no injected port: the registry finds it once, and a steady tick reads health once in all', async (t) => {
+  const d = await withServer(t);
+  writePortfileFile(projectPaths(d.root).serverJson, { pid: process.pid, port: d.port });
+  // The registry's two probes (daemonFor's and the strict answersFor's) go
+  // through one counting probe, so every /api/health read is counted.
+  let probes = 0;
+  const probe = (port, ms) => { probes++; return probeHealth(port, ms); };
+  const registry = {
+    ...realRegistry,
+    daemonFor: (root, o = {}) => realRegistry.daemonFor(root, { ...o, probe }),
+    answersFor: (rec, id, o = {}) => realRegistry.answersFor(rec, id, { ...o, probe }),
+  };
+  // started_by other, so the idle check reads health on the tick too; a held
+  // lock keeps it from restarting the daemon.
+  const r = await rig(t, d, { startedBy: 'other', registry, injectPort: false });
+  await post(d, '/api/turn-begin', { message: 'x', session_id: SESSION });
+  await waitUntil(() => r.link.of('turn.begun').length === 1, { what: 'turn.begun' });
+  await settle(150);
+  assert.ok(probes >= 2, 'the registry found the port');
+  for (let i = 0; i < 3; i++) {
+    const health = r.client.count('/api/health');
+    const probed = probes;
+    const mirror = r.client.count('/api/mirror/status');
+    await r.tick();
+    assert.strictEqual(r.client.count('/api/mirror/status') - mirror, 1, `tick ${i}: the poll ran`);
+    assert.strictEqual((r.client.count('/api/health') - health) + (probes - probed), 1, `tick ${i}: one /api/health read in all`);
+  }
 });
 
 // ── chat status (06-chat-status.json, A-06.1) ──────────────────────────────
