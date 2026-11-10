@@ -1323,7 +1323,7 @@ test('pushing 10,000 samples on a page frame performs O(log n) buffer growths an
 // nothing is posted, the stroke is refused with FAILED_HINT, and the console
 // line says either cause.
 test('a page stroke whose item id carries a dot or a space posts nothing and logs the line naming both causes', async () => {
-  const LINE = '[web-chat] strokes: no page record for this stroke (an endpoint lies too far from its nearest item, or the item\'s id is not [A-Za-z0-9_-])';
+  const LINE = '[web-chat] strokes: no page record for this stroke (an endpoint lies too far from its nearest item, or the item\'s id is not [A-Za-z0-9_-]; render and use_component refuse such a new id from 0.9.0-alpha.7, and a pane already live under one keeps it)';
   const BAD = [
     { id: 'tf.dot', box: { left: 238, top: 560, width: 550, height: 200 } },
     { id: 'tf sp', box: { left: 812, top: 560, width: 550, height: 200 } },
