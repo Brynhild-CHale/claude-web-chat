@@ -224,15 +224,16 @@ test('three identical denials within 60 s are one record (count 3, first_ts the 
   assert.strictEqual(lines[1].count, 1);
   assert.strictEqual(lines[1].first_ts, lines[1].ts);
 
-  // A different principal, chat, rule or reason is its own record; stop
-  // closes the windows still open.
+  // A different principal, chat, rule or reason is its own record, even while
+  // a window of the other three is open; stop closes the windows still open.
+  alog.record(deny());
   alog.record(deny({ principal: { ...PRINCIPAL, user: `usr_${id26()}` } }));
   alog.record(deny({ chat_id: id26() }));
   alog.record(deny({ rule: '* /api/unlock', path: '/api/unlock' }));
   alog.record(deny({ reason: 'ceiling' }));
   alog.stop();
   lines = readLines(file);
-  assert.strictEqual(lines.length, 6);
+  assert.strictEqual(lines.length, 7);
   assert.ok(lines.slice(2).every((l) => l.count === 1));
 });
 
