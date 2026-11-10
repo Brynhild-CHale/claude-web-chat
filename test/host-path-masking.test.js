@@ -592,3 +592,34 @@ test('a replay script\'s title: masked in <title>, the aria-label and meta.title
     assert.deepStrictEqual(rawIn(p, outsideSurfaceOf(p, r.text)), [], `relayed read ${f}: no raw host path outside its pane html and store`);
   }
 });
+
+// The `replay:open` frame (routes/replay.js POST /api/replay/open: the
+// script's id, title and the whole script) goes to every viewer's socket. It
+// is the user's words as the documents are, so a remote or a relayed read
+// socket gets it masked whole (HOST_MASK_FRAMES, masked WHOLE) and a local one
+// as written — the same text GET /replay serves masked below local.
+test('the replay:open frame: a script opened from the host reaches a remote and a relayed read socket with its title and captions masked, a local socket as written', async (t) => {
+  const { d, p, api, label } = await documentScene(t);
+  const local = collect(t, d.port);
+  const remote = collect(t, d.port, REMOTE);
+  const relayed = collect(t, d.port, RELAYED('read'));
+  await Promise.all([local.opened, remote.opened, relayed.opened]);
+  for (const s of [local, remote, relayed]) await waitUntil(() => s.of('hello').length, { timeout: 5000, interval: 10, what: 'hello' });
+  const title = asTyped(p, 'title');
+  const script = { from: label, to: label, title, steps: [{ node: label, caption: p.text('cap') }] };
+  const open = await client.request(d.port, 'POST', '/api/replay/open', { script });
+  assert.strictEqual(open.status, 200, JSON.stringify(open.body));
+  for (const s of [local, remote, relayed]) await waitUntil(() => s.of('replay:open').length, { timeout: 5000, interval: 10, what: 'the replay:open frame' });
+  const mine = local.of('replay:open')[0];
+  assert.strictEqual(mine.title, title, 'local: the frame carries the title as written');
+  assert.strictEqual(mine.script.title, title, 'local: the script\'s title as written');
+  assert.strictEqual(mine.script.steps[0].caption, p.text('cap'), 'local: the step\'s caption as written');
+  for (const [who, s] of [['remote read', remote], ['relayed read', relayed]]) {
+    const f = s.of('replay:open')[0];
+    assert.strictEqual(f.script_id, open.body.script_id, `${who}: the same opened script`);
+    assert.strictEqual(f.title, maskedAs('title'), `${who}: the frame's title masked`);
+    assert.strictEqual(f.script.title, maskedAs('title'), `${who}: the script's title masked`);
+    assert.strictEqual(f.script.steps[0].caption, p.masked('cap'), `${who}: the step's caption masked`);
+    assert.deepStrictEqual(rawIn(p, f), [], `${who}: no raw host path anywhere on the replay:open frame`);
+  }
+});
