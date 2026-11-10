@@ -48,14 +48,14 @@ const localAudience = () => ({
   requireMirror: () => (req, res, next) => next(),
 });
 
-async function host(t, { root = null, acceptedMessages, bridge, now } = {}) {
+async function host(t, { root = null, acceptedMessages, bridge, now, projectFiles } = {}) {
   const state = freshState();
   const bus = createBus({ bootId: 'boot-1' });
   bus.setBroadcaster(() => {});
   const mirror = fakeMirror();
   const ctx = {
     state, bus, graph: { lock: null, active: 'n0', saveMeta() {} }, mirror,
-    audience: localAudience(), skills: { resolve: () => null }, projectFiles: { check: () => ({ ok: false, why: 'missing' }) },
+    audience: localAudience(), skills: { resolve: () => null }, projectFiles: projectFiles || { check: () => ({ ok: false, why: 'missing' }) },
   };
   if (root) ctx.root = root;
   if (acceptedMessages) ctx.acceptedMessages = acceptedMessages;
@@ -107,9 +107,20 @@ test('a client_msg_id is echoed; the same id again is a duplicate with the first
 });
 
 test('two concurrent sends of one client_msg_id enqueue once', async (t) => {
-  const h = await host(t);
-  const body = { text: 'twice at once', send: 'hold', client_msg_id: 'hub-msg-race' };
+  // The file check answers after a timer, so the first request is still inside
+  // validation (between the duplicate check and the record) when the second
+  // arrives: without the in-flight wait both would enqueue.
+  let checks = 0;
+  const projectFiles = {
+    check: (p) => new Promise((resolve) => {
+      checks++;
+      setTimeout(() => resolve({ ok: true, path: p, bytes: 1 }), 50);
+    }),
+  };
+  const h = await host(t, { projectFiles });
+  const body = { text: 'twice at once', send: 'hold', files: ['a.txt'], client_msg_id: 'hub-msg-race' };
   const [a, b] = await Promise.all([h.send(body), h.send(body)]);
+  assert.equal(checks, 1, 'the repeat waited for the first and never reached validation');
   assert.equal(a.json.ok, true);
   assert.equal(b.json.ok, true);
   assert.equal([a, b].filter((r) => r.json.duplicate === true).length, 1, 'one of them is the duplicate');
