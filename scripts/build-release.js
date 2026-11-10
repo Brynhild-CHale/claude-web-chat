@@ -2,6 +2,10 @@
 // Build the release artifact: a SELF-CONTAINED tarball plus its SHA256SUMS.
 //
 //   node scripts/build-release.js [--out dist] [--dev]
+//   node scripts/build-release.js --release-args <tag> [--version <v>] [--exists]
+//
+// `--release-args` builds nothing: it prints the gh argv lists release.yml's
+// publish step runs (releaseArgs below — a prerelease is marked prerelease).
 //
 // `--dev` builds an UNRELEASED build for dogfooding (`claude-web-chat update
 // --from dist/<tarball>`): the artefact's own package.json — and so its tarball
@@ -11,7 +15,10 @@
 // The next MINOR, not the current number, so a dev build sorts above the release
 // it was built after and below the release it is heading for (see
 // compareVersions), and can never land in a real release's directory under
-// ~/.web-chat/versions/. A dev build is reproducible only within the minute it
+// ~/.web-chat/versions/. A PRERELEASE base keeps its core instead: after
+// `0.9.0-alpha.7` the dev build is `0.9.0-dev.<stamp>.<sha>`, above every
+// `0.9.0-alpha.*` and below `0.9.0` — the release it is still heading for
+// (contract 12, C-12.11). A dev build is reproducible only within the minute it
 // was stamped — the stamp is the one input that is not the tree. The normal
 // build is untouched: its tar is byte-reproducible, and so is its .tar.gz between
 // builds whose Node links the same zlib (see the gzip note in buildRelease).
@@ -42,6 +49,7 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { parseSums } = require('../lib/update/release');
+const { isPrerelease } = require('../lib/core/versions');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const BLOCK = 512;
@@ -275,15 +283,65 @@ function shortSha(root) {
   return /^[0-9a-f]+$/.test(sha) ? sha : 'nogit';
 }
 
-// `<major>.<minor+1>.0-dev.<yyyymmddhhmm>.<sha>` from the repo's version. Pure.
+// The dev version a `--dev` build of the repo's version gets. Pure.
+//   a release base     `<major>.<minor+1>.0-dev.<yyyymmddhhmm>.<sha>`
+//                      (0.8.5 -> 0.9.0-dev.*: above 0.8.5, below 0.9.0)
+//   a prerelease base  `<its core>-dev.<yyyymmddhhmm>.<sha>`
+//                      (0.9.0-alpha.7 -> 0.9.0-dev.*: above every 0.9.0-alpha.*,
+//                      below 0.9.0 — bumping the minor would put it at 0.10.0,
+//                      above the hub's package window, C-12.11)
 function devVersion(base, { now = new Date(), sha = 'nogit' } = {}) {
-  const m = String(base).replace(/^v/, '').match(/^(\d+)\.(\d+)/);
+  const m = String(base).replace(/^v/, '').match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
   if (!m) throw new Error(`cannot derive a dev version from ${base}`);
   const d = new Date(now);
   const two = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}`
     + `${two(d.getUTCHours())}${two(d.getUTCMinutes())}`;
-  return `${m[1]}.${Number(m[2]) + 1}.0-dev.${stamp}.${sha}`;
+  const core = prereleaseOf(base)
+    ? `${m[1]}.${m[2]}.${m[3] || 0}`
+    : `${m[1]}.${Number(m[2]) + 1}.0`;
+  return `${core}-dev.${stamp}.${sha}`;
+}
+
+// ───────────────────────────────────────────────────────── the GitHub release ──
+
+// Is this version a prerelease — a `-` tail after its core (0.9.0-alpha.7), not
+// a release (0.9.0)? Pure; the one reading is lib/core/versions isPrerelease.
+function prereleaseOf(version) {
+  return isPrerelease(version);
+}
+
+// An argument the publish step hands gh. release.yml splits each printed line on
+// whitespace (`read -r -a`, which never globs), so an argument may hold nothing
+// a shell or that split could misread. A tag is `v<semver>` and an asset path is
+// dist/<name>, so a legitimate one never trips this.
+const GH_ARG = /^[A-Za-z0-9._/+=:@-]+$/;
+
+// The gh argv lists the release workflow's publish step runs, in order (each
+// list is what follows `gh`). The rule of contract 12 C-12.6: a version with a
+// prerelease tail is published as a GitHub PRERELEASE, so releases/latest — what
+// install.sh, `update` and the update check read — keeps naming the newest
+// stable release.
+//   new release       release create <tag> <assets> --title <tag> --generate-notes
+//                     [--prerelease]
+//   existing release  release upload <tag> <assets> --clobber
+//                     then, for a prerelease only, release edit <tag> --prerelease
+//                     (upload leaves a release's flag as it is, so a re-run over
+//                     one created unmarked would otherwise stay Latest)
+// Never --latest: GitHub picks Latest among the releases that are not marked.
+// `assets` defaults to what buildRelease leaves in dist/ for this version.
+function releaseArgs(tag, version, { exists = false, assets } = {}) {
+  if (typeof version !== 'string' || !version) throw new Error('release-args: no version');
+  if (tag !== `v${version}`) throw new Error(`release-args: tag ${tag} does not match the version ${version}`);
+  const files = assets || [`dist/claude-web-chat-${version}.tar.gz`, 'dist/SHA256SUMS'];
+  const pre = prereleaseOf(version);
+  const runs = exists
+    ? [['release', 'upload', tag, ...files, '--clobber'], ...(pre ? [['release', 'edit', tag, '--prerelease']] : [])]
+    : [['release', 'create', tag, ...files, '--title', tag, '--generate-notes', ...(pre ? ['--prerelease'] : [])]];
+  for (const arg of runs.flat()) {
+    if (!GH_ARG.test(arg)) throw new Error(`release-args: refusing the argument ${JSON.stringify(arg)}`);
+  }
+  return runs;
 }
 
 // ────────────────────────────────────────────────────────────── SHA256SUMS ──
@@ -363,12 +421,27 @@ function buildRelease({ root = REPO_ROOT, outDir = path.join(REPO_ROOT, 'dist'),
   return { version, tarPath, sumsPath, digest, tarDigest, zlib: zlibVersion, entries };
 }
 
+// `--release-args <tag> [--version <v>] [--exists]`: print the publish step's gh
+// argv lists, one per line, arguments separated by a space (see releaseArgs).
+// The version defaults to the repo's package.json. Builds nothing.
+function printReleaseArgs(args, { log = console.log } = {}) {
+  const valueOf = (flag) => {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const tag = valueOf('--release-args');
+  const version = valueOf('--version')
+    || JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
+  for (const argv of releaseArgs(tag, version, { exists: args.includes('--exists') })) log(argv.join(' '));
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2);
   const i = args.indexOf('--out');
   const outDir = i >= 0 && args[i + 1] ? path.resolve(args[i + 1]) : path.join(REPO_ROOT, 'dist');
   try {
-    buildRelease({ outDir, dev: args.includes('--dev') });
+    if (args.includes('--release-args')) printReleaseArgs(args);
+    else buildRelease({ outDir, dev: args.includes('--dev') });
   } catch (e) {
     console.error(`build-release: ${e.message}`);
     process.exit(1);
@@ -377,4 +450,5 @@ if (require.main === module) {
 
 module.exports = {
   buildRelease, collectEntries, makeTar, splitName, devVersion, mergeSums, packageDirsFromTree, REPO_ROOT,
+  prereleaseOf, releaseArgs,
 };
