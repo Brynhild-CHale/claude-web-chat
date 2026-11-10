@@ -338,6 +338,23 @@ test('with no record: offer, withdraw and folders say not paired and write nothi
   assert.ok(!fs.existsSync(userPaths().connectorDir), 'no connector directory was made');
 });
 
+// U721b: the hub choice is setup.soleHub's, refusal included — two records on
+// the machine and no hub named answer several-hubs (not not-paired), and the
+// named hub still answers.
+test('with two records and no hub named: offer, withdraw and folders say several-hubs and write nothing', async (t) => {
+  const { home } = paired(t);
+  const other = conn.newRecord({ hubId: 'hub-two', origin: 'https://other.example.com' });
+  other.credential = { state: 'paired', paired_at: 1793177400000 };
+  conn.writeRecord(other);
+  const before = recordBytes();
+  const dir = folder(home, 'projects/a');
+  assert.deepStrictEqual(await folders.offer(dir, { deps: { runInit: noInit } }), { ok: false, refused: 'several-hubs' });
+  assert.deepStrictEqual(folders.withdraw(dir), { ok: false, refused: 'several-hubs' });
+  assert.deepStrictEqual(folders.folders(), { ok: false, refused: 'several-hubs' });
+  assert.strictEqual(recordBytes(), before);
+  assert.strictEqual(folders.folders({ hubId: HUB }).ok, true);
+});
+
 test('install: a change written by another process is reported once; a withdraw names the id', async (t) => {
   const { home } = paired(t);
   const changed = [];
