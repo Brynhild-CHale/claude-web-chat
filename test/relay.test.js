@@ -179,6 +179,44 @@ test('relay: responseHeaders is pinned for four inputs', () => {
   });
 });
 
+// The request leg's bytes: the allowlist's members and forwardHeaders' output
+// in both modes, as literal expected objects (key order included).
+test('relay: the request allowlist and forwardHeaders are pinned', () => {
+  assert.deepStrictEqual([...relay.FORWARD], [
+    'accept', 'accept-language', 'content-type', 'content-length',
+    'if-none-match', 'if-modified-since', 'range', 'user-agent', 'last-event-id',
+  ]);
+  const incoming = {
+    Accept: 'text/event-stream',
+    'Last-Event-ID': '41',
+    'Sec-Fetch-Site': 'same-origin',
+    Cookie: 'CF_Authorization=x',
+    Authorization: 'Bearer y',
+    'X-WC-Token': 't',
+    'X-WC-Remote': '0',
+    'X-WC-Answer': 'nonce',
+    'CF-Connecting-IP': '1.2.3.4',
+    'X-Forwarded-For': '1.2.3.4',
+    Range: null,
+  };
+  const session = relay.forwardHeaders(incoming, { port: 5999, origin: true });
+  assert.deepStrictEqual(session, {
+    accept: 'text/event-stream',
+    'last-event-id': '41',
+    'sec-fetch-site': 'same-origin',
+    origin: 'http://localhost:5999',
+    'x-wc-remote': '1',
+  });
+  assert.deepStrictEqual(Object.keys(session), ['accept', 'last-event-id', 'sec-fetch-site', 'origin', 'x-wc-remote']);
+  const answer = relay.forwardHeaders(incoming, { port: 4100, origin: true, mode: 'answer' });
+  assert.deepStrictEqual(Object.keys(answer), ['accept', 'last-event-id', 'sec-fetch-site', 'x-wc-answer', 'origin', 'x-wc-remote']);
+  assert.equal(answer['x-wc-answer'], 'nonce');
+  assert.equal(answer.origin, 'http://127.0.0.1:4100');
+  assert.equal(answer['x-wc-remote'], '1');
+  assert.deepStrictEqual(Object.keys(relay.forwardHeaders(incoming, { port: 5999 })),
+    ['accept', 'last-event-id', 'sec-fetch-site', 'x-wc-remote'], 'no origin unless the caller matched it');
+});
+
 test('relay: lib/relay requires node builtins, ws, lib/client and lib/core only', () => {
   const builtins = new Set(builtinModules);
   const files = fs.readdirSync(RELAY_DIR).filter((f) => f.endsWith('.js'));
