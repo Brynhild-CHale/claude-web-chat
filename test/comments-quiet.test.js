@@ -40,9 +40,11 @@ const PIN = { id: 'c1', text: 'this one', shared: true, replies: [],
 
 const commentGets = () => shell.calls.filter((c) => c.url === '/api/elements?type=comment' && c.method === 'GET').length;
 // The names comments.js's pollers ran under (markerPass, refresh), and the
-// cadences they ran at: none is armed any more.
-const commentIntervals = () => shell.intervals().filter((i) => (i.fn && ['markerPass', 'refresh'].includes(i.fn.name))
-  || i.ms === 500 || i.ms === 3000 || i.ms === 30000);
+// cadences they ran at: none is armed any more. The event-anchor stats ticker
+// (public/app/anchor-stats.js, U761) is another module's 30 s interval, told
+// apart by its name.
+const commentIntervals = () => shell.intervals().filter((i) => !(i.fn && i.fn.name === 'anchorStatsTick')
+  && ((i.fn && ['markerPass', 'refresh'].includes(i.fn.name)) || i.ms === 500 || i.ms === 3000 || i.ms === 30000));
 const setVisibility = (v, { fire = true } = {}) => {
   visibility = v;
   if (fire) W.document.dispatchEvent(new W.Event('visibilitychange'));
