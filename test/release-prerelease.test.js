@@ -193,6 +193,10 @@ test('devVersion keeps a prerelease base\'s core: 0.9.0-alpha.7 -> 0.9.0-dev.*',
   assert.ok(compareVersions(dev, '0.9.0') < 0, 'below the release it is heading for');
   assert.equal(devVersion('v1.0.0-rc.1', { now: NOW, sha: 'f00' }), '1.0.0-dev.202611100905.f00');
   assert.equal(devVersion('0.9.0-dev.202611010000.aaa', { now: NOW, sha: 'bbb' }), '0.9.0-dev.202611100905.bbb');
+  // The core is kept whole, patch included: 0.9.1-alpha.1 heads for 0.9.1, not 0.9.0.
+  const patched = devVersion('0.9.1-alpha.1', { now: NOW, sha: 'c0de' });
+  assert.equal(patched, '0.9.1-dev.202611100905.c0de');
+  assert.ok(compareVersions(patched, '0.9.1-alpha.1') > 0 && compareVersions(patched, '0.9.1') < 0);
 });
 
 test('devVersion still bumps the minor for a release base', () => {
@@ -225,6 +229,13 @@ test('a plain checkout is still dev, and a versions tree still managed', (t) => 
   fs.mkdirSync(path.join(checkout, '.git'), { recursive: true });
   fs.writeFileSync(path.join(checkout, 'package.json'), JSON.stringify({ version: '0.9.0-alpha.7' }));
   assert.equal(describeInstall({ packageRoot: checkout, paths }).kind, 'dev');
+
+  // Only a whole node_modules path segment makes a tree a dependency: a checkout
+  // under a folder whose name merely contains the word is still a checkout.
+  const near = path.join(tmpDir(t, 'wc-near-'), 'my-node_modules-tools', 'claude-web-chat');
+  fs.mkdirSync(path.join(near, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(near, 'package.json'), JSON.stringify({ version: '0.9.0-alpha.7' }));
+  assert.equal(describeInstall({ packageRoot: near, paths }).kind, 'dev');
 
   const dir = paths.versionDir('0.9.0-alpha.7');
   fs.mkdirSync(dir, { recursive: true });
