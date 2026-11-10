@@ -17,6 +17,12 @@
 //   * `connect cap <n>` writes settings.local_cap (0–64) and prints the
 //     effective cap, which never rises above the hub's.
 //   * no pause or resume row exists.
+//   * U716b: a connected `connect disconnect` asks the running connector
+//     connector.leave (the link's machine.leave: the fake hub records exactly
+//     one) and then connector.release-all, over the real local socket; a
+//     revocation sends none; with no connector answering it prints that the
+//     hub keeps the machine; the record's service is null once the unit file
+//     is gone.
 //
 // Every case runs in a throwaway HOME (withTempHome, under
 // test-support/sandbox.js); no service manager runs (deps.run records), no
@@ -36,6 +42,11 @@ const { readJson } = require('../lib/core/fsjson');
 const setup = require('../lib/setup/connector');
 const table = require('../lib/connector/cli');
 const { createServer } = require('../lib/server');
+const { withFakeHub } = require('../test-support/fake-hub');
+const { createLink } = require('../lib/connector/link');
+const localSocket = require('../lib/connector/local-socket');
+const { versionsRecord, machineFacts } = require('../lib/connector/facts');
+const { TABLE_VERSION, TABLE_SHA256 } = require('../lib/core/connected-policy');
 
 const HUB = 'hale-hub';
 const OWNED_CHAT = '01jbz9a1b2c3d4e5f6g7h8j9k1';
@@ -47,8 +58,8 @@ const NOW = 1793200000000;
 // a folder chat, both roots and the workdir on disk, the key in its own 0600
 // file, a stub unit file at the launchd unit's contracted path, and a stale
 // socket file. → the paths and the key's PEM body lines (never to be printed).
-function pairedMachine(t, { ceiling = 'full', service = true, settings = {} } = {}) {
-  const home = withTempHome(t);
+function pairedMachine(t, { ceiling = 'full', service = true, settings = {}, short = false } = {}) {
+  const home = short ? shortHome(t) : withTempHome(t);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-u727-'));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
   const ownedRoot = path.join(scratch, 'workdir', 'chats', OWNED_CHAT);
@@ -101,6 +112,63 @@ function pairedMachine(t, { ceiling = 'full', service = true, settings = {} } = 
     recordFile: userPaths().connectorRecord(HUB),
     pemLines: pem.split('\n').filter((l) => l && !l.startsWith('-----')),
   };
+}
+
+// A HOME short enough for a Unix socket path (sun_path is 104 bytes on macOS;
+// the sandbox's HOME under os.tmpdir() is too long), for the cases that run
+// the real local socket. Restored, and removed, when the test ends.
+function shortHome(t) {
+  const base = fs.existsSync('/tmp') ? '/tmp' : os.tmpdir();
+  const home = fs.mkdtempSync(path.join(base, 'wcd-'));
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  t.after(() => {
+    process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevProfile;
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+  return home;
+}
+
+// The running connector, in this process: a link up to the fake hub for the
+// paired machine (its key the fake knows; the record dialled is the disk
+// record's, pointed at the fake) and the real local socket, its releaseAll
+// recording how many machine.leave frames the fake had seen when it ran.
+async function runningConnector(t, fake) {
+  const { privateKey } = crypto.generateKeyPairSync('ed25519');
+  const raw = Buffer.from(privateKey.export({ format: 'jwk' }).x, 'base64url');
+  const machine = fake.addMachine({ publicKey: raw, name: 'studio-mbp' });
+  const disk = setup.readRecord(HUB).value;
+  const record = { ...disk, hub: { ...disk.hub, origin: setup.hubOrigin(fake.url, { insecureLoopback: true }) }, machine: { id: machine.id, name: machine.name } };
+  const link = createLink({
+    record,
+    key: privateKey,
+    versions: () => versionsRecord({ claudeVersion: null }),
+    facts: () => machineFacts({ record, names: { mcp_servers: [], skills: [] }, hostname: 'test-host', login: 'tester' }),
+    routeTable: () => ({ table_version: TABLE_VERSION, sha256: TABLE_SHA256 }),
+    log: () => {},
+    writeKey: () => assert.fail('no rotation here'),
+  });
+  t.after(() => link.stop());
+  const up = new Promise((resolve) => link.once('ready', resolve));
+  link.start();
+  await up;
+  const releases = [];
+  // The stale socket file pairedMachine left goes first (as a fresh
+  // connector's install clears a stale one only when it is a socket).
+  fs.rmSync(userPaths().connectorSocket(HUB), { force: true });
+  const ctx = {
+    hubId: HUB,
+    link,
+    log: () => {},
+    releaseAll: async () => { releases.push(fake.find('machine.leave', { dir: 'in' }).length); return { released: 2, left: [] }; },
+  };
+  const stop = await localSocket.install(ctx);
+  t.after(stop);
+  const ask = (request) => localSocket.askConnector({ path: userPaths().connectorSocket(HUB), request });
+  return { link, ask, releases, stop };
 }
 
 // The direct path's stubs: a daemon answers for each root (ports outside every
@@ -171,6 +239,7 @@ test('disconnect with no connector answering: the owned root\'s daemon is stoppe
   assert.equal('key_file' in after.value.credential, false, 'the record no longer names a key file');
   assert.equal(after.value.chats.length, 2, 'the chats are kept');
   assert.equal(after.value.ceiling, 'full', 'the ceiling the user set is kept');
+  assert.equal(after.value.service, null, 'the record names no unit once its file is gone (U716b)');
   assert.deepEqual(s.runs.map((x) => x.argv), [unloadArgv()]);
   assert.equal(s.runs[0].unitPresent, true, 'a disconnect unloads before it removes the file');
   assert.equal(fs.existsSync(m.unitFile), false, 'the unit file is removed');
@@ -293,6 +362,90 @@ test('`connect disconnect` with the running connector answering hands it the rel
   assert.equal(asked, 1);
   assert.deepEqual(s.posts, []);
   assert.match(r.out, /the running connector released every hold/);
+});
+
+test('record.service is null after a disconnect, and `connect status` names no vanished unit (U716b)', async (t) => {
+  const m = pairedMachine(t);
+  const s = stubs(m);
+  assert.equal(setup.readRecord(HUB).value.service.kind, 'launchd');
+  const r = await connect(['disconnect'], { disconnectDeps: s.deps });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.existsSync(m.unitFile), false);
+  assert.strictEqual(setup.readRecord(HUB).value.service, null);
+  const status = await connect(['status'], { listRecords: setup.listRecords });
+  assert.ok(!status.out.includes(m.unitFile), status.out);
+  assert.match(status.out, /service: foreground only/);
+
+  // A revocation clears it the same way (its unit file goes before the unload).
+  const m2 = pairedMachine(t);
+  const s2 = stubs(m2);
+  await setup.disconnectLocal({ hubId: HUB, reason: 'revoked', deps: s2.deps });
+  assert.strictEqual(setup.readRecord(HUB).value.service, null);
+});
+
+test('a unit file that cannot be removed leaves record.service naming it', async (t) => {
+  const m = pairedMachine(t);
+  const s = stubs(m);
+  fs.rmSync(m.unitFile);
+  fs.mkdirSync(m.unitFile); // a directory where the unit file was: removeFile refuses it
+  const r = await setup.disconnectLocal({ hubId: HUB, deps: s.deps });
+  assert.equal(r.ok, false);
+  assert.equal(r.steps.find((x) => x.step === 'unit').error, 'EISDIR');
+  assert.equal(setup.readRecord(HUB).value.service.unit_path, m.unitFile);
+});
+
+test('offline, with no connector answering, `connect disconnect` says the hub keeps this machine until it is revoked there (U716b)', async (t) => {
+  const m = pairedMachine(t);
+  const s = stubs(m);
+  const asked = [];
+  // askConnector over a socket nobody listens on: ENOCONNECTOR.
+  const ask = (request) => { asked.push(request.type); return localSocket.askConnector({ path: path.join(m.home, 'none.sock'), request }); };
+  const r = await connect(['disconnect'], { disconnectDeps: s.deps, ask });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(asked, ['connector.leave'], 'nothing answered the first ask');
+  assert.match(r.out, /stopped 1 daemon on owned roots \(the connector was not running\)/);
+  assert.ok(r.out.includes(setup.HUB_KEEPS), r.out);
+  assert.equal(setup.HUB_KEEPS, 'The hub keeps this machine until you revoke it there.', 'the sentence uninstall --self prints');
+});
+
+test('a connected `connect disconnect` asks connector.leave, then connector.release-all: the fake hub records exactly one machine.leave (U716b)', async (t) => {
+  const m = pairedMachine(t, { short: true });
+  const s = stubs(m);
+  const fake = await withFakeHub(t, { hubId: HUB });
+  const c = await runningConnector(t, fake);
+  const r = await connect(['disconnect'], { disconnectDeps: s.deps, ask: c.ask });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fake.find('machine.leave', { dir: 'in' }).length, 1, 'exactly one machine.leave');
+  assert.ok(fake.find('machine.leave', { dir: 'in' })[0].ok, 'the locked frame');
+  assert.deepEqual(c.releases, [1], 'release-all ran once, after the leave was on the wire');
+  assert.equal(c.link.state, 'stopped', 'the hub closed 1000: no redial');
+  assert.equal(fake.machine().revoked, true);
+  assert.deepEqual(s.posts, [], 'the connector stopped the daemons: nothing posted directly');
+  assert.match(r.out, /the running connector released every hold/);
+  assert.match(r.out, /the hub was told this machine is leaving/);
+  assert.ok(!r.out.includes(setup.HUB_KEEPS));
+  assert.equal(fs.existsSync(m.keyFile), false);
+  assert.equal(setup.readRecord(HUB).value.credential.state, 'revoked');
+});
+
+test('a revocation (machine.revoked, then 4403) sends no machine.leave; the leave a later ask would make sends nothing (U716b)', async (t) => {
+  pairedMachine(t, { short: true });
+  const fake = await withFakeHub(t, { hubId: HUB });
+  const c = await runningConnector(t, fake);
+  const revoked = new Promise((resolve) => c.link.once('revoked', resolve));
+  fake.revoke();
+  await revoked;
+  assert.equal(c.link.state, 'revoked');
+  assert.deepEqual(await c.ask({ type: 'connector.leave', params: {} }), { ok: false, local: true, error: 'the connector is not connected to the hub' });
+  // The revocation's local half: the in-process release, never the leave.
+  const r = await setup.disconnectLocal({
+    hubId: HUB,
+    reason: 'revoked',
+    deps: { viaConnector: async () => ({ ok: true }), run: () => '', now: () => NOW },
+  });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.hub, 'revoked');
+  assert.equal(fake.find('machine.leave', { dir: 'in' }).length, 0, 'none on a revocation');
 });
 
 test('`connect disconnect` with no record says so and touches nothing', async (t) => {

@@ -783,6 +783,24 @@ test('send onWritten: null from ws.send\'s callback once the frame is written; E
   assert.strictEqual(heard, false);
 });
 
+test('leave(): machine.leave on the control channel, resolved when the hub closes 1000; the link stops, and with no link up nothing is sent (U716b)', async (t) => {
+  const fake = await withFakeHub(t);
+  const { link } = openLink(t, fake);
+  assert.deepStrictEqual(await link.leave(), { sent: false, closed: false }, 'nothing up: nothing sent');
+  const up = ready(link);
+  link.start();
+  await up;
+  const [a, b] = await Promise.all([link.leave(), link.leave()]);
+  assert.deepStrictEqual(a, { sent: true, closed: true, code: 1000 });
+  assert.strictEqual(a, b, 'one leave per connection');
+  const leaves = fake.find('machine.leave', { dir: 'in' });
+  assert.strictEqual(leaves.length, 1);
+  assert.strictEqual(leaves[0].ok, true, 'the frame is 05-machine-facts.json\'s machine_leave');
+  assert.deepStrictEqual(Object.keys(leaves[0].frame).sort(), ['at', 'ch', 'id', 'kind', 'seq']);
+  assert.strictEqual(link.state, 'stopped', '1000 is the stop row: no redial');
+  assert.strictEqual(fake.machine().revoked, true);
+});
+
 test('a source scan of lib/connector: no option that relaxes TLS verification, and no non-loopback ws:// literal', () => {
   const dir = path.join(__dirname, '..', 'lib', 'connector');
   const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);
