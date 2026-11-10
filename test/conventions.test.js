@@ -1835,6 +1835,40 @@ const PATTERNS = [
     re: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*['"`]tailscale['"`]/g,
     baseline: {},
   },
+  {
+    // Running ssh or tmux (tranche 6, U731; contract 06 C-06.26a "What
+    // runs"). lib/connector/exec.js builds every plan `connect open|shell|code`
+    // runs — an argument list, the remote words quoted by 10 C-10.14a's rule —
+    // and runs it over a program resolved on a PATH (tmux on the record's
+    // service.path_env, the binary that made the session). A literal 'ssh' or
+    // 'tmux' program elsewhere is a second way to reach another machine or a
+    // session, outside that quoting and that PATH. Zero everywhere: exec.js
+    // runs a resolved variable.
+    name: "'ssh' or 'tmux' as a literal program (execFile/execFileSync/spawn/spawnSync)",
+    home: 'lib/connector/exec.js — `runPlan` over `resolvePlan` (sshPlan, tmuxAttachPlan)',
+    what: 'running ssh or tmux',
+    roots: ['lib', 'bin', 'scripts'],
+    re: /\b(?:execFile|execFileSync|spawn|spawnSync)\(\s*['"`](?:ssh|tmux)['"`]/g,
+    baseline: {},
+  },
+  {
+    // The connector's one listening socket (tranche 6, U731; 05 C-05.47 as
+    // A-05.3 amends it: no listening socket of any kind but the one Unix
+    // socket, 0600 in the 0700 directory, never TCP, UDP, an abstract name or
+    // a port). lib/connector/local-socket.js creates it and binds it to a
+    // filesystem path; a server created or bound anywhere else in
+    // lib/connector is a second listener the contract forbids. Counted: the
+    // two calls, by name (comments included, so keep them out of prose).
+    name: 'a listening socket in lib/connector',
+    home: 'lib/connector/local-socket.js — `install(ctx)`, the one Unix socket',
+    what: 'listening for connections in the connector',
+    roots: ['lib/connector'],
+    re: /\b(?:createServer|listen)\(/g,
+    baseline: {
+      // net.createServer and server.listen(<path>), once each.
+      'lib/connector/local-socket.js': 2,
+    },
+  },
 ];
 
 // ext === null collects every file (the NUL scan below needs .html/.json/.md too).
