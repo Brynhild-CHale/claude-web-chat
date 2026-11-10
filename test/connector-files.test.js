@@ -568,6 +568,24 @@ test('keyIdOf and fingerprintOf: a Buffer and a Uint8Array agree; a fresh key fi
   assert.match(conn.fingerprintOf(fresh), /^SHA256:[A-Za-z0-9+/]{43}$/);
 });
 
+test('keyIdOf and fingerprintOf: the hub\'s side (test-support/fake-hub.js) computes the same over fixed keys', () => {
+  // 03 section 2: "Hub and connector compute it the same way". The vector's id
+  // uses only some of the 32 symbols and the fresh key above is random; 64
+  // fixed keys (1664 characters) reach every symbol, so a wrong alphabet entry
+  // or order goes red on every run, not by chance.
+  const hub = require('../test-support/fake-hub');
+  const crypto = require('crypto');
+  const seen = new Set();
+  for (let i = 0; i < 64; i++) {
+    const raw = crypto.createHash('sha256').update(`U714b-fixed-key-${i}`).digest();
+    const id = conn.keyIdOf(raw);
+    assert.strictEqual(id, hub.keyIdOf(raw), `key ${i}`);
+    assert.strictEqual(conn.fingerprintOf(raw), hub.fingerprintOf(raw), `key ${i}`);
+    for (const ch of id.slice(4)) seen.add(ch);
+  }
+  assert.equal(seen.size, 32, 'the fixed keys reach every symbol of the alphabet');
+});
+
 test('keyIdOf and fingerprintOf: anything but raw key bytes throws', () => {
   const wire = readExample('03-credential-machine.json').public_key.value;
   for (const fn of [conn.keyIdOf, conn.fingerprintOf]) {
