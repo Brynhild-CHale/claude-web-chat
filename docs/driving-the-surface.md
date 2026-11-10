@@ -39,7 +39,7 @@ takes). The graph belongs to Claude's turn lifecycle and the user.
 ## The driver helper — `lib/driver.js`
 
 ```js
-const { createDriver } = require('claude-web-chat/lib/driver');
+const { createDriver } = require('claude-web-chat/driver');
 
 const wc = createDriver({ owner: 'test-runner' }); // discovers the port
 await wc.writeMarkdown({ id: 'tests-h', text: '## Tests' });

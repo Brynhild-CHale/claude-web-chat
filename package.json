@@ -9,11 +9,25 @@
     "type": "git",
     "url": "git+https://github.com/Brynhild-CHale/claude-web-chat.git"
   },
-  "main": "lib/server/index.js",
   "bin": {
     "claude-web-chat": "bin/claude-web-chat.js",
     "claude-web-chat-mcp": "bin/claude-web-chat-mcp.js",
     "claude-web-chat-hook": "bin/claude-web-chat-hook.js"
+  },
+  "exports": {
+    "./server": "./lib/server/index.js",
+    "./portal": "./lib/portal/index.js",
+    "./client": "./lib/client/index.js",
+    "./driver": "./lib/driver.js",
+    "./core/remote-policy": "./lib/core/remote-policy.js",
+    "./core/redact": "./lib/core/redact.js",
+    "./core/paths": "./lib/core/paths.js",
+    "./core/text": "./lib/core/text.js",
+    "./core/versions": "./lib/core/versions.js",
+    "./tunnel/config": "./lib/tunnel/config.js",
+    "./util/registry": "./lib/util/registry.js",
+    "./bin/*": "./bin/*.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "bin/",
