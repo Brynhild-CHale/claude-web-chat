@@ -449,7 +449,9 @@ test('route census: every element route sits under a FLOOR_RULES row (read to se
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib/server/routes/elements.js'), 'utf8');
   const routes = [...src.matchAll(/\bapp\.(get|post|patch|delete)\(\s*'([^']+)'/g)].map((m) => [m[1].toUpperCase(), m[2]]);
   assert.deepEqual(routes.map((r) => r.join(' ')), [
-    'GET /api/elements', 'POST /api/elements', 'PATCH /api/elements/:id', 'POST /api/elements/:id/reply',
+    // GET /api/elements/anchor-stats (U761, 6C.1): host only at the daemon
+    // (requireHost); the portal's floor row classifies it like the others.
+    'GET /api/elements', 'GET /api/elements/anchor-stats', 'POST /api/elements', 'PATCH /api/elements/:id', 'POST /api/elements/:id/reply',
     'POST /api/elements/:id/send', 'GET /api/elements/:id/grab', 'DELETE /api/elements/:id',
   ]);
   for (const [method, p] of routes) {

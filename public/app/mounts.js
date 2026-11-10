@@ -1373,6 +1373,11 @@ function eventAnchors() {
   if (!eventAnchorsOne) eventAnchorsOne = createEventAnchors({ anchors, MutationObserver: window.MutationObserver });
   return eventAnchorsOne;
 }
+// The engine's counts (event-anchor.js stats()) for public/app/anchor-stats.js,
+// or null before the engine is made: reading never makes it (6C.1, U761).
+export function eventAnchorStats() {
+  return eventAnchorsOne ? eventAnchorsOne.stats() : null;
+}
 const eventAnchorOf = new WeakMap();
 
 function reportEvent(type, e, mountId) {

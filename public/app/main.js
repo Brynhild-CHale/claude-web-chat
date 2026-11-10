@@ -79,6 +79,10 @@ import { initTools } from './tools.js';
 // tray behind the reveal, the armed slot's small settings, the phone half.
 import { initToolbar } from './toolbar.js';
 import { connect, onFrame, onHello } from './ws.js';
+// The event-anchor stats on the client frame (annotation engine 6C.1, U761).
+import { initAnchorStats } from './anchor-stats.js';
+import { eventAnchorStats } from './mounts.js';
+import { setClientField } from './ws.js';
 
 initMode();       // Earthy light (default) / dark before first paint
 // The resolver on the mount runtime, as each preview, replay frame and export
@@ -90,6 +94,10 @@ initOverlay();    // the element overlay: after the resolver it watches through
 initWetLayer();   // ctx.wet on every create ctx (overlay.js registerCreateCtx)
 installInputMode();   // the pointer-type policy, at the overlay's setPointerPolicy
 initOverlayReport();  // the resolver's answers to the daemon: before the first hello (U314)
+// The event-anchor engine's counts as anchor_stats on every client frame once
+// the engine exists, re-read on each hello and every 30 s; the host reads them
+// at GET /api/elements/anchor-stats (annotation engine 6C.1, U761).
+initAnchorStats({ stats: eventAnchorStats, setClientField, onHello });
 initViewport();   // <html class="phone"> before anything mounts (panes read it)
 initTopbar();
 initGraph();
