@@ -25,6 +25,7 @@
 //     Push's line "Pushed from: ... by=<name>"; below read the ring drops `by`.
 //   * the asks decide audit line and the control audit line carry the actor
 //     for a relayed decide or invoke, and no row is handed it.
+//   * U743b (the corrective): a relayed undo's version carries the actor.
 // A relay secret is never printed: a failure message masks it.
 
 const test = require('node:test');
@@ -635,4 +636,32 @@ test('control: a relayed invoke\'s reqCtx and audit line carry the actor (no nam
   assert.deepEqual(audit.map((l) => l.origin), ['remote', 'remote', 'remote', 'remote']);
   assert.ok(!JSON.stringify(audit).includes(NAME), 'no name on any line');
   for (const c of ctxs) assert.ok(!('actor' in c), 'no row is handed the actor');
+});
+
+// ── U743b: the undo ────────────────────────────────────────────────────────
+
+test('U743b: a relayed undo\'s version carries the actor (no name); a local undo\'s none', async (t) => {
+  const d = await boot(t);
+  const { root } = d;
+  const body = { type: 'highlight', anchor: RANGE('m1'), payload: { color: 'gold', note: 'first' } };
+  const id = (await ok(d.anonApi.post('/api/elements', body, relayed()), 'relayed highlight')).element.id;
+  await ok(d.anonApi.patch(`/api/elements/${id}`, { payload: { note: 'second' } }, relayed()), 'relayed edit');
+  const u = await ok(d.anonApi.post('/api/elements/undo', { item: 'm1' }, relayed()), 'relayed undo');
+  assert.equal(u.undone.id, id);
+  assert.equal(u.undone.how, 'reverted', JSON.stringify(u));
+  const vers = versionsOn(root, id);
+  assert.equal(vers.length, 3, 'the undo appended one version');
+  assert.deepEqual(vers[2].actor, STORED, 'the undo\'s version: the actor, without its name');
+  assert.ok(!('name' in vers[2].actor));
+  assert.equal(vers[2].provenance.origin, 'remote', 'the provenance as before');
+  carriesNoActor('the undo answer', JSON.stringify(u));
+
+  // A local element, edited and undone locally: no actor field.
+  const lid = (await ok(d.api.post('/api/elements', { ...body, anchor: RANGE('m1') }), 'local highlight')).element.id;
+  await ok(d.api.patch(`/api/elements/${lid}`, { payload: { note: 'local second' } }), 'local edit');
+  const lu = await ok(d.api.post('/api/elements/undo', { item: 'm1' }), 'local undo');
+  assert.equal(lu.undone.id, lid, JSON.stringify(lu));
+  const lv = versionsOn(root, lid);
+  assert.equal(lv.length, 3);
+  assert.ok(!('actor' in lv[2]), 'a local undo records no actor field');
 });
