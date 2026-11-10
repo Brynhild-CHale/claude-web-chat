@@ -109,7 +109,9 @@ test('health exposes the daemon boot token (bridge restart detection)', async (t
   const { api } = await withServer(t);
   const { json: body } = await api.get('/api/health');
   assert.equal(typeof body.boot, 'string', '/api/health carries the per-boot token');
-  assert.ok(body.boot.includes(':'), 'boot token is pid:boot-time');
+  // Random per createServer and pid-free (07 C-07.15, U749): no longer
+  // `${pid}:${ms}`. The bridge compares it for equality only.
+  assert.match(body.boot, /^[0-9a-f]{32}$/, 'boot token is a random, pid-free id');
 });
 
 // ── fake-client unit: cursor + reconnect discipline ──────────────────────────
