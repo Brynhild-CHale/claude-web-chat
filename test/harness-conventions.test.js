@@ -112,6 +112,10 @@ const PATTERNS = [
       // openSSE cannot stand in for a dependency of the code under test.
       'test/channel-ack.test.js': 2,
       'test/channel-bridge.test.js': 8,
+      // The same shape for the connector's hold (U719): a stub client and a
+      // spy over lib/client, INJECTED INTO lib/connector/lifecycle.js, which
+      // does the subscribing; the test asserts on the opts the lifecycle passes.
+      'test/connector-hold.test.js': 3,
     },
   },
   {
