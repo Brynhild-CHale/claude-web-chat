@@ -99,8 +99,12 @@ test('two local sockets: the host reads {ok, sockets, reporting, sum, rows} — 
   for (const k of KEYS) assert.equal(empty.sum[k], 0, k);
 
   const before = Date.now();
-  a.send(clientFrame('desktop', statsOf(1, true)));
+  // The second socket alone first: its row's ordinal is 2 (its place among
+  // the local sockets), not 1 (its place among the reporting rows).
   b.send(clientFrame('mobile', statsOf(100, false)));
+  const onlyB = await readUntil(d.port, (x) => x.reporting === 1, 'b reporting alone');
+  assert.deepStrictEqual(onlyB.rows.map((r) => [r.socket, r.device]), [[2, 'mobile']]);
+  a.send(clientFrame('desktop', statsOf(1, true)));
   const body = await readUntil(d.port, (x) => x.reporting === 2, 'both reporting');
   assert.equal(body.ok, true);
   assert.equal(body.sockets, 2);
@@ -377,4 +381,49 @@ test('chrome: anchorStatsKey moves with any count and only with a known key', as
     const b = { ...a, [k]: k === 'idlePending' ? !a[k] : a[k] + 1 };
     assert.notEqual(m.anchorStatsKey(b), m.anchorStatsKey(a), k);
   }
+});
+
+// ── 6. the real chrome: main.js wires the module ────────────────────────────
+// The module above is tested with injected dependencies; this boots the real
+// public/index.html + main.js (test-support/chrome-shell) and reads the client
+// frames the chrome sends: nothing before the event-anchor engine is made, the
+// counts on the next tick once a pane engagement makes it, and again on a
+// hello. Last in the file: the shell replaces the globals from its before()
+// to its after().
+test.describe('chrome: main.js sends anchor_stats on its client frame once the event-anchor engine exists', () => {
+  let shell;
+  let W;
+  const withStats = () => shell.socket().frames('client').filter((f) => f && Object.prototype.hasOwnProperty.call(f, 'anchor_stats'));
+  const ticker = () => shell.intervals().find((i) => i.fn && i.fn.name === 'anchorStatsTick');
+
+  test.before(async () => {
+    const { bootShell, helloFrame } = require('../test-support/chrome-shell');
+    shell = await bootShell({ open: true });
+    W = shell.window;
+    await shell.frame(helloFrame({ mounts: [{ id: 'as-pane', html: '<button id="go">go</button>', target: 'main', params: {}, pane_state: {} }] }));
+  });
+  test.after(() => shell && shell.restore());
+
+  test('nothing before the engine; the tick sends the counts once a pane engagement makes it; a hello re-sends them', async () => {
+    const { helloFrame } = require('../test-support/chrome-shell');
+    assert.ok(ticker(), 'main.js armed the 30 s ticker');
+    assert.equal(ticker().ms, 30000);
+    ticker().fn();
+    assert.deepStrictEqual(withStats(), [], 'no engine yet: no client frame carries anchor_stats');
+
+    const host = [...W.document.querySelectorAll('.mount-host')].find((h) => (h.dataset.mountId || h.id) === 'as-pane');
+    assert.ok(host && host.shadowRoot, 'the pane is mounted');
+    shell.key('Tab', { target: host.shadowRoot.querySelector('#go') });   // an engagement: the engine is made
+    ticker().fn();
+    await shell.tick();
+    const sent = withStats();
+    assert.equal(sent.length, 1, 'the first tick after the engine exists sends the counts');
+    const s = sent[0].anchor_stats;
+    for (const k of Object.keys(s)) assert.ok(KEYS.includes(k), k);
+    assert.equal(typeof s.entries, 'number');
+    assert.equal(typeof s.idlePending, 'boolean');
+
+    await shell.frame(helloFrame({ mounts: [{ id: 'as-pane', html: '<button id="go">go</button>', target: 'main', params: {}, pane_state: {} }] }));
+    assert.ok(withStats().length >= 2, 'a hello re-sends them');
+  });
 });
