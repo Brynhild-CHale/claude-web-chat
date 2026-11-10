@@ -499,11 +499,15 @@ test('relayWs: a 300 KiB text message goes in fragments with more; the client\'s
   assert.strictEqual(await viewer.opened, true);
   assert.strictEqual(await viewer.refused, null);
 
-  const text = 'a€😀'.repeat(38400);   // 300 KiB of UTF-8, with 3- and 4-byte code points
+  // 300 KiB of UTF-8 with 3- and 4-byte code points; the one-byte lead puts
+  // byte 262144 (the first credit window, one CHUNK) inside a 4-byte code point,
+  // so the first fragment must be cut short at the code point before it.
+  const text = `x${'a€😀'.repeat(38400)}`;
   viewer.send(text);
   await waitUntil(() => got.length === 1, { timeout: 5000, what: 'the reassembled message' });
   const frags = got[0];
   assert.ok(frags.length >= 2);
+  assert.ok(Buffer.byteLength(frags[0].data) < CHUNK, 'the first fragment ends at a code point before the window');
   assert.ok(frags.slice(0, -1).every((f) => f.more === true && f.binary === false));
   assert.ok(frags.every((f) => Buffer.byteLength(f.data) <= CHUNK));
   assert.strictEqual(frags.map((f) => f.data).join(''), text);
