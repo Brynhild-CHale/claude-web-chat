@@ -372,6 +372,7 @@ test('spawnDaemon with a secret: a seam that returns no pipe at stdio[3] is refu
 function fakePipe({ fail = false } = {}) {
   const chunks = [];
   const w = new Writable({
+    autoDestroy: false, // so "destroyed" proves handOverSecret destroyed it, not the stream itself
     write(chunk, enc, cb) {
       if (fail) { const e = new Error('write EPIPE'); e.code = 'EPIPE'; cb(e); return; }
       chunks.push(Buffer.from(chunk)); cb();
