@@ -1,0 +1,1073 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-mcp-tools.json",
+  "title": "web-chat MCP tool catalogue: the shape of a catalogue document (contract 10)",
+  "description": "The shape of a catalogue document: the 24 tools a chat's Claude Code session loads from web-chat's stdio MCP server, verbatim, with the daemon route each handler calls. Derived from web-chat-dev.worktrees/ae-int/lib/mcp/index.js (registration order) and lib/mcp/tools/*.js, read at a9c22e5c and re-read at 826442d6 and aa60492e; at aa60492e lib/mcp differs from tag ae-alpha.2 only by U419's get_comments and reply_comment descriptions. This schema validates shape only: each released catalogue version is its own file schemas/10-mcp-catalogue-<version>.json holding one const over the whole document, added at its release; 12's version table (C-12.6a) names the files for the versions through 0.9.0-alpha.3, and every minted file names its first web-chat package version in web_chat_from (C-10.1, C-10.9). Non-ASCII characters in descriptions are JSON escapes, so a catalogue file holds no literal em dash while every parsed string equals the source. $defs input_<name> repeat the pre-catalogue placeholder's inputSchemas, informative, for validating a call's arguments. Contract 10, C-10.1 to C-10.9.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "catalogue",
+    "catalogue_version",
+    "source",
+    "transport",
+    "client_headers",
+    "catalogue_sha256",
+    "tools"
+  ],
+  "properties": {
+    "catalogue": {
+      "const": "web-chat-mcp",
+      "description": "Which catalogue this document is."
+    },
+    "catalogue_version": {
+      "type": "string",
+      "pattern": "^(1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)|1\\.0\\.0-pre)$",
+      "description": "Semver of the catalogue; major 1 for the v1 round. Minor and patch rise by C-10.9. 1.0.0-pre is the pre-catalogue placeholder of 0.9.0-alpha.2 and alpha.2.1 (examples/10-mcp-tools.json), which no hub claims; catalogue 1.0.0 is minted at 0.9.0-alpha.3's cut."
+    },
+    "web_chat_from": {
+      "type": "string",
+      "pattern": "^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}(?:[-+][0-9A-Za-z.+-]{1,48})?$",
+      "description": "The first web-chat package version that carries this catalogue (0.9.0-alpha.3 for 1.0.0), in the form of 12's $defs/package_version. Optional in this shape and present in every minted catalogue file; the pre-catalogue placeholder has none. The hub maps a package version after 0.9.0-alpha.3 to the minted file with the highest web_chat_from it reaches, by compareVersions (lib/core/versions.js); 12's table (C-12.6a) covers the versions through 0.9.0-alpha.3 only, so a release that changes the catalogue adds a file, never a row (C-10.1)."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the catalogue was read.",
+      "required": [
+        "repo",
+        "worktree",
+        "ref",
+        "registration",
+        "build"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repository name."
+        },
+        "worktree": {
+          "type": "string",
+          "description": "Worktree path relative to ~/Dev."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Commit read."
+        },
+        "registration": {
+          "type": "string",
+          "description": "The file that registers the tools, in order."
+        },
+        "build": {
+          "type": "string",
+          "description": "The released build that carries this catalogue."
+        }
+      }
+    },
+    "transport": {
+      "type": "string",
+      "description": "How Claude reaches the tools and how the tools reach the daemon."
+    },
+    "client_headers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/client_header"
+      },
+      "description": "Headers every daemon request from the MCP server carries."
+    },
+    "catalogue_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 over the canonical JSON (keys sorted, no whitespace, UTF-8, RFC 8785 for these values) of [{name, description, inputSchema}] in registration order: what tools/list answers. lib/core/stable-json.js stableStringify gives the same bytes. A released version's value is the const in its schemas/10-mcp-catalogue-<version>.json. From alpha.4 web-chat commits it as CATALOGUE_SHA256 in lib/core/versions.js and GET /api/health reports it as catalogue.sha256; the hub trusts a report only when it equals a known file's value (C-10.8)."
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 24,
+      "items": {
+        "$ref": "#/$defs/tool"
+      },
+      "description": "The tools, in registration order."
+    }
+  },
+  "$defs": {
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One daemon request a tool's handler makes. Derived by running each handler in web-chat-dev.worktrees/ae-int/lib/mcp/tools/ with lib/mcp/client.js stubbed, and checked by reading the handler.",
+      "required": [
+        "when",
+        "method",
+        "path",
+        "query",
+        "body",
+        "timeout_ms",
+        "portal_v12"
+      ],
+      "properties": {
+        "when": {
+          "type": "string",
+          "description": "The arguments under which the handler makes this request; 'always' when it makes it on every call."
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PATCH",
+            "DELETE"
+          ],
+          "description": "The HTTP method."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "The daemon route, Express style (:name is one encoded path segment)."
+        },
+        "query": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Query keys the handler may set."
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the request body carries, in words; null for a GET."
+        },
+        "timeout_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "A socket timeout the handler sets; null for lib/client's default (none)."
+        },
+        "portal_v12": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What web-chat's remote table (web-chat-dev.worktrees/ae-int/lib/core/remote-policy.js classify, PORTAL_PROTOCOL_VERSION 12) answers for this route from a remote viewer. Informative: C-10.3 keeps tool routes off the relay whatever the verdict.",
+          "required": [
+            "verdict",
+            "rule"
+          ],
+          "properties": {
+            "verdict": {
+              "enum": [
+                "allowed",
+                "refused"
+              ],
+              "description": "allowed: the portal proxies it (subject to `need`); refused: never proxied."
+            },
+            "rule": {
+              "type": "string",
+              "description": "The table row that decided, as keyOf() prints it."
+            },
+            "need": {
+              "enum": [
+                "basic",
+                "read",
+                "full"
+              ],
+              "description": "The least mirror level the row needs, when it names one."
+            },
+            "note": {
+              "type": "string",
+              "description": "A body-level or query-level rule recorded beside the row."
+            }
+          }
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One MCP tool as Claude Code's tools/list sees it (name, description, inputSchema) plus where it comes from and what it calls.",
+      "required": [
+        "name",
+        "source",
+        "description",
+        "inputSchema",
+        "description_sha256",
+        "routes",
+        "shaping",
+        "content"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z_]*$",
+          "description": "The tool name, as registered."
+        },
+        "source": {
+          "type": "string",
+          "description": "The module that defines it, cited by repo path."
+        },
+        "description": {
+          "type": "string",
+          "description": "The tool description, verbatim. Load-bearing: Claude decides from it."
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "The tool's inputSchema, verbatim. It is web-chat's, so it does not follow this folder's additionalProperties and every-property-described rules."
+        },
+        "description_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the description's UTF-8 bytes, so a one-word edit is visible."
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "description": "The daemon requests the handler makes."
+        },
+        "shaping": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the handler changes in the daemon's answer before Claude sees it; null when the answer passes as one JSON text item."
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "text",
+              "image"
+            ]
+          },
+          "description": "The MCP content item types a successful result may hold."
+        }
+      }
+    },
+    "client_header": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A header lib/mcp/client.js adds to every daemon request from the MCP server process (and only from it).",
+      "required": [
+        "name",
+        "value",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Header name."
+        },
+        "value": {
+          "type": "string",
+          "description": "What it carries."
+        },
+        "source": {
+          "type": "string",
+          "description": "Where the name and value are defined."
+        }
+      }
+    },
+    "call_result": {
+      "description": "The CallToolResult shapes lib/mcp/index.js answers, for every tool. Normative for the hub only in that a connector MUST NOT rewrite them (C-10.2).",
+      "oneOf": [
+        {
+          "title": "success",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "content"
+          ],
+          "description": "A handler's result as one JSON text item, or MCP content the handler built (isContentResult). A newer-build notice may lead as its own text item (lib/mcp/skew.js createBuildNotice).",
+          "properties": {
+            "content": {
+              "type": "array",
+              "minItems": 1,
+              "description": "MCP content items.",
+              "items": {
+                "$ref": "#/$defs/content_item"
+              }
+            }
+          }
+        },
+        {
+          "title": "error",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "content",
+            "isError"
+          ],
+          "description": "A thrown handler error ('Error: <message>', or lib/mcp/skew.js unknownRouteError for a route the daemon lacks), an unknown tool ('Unknown tool: <name>'), or the disabled envelope as JSON text.",
+          "properties": {
+            "content": {
+              "type": "array",
+              "minItems": 1,
+              "description": "MCP content items.",
+              "items": {
+                "$ref": "#/$defs/content_item"
+              }
+            },
+            "isError": {
+              "const": true,
+              "description": "Always true here."
+            }
+          }
+        }
+      ]
+    },
+    "content_item": {
+      "type": "object",
+      "description": "One MCP content item (text or image as web-chat emits them).",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "text",
+            "image"
+          ],
+          "description": "The item type."
+        },
+        "text": {
+          "type": "string",
+          "description": "For a text item."
+        },
+        "data": {
+          "type": "string",
+          "description": "For an image item: base64 bytes."
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "For an image item: e.g. image/png."
+        }
+      }
+    },
+    "disabled": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The JSON the disabled envelope's text item holds when web-chat is toggled off (web-chat-dev.worktrees/ae-int/lib/mcp/index.js CallToolRequestSchema handler).",
+      "required": [
+        "disabled",
+        "scope",
+        "reason",
+        "hint"
+      ],
+      "properties": {
+        "disabled": {
+          "const": true,
+          "description": "Always true."
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "project"
+          ],
+          "description": "The toggle scope that decided (session scope is not visible to MCP)."
+        },
+        "reason": {
+          "enum": [
+            "not-installed",
+            "marker"
+          ],
+          "description": "not-installed: no .web-chat/ in the root; marker: someone switched it off."
+        },
+        "hint": {
+          "type": "string",
+          "description": "The command that would help."
+        }
+      }
+    },
+    "input_render": {
+      "type": "object",
+      "properties": {
+        "html": {
+          "type": "string",
+          "description": "The HTML/JS payload. <style> and <script> tags inside are handled correctly."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable mount id (used for replace-in-place). If omitted, a unique id is generated. The shell's own element ids are RESERVED \u2014 \"main\", \"topbar\", \"status\", \"dock\", \"stage\", \"overlay\", \"drawer\", \"minbar\", \"queue-rail\", \"cmd-palette\" and the rest of the chrome \u2014 and a render naming one is refused with {ok:false, reserved:true, hint}. Prefix your ids (e.g. \"plan-form\") and this never comes up."
+        },
+        "target": {
+          "type": "string",
+          "description": "Slot in the page DOM to mount into. Defaults to \"main\"."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Take over a pane owned by another writer (owner:\"service:<name>\" or \"pane:<id>\"). Without it, rendering over an owned pane soft-rejects with {ok:false, owned:true, owner}."
+        },
+        "after": {
+          "type": "string",
+          "description": "Position in the page sequence: place the pane right after this pane/markdown id, or \"start\" for the top. Omitted: a new pane appends and a re-render keeps its position. An unknown id still mounts (appended) and returns a `warning`. Pair with `write_markdown` to put headings and prose between runs of panes."
+        },
+        "place": {
+          "type": "object",
+          "description": "Proposed grid placement on the page's 12-column grid: `col` (1\u201312, the column it starts in; omit for auto flow), `span` (2\u201312 columns wide, shrunk to fit right of `col`; default the rest of the row), `rows` (2\u201324 rows of 40px; omit for auto height). Out-of-range values are clamped and the applied placement comes back as `place`. It also becomes this pane's \"Claude's layout\" baseline \u2014 the user can rearrange freely and \u21ba puts the run back. Omitted: a new pane is full-width auto-height and a re-render keeps whatever layout the user left.",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "span": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 12
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 24
+            }
+          }
+        },
+        "params": {
+          "type": "object",
+          "description": "Mount params persisted with the pane and injected into its script as `params`. Recognized keys: `title` labels the pane's header (otherwise it shows the mount id) and `type` adds a type chip beside it; `form_reset:true` drops the mount's persisted form_state on this render (use when supplying fresh prefills); `routing:\"none\"` opts the pane out of default activity-item routing (\"auto\" opts a service-owned pane back in). Other keys pass through to the pane script.",
+          "properties": {
+            "form_reset": {
+              "type": "boolean",
+              "description": "Drop the persisted form_state for this mount on this render."
+            },
+            "routing": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "none"
+              ],
+              "description": "Activity-routing override for this pane. Default: auto (none for service-owned panes)."
+            }
+          }
+        },
+        "signals": {
+          "type": "array",
+          "description": "Optional declared wake signals (channels). Each entry names a store key this pane writes on a deliberate user action and how it should wake you: wake:\"queue\" (default) folds a browser write to that key into the user's queue rail, to send when they hit Push; wake:\"immediate\" wakes you the moment the pane writes it, bypassing the queue. Use \"immediate\" only for explicit \"Ask Claude now\" affordances. Declaring signals is the channels-native replacement for the arm-a-wait convention \u2014 you no longer need to background a watch for these keys.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "The store key the pane writes (e.g. \"form_submit\")."
+              },
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "queue",
+                  "immediate"
+                ],
+                "description": "queue (default) or immediate."
+              },
+              "why": {
+                "type": "string",
+                "description": "Short human label for why this wakes you (shown in the queue rail)."
+              }
+            },
+            "required": [
+              "key"
+            ]
+          }
+        }
+      },
+      "required": [
+        "html"
+      ]
+    },
+    "input_clear": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Specific mount id to remove."
+        },
+        "target": {
+          "type": "string",
+          "description": "Clear all mounts in this target slot."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Clear panes owned by another writer (a driver, or a parent pane) too. Without it, a clear that would take one is soft-rejected. On a bulk clear it also removes pinned panes."
+        }
+      }
+    },
+    "input_list_mounts": {
+      "type": "object",
+      "properties": {}
+    },
+    "input_save_component": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "kebab-case component name (`^[a-z][a-z0-9-]*$`) \u2014 it becomes a directory name. Builtin names are reserved and refused."
+        },
+        "source": {
+          "type": "string",
+          "description": "HTML/JS source. Scripts inside can read `params` (passed by `use_component`)."
+        },
+        "description": {
+          "type": "string",
+          "description": "When/why to use this component. Critical for later discovery."
+        },
+        "params_schema": {
+          "type": "object",
+          "description": "JSON Schema for the params object the component expects."
+        },
+        "seed": {
+          "type": "string",
+          "description": "Optional seed.js source: a browser-side script run to compute default params when the component is mounted from the drawer."
+        },
+        "service": {
+          "type": "string",
+          "description": "Optional service.js host-side source. Presence makes this a service-backed component. Must `module.exports = { async start(ctx), async stop?() }`; ctx = { driver, params, mountId, name, log }. In v1 the service writes the store only (ctx.driver.setStore(...)) \u2014 no render. The daemon spawns it while its pane is on the active node and stops it when you navigate away or clear the pane."
+        },
+        "location": {
+          "type": "string",
+          "enum": [
+            "local",
+            "system"
+          ],
+          "description": "local = this project (.web-chat/components); system = ~/.web-chat/components (all projects). Defaults to local."
+        }
+      },
+      "required": [
+        "name",
+        "source",
+        "description"
+      ]
+    },
+    "input_list_components": {
+      "type": "object",
+      "properties": {}
+    },
+    "input_get_component": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Component name."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "input_use_component": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Component name (must already be saved)."
+        },
+        "params": {
+          "type": "object",
+          "description": "Params passed to the component's script as the `params` global. Shape defined by the component's params_schema. Server-recognized keys ride here too: `form_reset:true` drops the mount's persisted form_state on this render (use when supplying fresh prefills); `routing:\"none\"`/`\"auto\"` overrides activity routing as in `render`."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable mount id (replace-in-place). Reserved shell element ids (\"main\", \"topbar\", \"status\", \"overlay\", \u2026) are refused with {ok:false, reserved:true}, exactly as in `render`."
+        },
+        "target": {
+          "type": "string",
+          "description": "Target slot. Defaults to \"main\"."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Take over a pane owned by another writer (owner:\"service:<name>\" or \"pane:<id>\"). Without it, mounting over an owned pane soft-rejects with {ok:false, owned:true, owner}."
+        },
+        "after": {
+          "type": "string",
+          "description": "Position in the page sequence: place the pane right after this pane/markdown id, or \"start\" for the top. Omitted: a new pane appends and a re-render keeps its position. An unknown id still mounts (appended) and returns a `warning`. Pair with `write_markdown` to put headings and prose between runs of panes."
+        },
+        "place": {
+          "type": "object",
+          "description": "Proposed grid placement on the page's 12-column grid: `col` (1\u201312, the column it starts in; omit for auto flow), `span` (2\u201312 columns wide, shrunk to fit right of `col`; default the rest of the row), `rows` (2\u201324 rows of 40px; omit for auto height). Out-of-range values are clamped and the applied placement comes back as `place`. It also becomes this pane's \"Claude's layout\" baseline \u2014 the user can rearrange freely and \u21ba puts the run back. Omitted: a new pane is full-width auto-height and a re-render keeps whatever layout the user left.",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "span": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 12
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 24
+            }
+          }
+        },
+        "signals": {
+          "type": "array",
+          "description": "Optional declared wake signals (channels), exactly as in `render`: each entry names a store key this pane writes on a deliberate user action and how it should wake you. wake:\"queue\" (default) folds a browser write to that key into the user's queue rail, to send when they hit Push; wake:\"immediate\" wakes you the moment the pane writes it.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "The store key the pane writes (e.g. \"form_submit\")."
+              },
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "queue",
+                  "immediate"
+                ],
+                "description": "queue (default) or immediate."
+              },
+              "why": {
+                "type": "string",
+                "description": "Short human label for why this wakes you (shown in the queue rail)."
+              }
+            },
+            "required": [
+              "key"
+            ]
+          }
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "input_get_store": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Specific store keys to read. Omit to fetch everything."
+        }
+      }
+    },
+    "input_set_store": {
+      "type": "object",
+      "properties": {
+        "patch": {
+          "type": "object",
+          "description": "Object whose keys+values are merged into the store."
+        }
+      },
+      "required": [
+        "patch"
+      ]
+    },
+    "input_get_events": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "number",
+          "description": "Only return events with seq > this. Default 0 (all)."
+        }
+      }
+    },
+    "input_get_graph": {
+      "type": "object",
+      "properties": {}
+    },
+    "input_get_active": {
+      "type": "object",
+      "properties": {}
+    },
+    "input_diff_nodes": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "string",
+          "description": "First node: hierarchical label (n1.2), opaque id (n3), `active`, or `live`."
+        },
+        "b": {
+          "type": "string",
+          "description": "Second node: same forms as `a`."
+        },
+        "context": {
+          "type": "number",
+          "description": "Context lines around each html diff hunk. Default 2."
+        }
+      },
+      "required": [
+        "a",
+        "b"
+      ]
+    },
+    "input_get_comments": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "number",
+          "description": "Only return pins with seq greater than this (exclusive). Pass the prior call's next_cursor to get just new/edited pins."
+        },
+        "mount": {
+          "type": "string",
+          "description": "Scope to pins anchored in this mount id only."
+        },
+        "type": {
+          "type": "string",
+          "description": "The element type to read: 'comment' (the default) or 'highlight'."
+        }
+      }
+    },
+    "input_reply_comment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The comment pin id (from get_comments, e.g. \"c3\")."
+        },
+        "text": {
+          "type": "string",
+          "description": "Your reply. Short and specific \u2014 a doc comment, not an essay."
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "input_get_captures": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "A committed node id (e.g. 'n5') to read that node's captures instead of the live surface."
+        },
+        "since": {
+          "type": "number",
+          "description": "Only return captures with seq greater than this (catch-up cursor)."
+        }
+      }
+    },
+    "input_inspect_capture": {
+      "type": "object",
+      "properties": {
+        "capture_id": {
+          "type": "string",
+          "description": "The capture id (e.g. 'cap3'), from get_captures or the tab_capture store key."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector; returns matching elements (tag, text, html), capped."
+        },
+        "query": {
+          "type": "string",
+          "description": "Text to find; returns occurrences with surrounding context windows."
+        },
+        "profile": {
+          "type": "string",
+          "description": "Re-run a named profile over the raw DOM (e.g. tables). The re-run gets the capture's own URL, so url-derived fields resolve exactly as they did at ingest."
+        },
+        "max": {
+          "type": "number",
+          "description": "Max matches/snippets to return (default 20)."
+        },
+        "context": {
+          "type": "number",
+          "description": "Chars of context around each query hit (default 200)."
+        }
+      },
+      "required": [
+        "capture_id"
+      ]
+    },
+    "input_set_theme": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "node",
+            "pane"
+          ],
+          "description": "Which layer to set."
+        },
+        "target": {
+          "type": "string",
+          "description": "For scope \"node\": the node's stored id. For scope \"pane\": the mount id. Omit for \"global\"."
+        },
+        "tokens": {
+          "type": "object",
+          "description": "Partial map of --wc-* token \u2192 CSS value. Unset tokens fall through the cascade."
+        },
+        "css": {
+          "type": "string",
+          "description": "Raw CSS escape hatch. Global/node = chrome only; pane = that pane's content only."
+        },
+        "modes": {
+          "type": "object",
+          "description": "Optional per-mode layers { light?: {tokens, css?}, dark?: {tokens, css?} } applied over `tokens`/`css` in that mode."
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "Remove the theme at this scope (ignores tokens/css)."
+        }
+      },
+      "required": [
+        "scope"
+      ]
+    },
+    "input_get_theme": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "node",
+            "pane"
+          ],
+          "description": "Which layer to resolve. Defaults to \"global\"."
+        },
+        "target": {
+          "type": "string",
+          "description": "Node id (scope \"node\") or mount id (scope \"pane\")."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark"
+          ],
+          "description": "Which mode to resolve. Defaults to light."
+        }
+      }
+    },
+    "input_save_theme": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Theme name (letters, digits, space, dot, dash; becomes <name>.json)."
+        },
+        "location": {
+          "type": "string",
+          "enum": [
+            "local",
+            "system"
+          ],
+          "description": "local = this project; system = ~/.web-chat (all projects). Defaults to local."
+        },
+        "tokens": {
+          "type": "object",
+          "description": "Partial map of --wc-* token \u2192 CSS value."
+        },
+        "css": {
+          "type": "string",
+          "description": "Optional raw-CSS escape hatch baked into the saved theme."
+        },
+        "modes": {
+          "type": "object",
+          "description": "Optional per-mode layers { light?: {tokens, css?}, dark?: {tokens, css?} } \u2014 see set_theme."
+        },
+        "set_default": {
+          "type": "boolean",
+          "description": "Also set this as the web-chat-wide default at the chosen location."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "input_list_themes": {
+      "type": "object",
+      "properties": {}
+    },
+    "input_apply_theme": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of a saved theme."
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "node",
+            "pane"
+          ],
+          "description": "Which layer to apply it at."
+        },
+        "target": {
+          "type": "string",
+          "description": "Node id (scope \"node\") or mount id (scope \"pane\")."
+        }
+      },
+      "required": [
+        "name",
+        "scope"
+      ]
+    },
+    "input_export": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "html",
+            "replay",
+            "gif",
+            "mp4",
+            "webm"
+          ],
+          "description": "'html' (default): one page. 'replay': the lineage as a self-contained .html player. 'gif': the lineage as an animated GIF. 'mp4' (H.264) / 'webm' (VP9): the lineage as a video \u2014 needs ffmpeg on the machine."
+        },
+        "node": {
+          "type": "string",
+          "description": "For 'html': which node to export \u2014 a hierarchical label ('n1.7'), a stored id, 'active' (default), or 'live'. For a replay format it means the same as `to`."
+        },
+        "from": {
+          "type": "string",
+          "description": "Replay formats: the node to start from (label or id). Default: the nearest bookmarked ancestor of `to`, else its root."
+        },
+        "to": {
+          "type": "string",
+          "description": "Replay formats: the node to arrive at (label or id). Default: the active node."
+        },
+        "hold_ms": {
+          "type": "number",
+          "description": "Replay formats: how long each node is held, in ms (500\u201320000, default 2500)."
+        },
+        "transition": {
+          "type": "string",
+          "enum": [
+            "cut",
+            "fade"
+          ],
+          "description": "Replay formats: 'cut' (default) or 'fade' between nodes."
+        },
+        "captions": {
+          "type": "string",
+          "enum": [
+            "on",
+            "none"
+          ],
+          "description": "Replay formats: 'on' (default) \u2014 a caption per node: its label, time and Claude's reply summary (plus the prompt when include_prompts is true) \u2014 or 'none' for no caption bar."
+        },
+        "include_prompts": {
+          "type": "boolean",
+          "description": "Replay formats: true puts the user's own prompts in the captions (they may be private). Default false: no prompt text anywhere in the file."
+        },
+        "width": {
+          "type": "number",
+          "description": "'gif'/'mp4'/'webm': output width in px (320\u20131920, default 960); the height follows `size` (16:10 by default), and a frame of more than 1920 by 1200 px in area shrinks to fit, keeping its shape. The result gives the width and height drawn."
+        },
+        "fps": {
+          "type": "number",
+          "description": "'gif'/'mp4'/'webm': frames per second for motion \u2014 a fade, and the scroll to each change \u2014 and a video's frame rate (1\u201330, default 10). Left out, a replay too long for the 1000-frame cap is drawn at the highest fps that fits; a named fps is kept, and a replay over the cap at it is refused."
+        },
+        "size": {
+          "type": "string",
+          "description": "Replay formats: the page size each frame is laid out at, 'WxH' in CSS px \u2014 digits and a lowercase x, e.g. '1280x800' (the default); a width beyond 320\u20133840 or a height beyond 240\u20132160 is clamped, and any other form is refused. It also gives a GIF or video its shape; a width of 900 or less lays the page out as a narrow screen does."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark"
+          ],
+          "description": "Draw the file in this light/dark mode of the theme. Default: light, whatever the user's browser shows \u2014 pass 'dark' only when the user asks for a dark copy."
+        },
+        "script": {
+          "type": "object",
+          "description": "A replay SCRIPT (see above): the two moments and, optionally, timed and captioned beats between them. Replaces `from`/`to` (a top-level from/to/include_prompts fills in what the script leaves out).",
+          "properties": {
+            "from": {
+              "type": "string",
+              "description": "The first moment: a node label or id, an ancestor of `to`. Default: the nearest bookmarked ancestor, else the root."
+            },
+            "to": {
+              "type": "string",
+              "description": "The last moment: a node label or id. Default: the active node."
+            },
+            "title": {
+              "type": "string",
+              "description": "A title shown over the captions and naming the document (\u2264120 chars)."
+            },
+            "default_hold_ms": {
+              "type": "number",
+              "description": "Hold for steps that set none (500\u201320000; default 2500)."
+            },
+            "include_prompts": {
+              "type": "boolean",
+              "description": "Put the user's own prompts in the captions. Default false."
+            },
+            "steps": {
+              "type": "array",
+              "description": "The beats, in path order. Omit to play every node on the path at the default hold.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "node": {
+                    "type": "string",
+                    "description": "One node (label or id) \u2014 this beat shows it."
+                  },
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "A group of CONSECUTIVE nodes played as one beat: shows the last, the caption lists them all."
+                  },
+                  "hold_ms": {
+                    "type": "number",
+                    "description": "How long this beat is held (500\u201320000 ms)."
+                  },
+                  "caption": {
+                    "type": "string",
+                    "description": "A short caption for this beat (\u2264280 chars)."
+                  },
+                  "transition": {
+                    "type": "string",
+                    "enum": [
+                      "cut",
+                      "fade"
+                    ],
+                    "description": "How this beat comes in."
+                  },
+                  "scroll": {
+                    "type": "string",
+                    "description": "Where the frame looks during this beat: 'auto' (default \u2014 scroll to what the node added, then what it changed), 'none' (hold still), or the id of one pane or markdown item on the node's page."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "open": {
+          "type": "boolean",
+          "description": "true: open the replay (the `script`, or from/to) in the user's browser player instead of writing a file \u2014 nothing is written and `format` is ignored."
+        }
+      }
+    },
+    "input_write_markdown": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The markdown. `#`/`##` headings become entries in the page's Contents nav (`###` is a sub-heading with no row); the first `#` is the page title."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable item id \u2014 reuse to replace in place. Omitted: the server assigns md-<n>. Must not be a pane's id or a reserved shell element id."
+        },
+        "after": {
+          "type": "string",
+          "description": "Place the item right after this pane/markdown id, or \"start\" for the top. Omitted: a new item appends; a replaced item keeps its position."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Replace an item another writer (owner:\"service:<name>\") owns. Without it, that write soft-rejects with {ok:false, owned:true, owner}."
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "ch": "control",
+  "kind": "chat.assign",
+  "id": "h5",
+  "seq": 5,
+  "at": 1793181400056,
+  "assignment": {
+    "v": 1,
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "rev": 3,
+    "issued_at": 1793181400000,
+    "title": "Hub skeleton",
+    "scope": {
+      "kind": "folder",
+      "folder_id": "f_3a9c1e07b54d2f68"
+    },
+    "desired": "running",
+    "agent": {
+      "want": "session",
+      "launch": "manual",
+      "requested_by": "user"
+    },
+    "origins": {
+      "surface": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4.hub.hale.dev",
+      "answer": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4-a.hub.hale.dev",
+      "shell": "https://hub.hale.dev"
+    }
+  },
+  "cursor": {
+    "type": "source",
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "ring": "main",
+    "boot": "48302:1793181402551",
+    "seq": 311,
+    "capture_seq": 57,
+    "element_seq": 902
+  }
+}

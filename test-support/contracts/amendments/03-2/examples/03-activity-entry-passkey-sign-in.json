@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_hzt29z1g0kh7k6mx64y124egq3",
+  "at": "2026-10-30T08:40:05.912Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_saq2atxt1vhxhv8hm2xrwvg201",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "auth.sign_in",
+  "target": {
+    "type": "credential",
+    "id": "pky_fc9n46xpxhb362pn5hcfnev7a4"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Signed in with a passkey",
+    "source": "template",
+    "template": "auth.signed-in-passkey",
+    "chars": 24,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

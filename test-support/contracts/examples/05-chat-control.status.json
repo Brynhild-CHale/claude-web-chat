@@ -1,0 +1,51 @@
+{
+  "ch": "control",
+  "kind": "chat.status",
+  "id": "c4",
+  "seq": 4,
+  "re": "h5",
+  "at": 1793181462113,
+  "status": {
+    "v": 1,
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "rev": 3,
+    "boot": "48211:1793181290000",
+    "seq": 57,
+    "at": 1793181462113,
+    "state": "running",
+    "daemon": {
+      "up": true,
+      "instance": "5b1e9c04",
+      "package_version": "0.9.0-alpha.4",
+      "boot": "48302:1793181402551",
+      "viewers": 1,
+      "started_by": "connector",
+      "held": true
+    },
+    "session": {
+      "attached": true,
+      "count": 1,
+      "channel": true,
+      "mod": null,
+      "launched_by": "user",
+      "package_versions": [
+        "0.9.0-alpha.4"
+      ],
+      "last_tool_at": 1793181455020
+    },
+    "turn": {
+      "in_flight": true,
+      "author": "wake",
+      "started_at": 1793181449870,
+      "active_label": "n1.12",
+      "last_commit_at": 1793181301442
+    },
+    "needs_you": {
+      "asks": 1
+    },
+    "queue": {
+      "count": 0
+    },
+    "over_cap": false
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "type": "events",
+  "stream": "chat:cht_01jbzbd4f6g8h0j2k4m6n8p0q2",
+  "epoch": "ep_01JBF6Q8Z3K4M5N6P7R8S9T0VW",
+  "events": [
+    {
+      "stream": "chat:cht_01jbzbd4f6g8h0j2k4m6n8p0q2",
+      "seq": 4182,
+      "epoch": "ep_01JBF6Q8Z3K4M5N6P7R8S9T0VW",
+      "id": "ev_01JBF6R2A1B2C3D4E5F6G7H8J9",
+      "at": 1793170000412,
+      "origin": "daemon",
+      "kind": "render",
+      "chat_id": "cht_01jbzbd4f6g8h0j2k4m6n8p0q2",
+      "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+      "source": {
+        "ring": "main",
+        "boot": "48211:1793169000000",
+        "seq": 311,
+        "ts": 1793170000187,
+        "key": "main/48211:1793169000000/311",
+        "via": "ring"
+      },
+      "actor": null,
+      "data": {
+        "id": "plan-table",
+        "target": null,
+        "bytes": 4810,
+        "source": "claude",
+        "component": null
+      }
+    }
+  ],
+  "latest": 4182,
+  "oldest": 1,
+  "gap": false,
+  "dropped": 0,
+  "more": false
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/04-level-header.json",
+  "title": "Authority headers the connector stamps (contract 04)",
+  "description": "The headers the connector sets on a request or WebSocket upgrade it forwards to a chat's daemon on loopback, and the one it adds to a response (C-04.9, C-04.10). Header names are lowercase, as Node presents them. The connector first drops every x-wc-* header the viewer sent (web-chat-dev.worktrees/ae-int/lib/portal/proxy.js forwardHeaders keeps only its FORWARD allowlist and sec-fetch-*), then sets these last, so a viewer can neither send nor suppress one. x-wc-remote is what lib/portal/proxy.js sets today (lib/core/cors.js REMOTE_HEADER); x-wc-level, x-wc-grants and x-wc-decision are new; x-wc-answer-origin is what lib/portal/index.js adds on GET /api/health at full today. Every header narrows: a loopback request without x-wc-remote is local, as today, and the daemon reads x-wc-level only on a request that also carries contract 03's valid relay credential (C-03.21: a loopback peer, x-wc-remote set, exactly one x-wc-relay equal to the secret handed at spawn); a request without one is served as 0.9 serves it (C-04.10). x-wc-relay is contract 03's and is not in this set. The principal header is contract 03's and is not in this set.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request"],
+  "properties": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x-wc-remote", "x-wc-level", "x-wc-grants", "x-wc-decision"],
+      "description": "Set on every forwarded HTTP request (session and answer origin) and on every WebSocket upgrade.",
+      "properties": {
+        "x-wc-remote": {
+          "const": "1",
+          "description": "The remote label, on every hub request, the owner's included: no hub request is local. It keeps the daemon's body-level rules on (html spawn, page-wide clear, host-wide theme writes, host path redaction) and makes lib/server/audience.js peerOf answer 'remote'."
+        },
+        "x-wc-level": {
+          "enum": ["basic", "read", "full"],
+          "description": "The decision's daemon_level. The daemon reads it only on a request with a valid relay credential (C-03.21) and takes the lesser of it and its ceiling, the connector record's ceiling in connected mode (C-04.10, C-04.11); on such a request an absent, repeated or unknown value is basic. Every level reader takes it (lib/server/audience.js levelOf, requireMirror, socketLevel), and a WebSocket keeps its upgrade's value on ws._wc for its life (C-04.12). Never 'local'."
+        },
+        "x-wc-grants": {
+          "type": "string",
+          "pattern": "^(status|read|message|write_page|files|steer|destructive)(,(status|read|message|write_page|files|steer|destructive))*$",
+          "description": "The decision's levels and true specifics, comma-separated, no spaces, in this order when present: status, read, message, write_page, files, steer, destructive. Informative in v1 (the daemon MAY log it); the daemon's finer second lock reads it in web-chat 1.0 (C-04.22, Q-04.7). Always present: a status-only decision (relation hub, daemon_level basic) holds status and sends exactly 'status' (C-04.9)."
+        },
+        "x-wc-decision": {
+          "type": "string",
+          "pattern": "^dec_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The decision_id, so a daemon log line or audit entry (lib/server/control/index.js audit, the asks audit) can be joined to the hub's deny record."
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Added by the connector to the daemon's response, never sent to the daemon.",
+      "properties": {
+        "x-wc-answer-origin": {
+          "type": "string",
+          "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+$",
+          "description": "Owned here (C-04.9); schemas/06-relay-headers.json repeats it in its downstream set. On GET or HEAD /api/health at the surface origin only, and only when the decision's origins.answer is not null (steer, or write_page held). The chrome frames its answer and control documents from it; without it the page frames nothing and shows the read-only card, as below full today."
+        }
+      }
+    }
+  }
+}

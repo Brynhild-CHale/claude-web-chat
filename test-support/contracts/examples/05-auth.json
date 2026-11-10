@@ -1,0 +1,9 @@
+{
+  "ch": "control",
+  "kind": "auth.challenge",
+  "id": "h1",
+  "seq": 1,
+  "at": 1793181400000,
+  "nonce": "JjqGV9utFjDmkkXjBVCBesdbZHzJPanWOo9bLS77cpI",
+  "expires_at": 1793181410000
+}

@@ -1,0 +1,8 @@
+{
+  "type": "SendMessage",
+  "params": {
+    "chat_id": "cht_01jbzdf6h8j0k2m4n6p8q0r2s4",
+    "text": "When the test run finishes, put the failing cases in a table pane.",
+    "send": "auto"
+  }
+}

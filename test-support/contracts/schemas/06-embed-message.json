@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/06-embed-message.json",
+  "title": "Embed bridge message",
+  "description": "The MVP postMessage set between the hub shell (the parent window, at embed_parent) and the embedded chrome (the framed surface endpoint). The chrome accepts a message only when event.isTrusted is true, event.source === window.parent and event.origin === embed_parent from GET /api/health; it posts only with targetOrigin embed_parent. Nothing here grants anything: every command is a chrome action the user can already take by key or click in the frame (public/app/hotkeys.js registry ids, public/app/shell.js registrations, run through the new runAction(id), which honours each action's enabled and context), and the shell treats status as display only, because pane scripts share the chrome's realm. The shell focuses the frame (iframe.focus()) before it posts a command that opens a panel, since postMessage carries no user activation (C-06.36). Contract 08 (v2) replaces this with the full chrome-embedding protocol and must accept these messages as a subset.",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Shell to chrome: run one chrome action.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "action"],
+      "properties": {
+        "wc_embed": { "const": 1, "description": "Bridge version." },
+        "type": { "const": "command", "description": "Run a chrome action." },
+        "action": {
+          "enum": ["chrome.palette", "chrome.graph", "chrome.add", "chrome.bookmark", "chrome.replay", "chrome.prev", "chrome.next", "chrome.rail", "chrome.push", "chrome.chat", "chrome.legend", "chrome.mode", "chrome.settings", "chrome.export", "chrome.wipe", "chrome.new-graph", "chrome.escape"],
+          "description": "An action id from the chrome's hotkey registry. The first twelve exist today (shell.js registers them); chrome.settings, chrome.export, chrome.wipe and chrome.new-graph are NEW ids with no default chord, wrapping the ⋯ menu's settings, export, wipe and newgraph handlers; chrome.escape is registered today with no run (public/app/shell.js), and the bridge calls handleEscape for it, so the shell can close what it opened. chrome.sessions is deliberately absent."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "description": "Shell to chrome: set light or dark explicitly, so the shell's toggle and the frame agree. The chrome calls setMode(mode), new beside toggleMode in public/app/theme.js. The mode is stored per origin (localStorage wc-mode), so per chat: the shell sends this after every ready.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "mode"],
+      "properties": {
+        "wc_embed": { "const": 1, "description": "Bridge version." },
+        "type": { "const": "mode", "description": "Set the theme mode inside the current global theme." },
+        "mode": { "enum": ["light", "dark"], "description": "The mode to show. A theme that declares one mode keeps it and says so in the next status (mode_toggleable false)." }
+      }
+    },
+    {
+      "type": "object",
+      "description": "Chrome to shell: sent once the chrome has read /api/health and is embedded (C-06.33), and again after each reconnect. The shell answers every ready with a mode message.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "package_version", "actions"],
+      "properties": {
+        "wc_embed": { "const": 1, "description": "Bridge version." },
+        "type": { "const": "ready", "description": "The chrome is listening." },
+        "package_version": { "type": "string", "maxLength": 64, "description": "The web-chat release the page runs (it is the daemon's)." },
+        "actions": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,63}$" }, "description": "The command actions this chrome accepts now (an older chrome lists fewer; the shell greys out the rest)." }
+      }
+    },
+    {
+      "type": "object",
+      "description": "Chrome to shell: what the hidden topbar would have shown, for the shell's tab and toolbar. Sent on change, at most every 250 ms.",
+      "additionalProperties": false,
+      "required": ["wc_embed", "type", "conn", "mode"],
+      "properties": {
+        "wc_embed": { "const": 1, "description": "Bridge version." },
+        "type": { "const": "status", "description": "Display state." },
+        "conn": { "enum": ["live", "connecting", "reconnecting"], "description": "The socket's state (view.conn in public/app/state.js)." },
+        "pill": {
+          "type": "object",
+          "description": "The topbar status pill as topbar.js pillState() computes it.",
+          "additionalProperties": false,
+          "required": ["cls", "text"],
+          "properties": {
+            "cls": { "type": "string", "maxLength": 32, "description": "'', off, viewing, locked or 'locked channel'." },
+            "text": { "type": "string", "maxLength": 64, "description": "e.g. 'active n1.7', 'viewing n1.4', 'channel turn n2.0'." }
+          }
+        },
+        "node_label": { "type": ["string", "null"], "maxLength": 64, "description": "The label of the node on screen (#node-label)." },
+        "title": { "type": ["string", "null"], "maxLength": 200, "description": "The page title, its first # heading (#page-title). Agent-written text: the shell sets it as text only." },
+        "previewing": { "type": "boolean", "description": "A detached preview of an older node is on screen." },
+        "mode": { "enum": ["light", "dark"], "description": "The mode shown." },
+        "mode_toggleable": { "type": "boolean", "description": "False when the theme declares one mode (the ◑ button's disabled state)." },
+        "queue_count": { "type": "integer", "minimum": 0, "description": "Items in the queue rail, for a badge on the shell's tab." }
+      }
+    }
+  ]
+}

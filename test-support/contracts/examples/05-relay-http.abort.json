@@ -1,0 +1,8 @@
+{
+  "ch": "relay",
+  "kind": "relay.http.abort",
+  "id": "h231",
+  "seq": 32,
+  "stream": 22,
+  "reason": "revoked"
+}

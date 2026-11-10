@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_fbkm1aftknfxt33wwanzbzx6r9",
+  "at": "2026-11-01T19:06:40.077Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "chat": null,
+    "session": "cxs_zz0799ydyxbd2ajstn37bgkm0k",
+    "writer_class": null,
+    "verified": true,
+    "verified_by": "hub",
+    "via": "connector"
+  },
+  "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "chat": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0",
+  "kind": "attach.read",
+  "target": {
+    "type": "chat",
+    "id": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Terminal attach details read by the CLI on studio-mbp, as its pairing user",
+    "source": "template",
+    "template": "attach.read-connector",
+    "chars": 74,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

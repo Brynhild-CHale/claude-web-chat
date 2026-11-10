@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "state": "bound",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "machine_name": "Studio MacBook",
+  "key_id": "mky_y4881352x9v335ap1wtpd4q6ef",
+  "hub_id": "hub-hale",
+  "connect_url": "wss://hub.hale.dev/connector"
+}

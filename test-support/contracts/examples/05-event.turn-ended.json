@@ -1,0 +1,14 @@
+{
+  "ch": "events",
+  "kind": "turn.ended",
+  "id": "c405",
+  "seq": 5,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "boot": "48302:1793181402551",
+  "daemon_seq": 331,
+  "daemon_at": 1793181531442,
+  "outcome": "committed",
+  "node": "n13",
+  "ended": "stop",
+  "ended_by": "terminal"
+}

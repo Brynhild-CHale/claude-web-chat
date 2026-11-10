@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "chat": { "id": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0", "label": "01jbz9a1b2c3d4e5f6g7h8j9k0" },
+  "base": "https://chat-01jbz9a1b2c3d4e5f6g7h8j9k0.hub.hale.dev",
+  "ws_url": "wss://chat-01jbz9a1b2c3d4e5f6g7h8j9k0.hub.hale.dev/ws",
+  "answer_origin": "https://chat-01jbz9a1b2c3d4e5f6g7h8j9k0-a.hub.hale.dev",
+  "whoami": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "display_name": "Christian",
+    "session": "ses_8k2m4n6p8q0r2s4t6v8w0x2y4z",
+    "level": "full",
+    "grants": ["read", "message", "write_page", "files", "steer"],
+    "chat": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0",
+    "machine": { "id": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t", "name": "this Mac" },
+    "origins": {
+      "surface": "https://chat-01jbz9a1b2c3d4e5f6g7h8j9k0.hub.hale.dev",
+      "answer": "https://chat-01jbz9a1b2c3d4e5f6g7h8j9k0-a.hub.hale.dev",
+      "shell": "https://hub.hale.dev"
+    },
+    "hub": { "version": "1.0.0" }
+  },
+  "storage_ns": "usr_f8qy40ygecyys9e9r04a2k1hyr:cht_01jbz9a1b2c3d4e5f6g7h8j9k0",
+  "compat": { "min": "0.9.0", "max": "1.0.0", "surface_protocol": { "min": 1, "max": 1 } },
+  "theme": { "tokens": { "--wc-accent": "#2f6f9f", "--wc-accent-fg": "#ffffff" } },
+  "mode": "light",
+  "hotkeys": { "reserved": ["Mod+K", "Mod+1", "Mod+2", "Mod+W"] },
+  "device": "desktop"
+}

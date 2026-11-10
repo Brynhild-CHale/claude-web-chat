@@ -1,0 +1,20 @@
+{
+  "stream": "chat:cht_01jbzbd4f6g8h0j2k4m6n8p0q2",
+  "seq": 4183,
+  "epoch": "ep_01JBF6Q8Z3K4M5N6P7R8S9T0VW",
+  "id": "ev_01JBF6S0000000000000000001",
+  "at": 1793170031000,
+  "origin": "connector",
+  "kind": "source.gap",
+  "chat_id": "cht_01jbzbd4f6g8h0j2k4m6n8p0q2",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "actor": null,
+  "data": {
+    "reason": "restart",
+    "dropped": null,
+    "since": 311,
+    "oldest": 1,
+    "boot_from": "48211:1793169000000",
+    "boot_to": "48377:1793170029950"
+  }
+}

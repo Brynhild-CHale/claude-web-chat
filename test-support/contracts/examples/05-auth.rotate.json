@@ -1,0 +1,10 @@
+{
+  "ch": "control",
+  "kind": "key.rotate",
+  "id": "c9",
+  "seq": 9,
+  "new_public_key": "P93D-FOne4Vqp9am1jrgfgXj3DRGHZo3z-E124MD-bs",
+  "new_key_id": "mky_jgq9d3nyx8w99qeeespzjbge25",
+  "sig_old": "IXyudYtyXrPJ8VYYQxg310diWpIllg92EOL40w6IUvG4ujSk6p5vnZq4kRP6jb9l0sqcOxr2EHowSa3cfzn6Dg",
+  "sig_new": "kZEi1msPedPvKNYLX2ePvkzyW_QYyr10MPps1N5sph7AzUdoFqIMIdbjqedFOGpSLVieU2EJLNnc9mtYQ0ytBQ"
+}

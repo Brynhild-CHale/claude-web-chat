@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "type": "SendMessage",
+  "request_id": "rq_01JBX4T6H2",
+  "result": {
+    "hub_msg_id": "hm_01JBX4T6H2Q8V3N5R7S9T1W3Y5",
+    "state": "queued",
+    "msg_id": null
+  }
+}

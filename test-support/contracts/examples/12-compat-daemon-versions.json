@@ -1,0 +1,13 @@
+{
+  "kind": "daemon_versions",
+  "chat": "01jbz8m2k4d6f8h0j2n4p6q8r0",
+  "package_version": "0.9.0-alpha.4",
+  "instance_protocol": 3,
+  "boot": "51906:1793163011870",
+  "claude_sessions": [
+    { "version": "0.9.0-alpha.4", "sessions": 1 },
+    { "version": "0.9.0-alpha.3", "sessions": 1 }
+  ],
+  "catalogue_sha256": "7346c7beb2e7430e5903fe16112b4e2c53fc646078e6006bdfe72be3f12956e3",
+  "observed_at": "2026-10-28T14:12:40Z"
+}

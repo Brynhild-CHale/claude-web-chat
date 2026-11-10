@@ -1,0 +1,54 @@
+{
+  "ch": "events",
+  "kind": "events.batch",
+  "id": "c400",
+  "seq": 1,
+  "at": 1793181470000,
+  "batch": {
+    "type": "events.batch",
+    "batch_id": "b_01JBF6T9X8W7V6T5S4R3Q2P1N0",
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "ring": "main",
+    "boot": "48211:1793169000000",
+    "since": 311,
+    "contiguous": true,
+    "entries": [
+      {
+        "seq": 312,
+        "ts": 1793170001200,
+        "kind": "store",
+        "patch": {
+          "form_submit": {
+            "seq": 3,
+            "payload": {
+              "choice": "b"
+            }
+          }
+        },
+        "source": "browser",
+        "mount": "plan-form"
+      },
+      {
+        "seq": 58,
+        "ts": 1793170001350,
+        "kind": "capture",
+        "capture_id": "cap58",
+        "url": "https://example.org/pr/12",
+        "profile": "github-pr",
+        "source": "ext:tab-stream"
+      },
+      {
+        "seq": 313,
+        "ts": 1793170001400,
+        "kind": "queue",
+        "op": "add",
+        "item": {
+          "id": "q42",
+          "kind": "capture",
+          "summary": "capture cap58"
+        }
+      }
+    ],
+    "reconciled": []
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "ts": "2026-10-28T15:21:42Z",
+  "first_ts": "2026-10-28T15:21:40Z",
+  "count": 3,
+  "enforcer": "connector",
+  "sink": "activity",
+  "principal": {"v": 1, "user": "usr_01jbznq4s6t8v0w2x4y6z8a0b2", "machine": null, "chat": null, "session": "srf_01jbzrt7w9x1y3z5a7b9c1d3e5", "writer_class": "remote", "verified": true, "verified_by": "hub", "via": "shell"},
+  "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "decision_id": "dec_01jbzgj9m1n3p5q7r9s1t3v5w7",
+  "origin": "ws-inbound",
+  "method": "MSG",
+  "path": "store:set",
+  "rule": null,
+  "need": "write_page",
+  "reason": "level",
+  "status": null,
+  "summary": {
+    "text": "usr_01jbznq4s6t8v0w2x4y6z8a0b2 was refused 3 page writes (store:set): holds Read and Message",
+    "source": "template",
+    "template": "authority.denied",
+    "chars": 71,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0,
+      "rules_version": "0.9.0-alpha.2"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "remote": true,
+  "hint": "this needs Write page on this chat, which only its owner holds for now",
+  "mirror": "full",
+  "authority": {
+    "reason": "level",
+    "need": "write_page",
+    "rule": "POST /api/store",
+    "decision_id": "dec_01jbzgj9m1n3p5q7r9s1t3v5w7"
+  }
+}

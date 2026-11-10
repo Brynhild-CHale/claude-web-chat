@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/08-mount-options.json",
+  "title": "Chrome embedding: mountSurface options (stage B) and the whoami object (both stages)",
+  "description": "The data half of the options the hub shell passes to mountSurface(el, options) (08 C-08.16). The one callback (onSignal, the shell's listener for the module's signals) and the optional slots ({chat?, queue?}, elements the module renders its chat panel and queue rail into) are not data and are described in the contract. $defs/whoami is also the body of stage A's whoami message (08-frame-message.json $defs/whoami), so the frame and the module take the same object: who is looking, as the hub knows it, never an access decision in the browser (C-08.9, C-08.19).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "chat", "base", "ws_url", "answer_origin", "whoami", "storage_ns", "compat"],
+  "properties": {
+    "v": { "const": 1, "description": "Options record version." },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat id (03 section 2)." },
+        "label": { "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat label, the id without its prefix, as the chat-<label> origins carry it." }
+      }
+    },
+    "base": {
+      "type": "string",
+      "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*$",
+      "maxLength": 512,
+      "description": "The surface API base every module request is made against (C-08.18): in the MVP shape the surface endpoint https://chat-<label>.<hub> (02 keeps it when the surface is hosted). No trailing slash. public/app/http.js request(method, path, opts) prefixes it to every root-absolute path."
+    },
+    "ws_url": {
+      "type": "string",
+      "pattern": "^wss://[a-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*/ws$",
+      "maxLength": 512,
+      "description": "The surface socket (public/app/ws.js wsUrl, which today derives it from location)."
+    },
+    "answer_origin": {
+      "type": ["string", "null"],
+      "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+(:[0-9]{1,5})?$",
+      "description": "Where the answer and control frames load from (C-08.21): the chat's answer origin for a viewer the hub admits there (04 C-04.9: steer or Write page), null for one it does not; null keeps asks on the read-only card and Stop without a control frame, as public/app/asks.js does today without an answer origin."
+    },
+    "whoami": { "$ref": "#/$defs/whoami" },
+    "storage_ns": {
+      "type": "string",
+      "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}:cht_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The prefix public/app/storage.js puts before every key (C-08.20): `<user>:<chat>`, one user under R16 but the shape kept for a hosted surface."
+    },
+    "theme": {
+      "type": "object",
+      "description": "The shell layer at mount, as setTheme takes it later (C-08.22); the same shape as the stage A theme message's body.",
+      "additionalProperties": false,
+      "required": ["tokens"],
+      "properties": {
+        "tokens": { "$ref": "08-frame-message.json#/$defs/tokens" },
+        "modes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "light": { "type": "object", "additionalProperties": false, "required": ["tokens"], "properties": { "tokens": { "$ref": "08-frame-message.json#/$defs/tokens" } } },
+            "dark": { "type": "object", "additionalProperties": false, "required": ["tokens"], "properties": { "tokens": { "$ref": "08-frame-message.json#/$defs/tokens" } } }
+          }
+        }
+      }
+    },
+    "mode": { "enum": ["light", "dark"], "description": "The mode at mount; the shell's toggle calls setTheme({mode}) later. Default light." },
+    "hotkeys": {
+      "type": "object",
+      "description": "The chords the shell reserves (C-08.23); the module binds none and reports a press as a `key` signal.",
+      "additionalProperties": false,
+      "required": ["reserved"],
+      "properties": {
+        "reserved": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "pattern": "^(Mod\\+|Shift\\+)?([A-Z0-9]|[\\[\\]/?,.;'=\\\\`-]|Space|Enter|Arrow(Up|Down|Left|Right)|F([1-9]|1[0-2]))$" }, "description": "Spelt as public/app/hotkeys.js chordOf spells them, on lib/core/toolbar-record.js validChord's grammar with an optional Mod+ (08-frame-message.json hotkeys)." }
+      }
+    },
+    "device": { "enum": ["desktop", "mobile"], "description": "What the shell knows of the screen, for the answer frames' device claim (asks.js deviceKind). The module still decides its own phone posture by shape (public/app/viewport.js)." },
+    "compat": {
+      "type": "object",
+      "description": "The window the hub configured for the surface this module may connect to (C-08.30; the shape of 12 C-12.10's window): the oldest and newest surface web-chat package versions, inclusive, compared with compareVersions, and the surface protocol range. The module reads GET /api/health package_version and surface_protocol (absent means 1) before it opens a socket and refuses to connect outside the window, reporting conn: refused with versions.surface and versions.surface_protocol set.",
+      "additionalProperties": false,
+      "required": ["min", "max", "surface_protocol"],
+      "properties": {
+        "min": { "$ref": "12-compat.json#/$defs/package_version", "description": "The oldest surface web-chat the module connects to." },
+        "max": { "$ref": "12-compat.json#/$defs/package_version", "description": "The newest surface web-chat the module was tested against." },
+        "surface_protocol": {
+          "type": "object",
+          "description": "The surface protocol versions the module speaks (lib/core/versions.js SURFACE_PROTOCOL_VERSION, health surface_protocol), inclusive at both ends: an integer counter independent of the package version, as 12-compat.json protocol_range is for 05's connector protocol.",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 1 },
+            "max": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "surface_hint": { "$ref": "12-compat.json#/$defs/package_version", "description": "Optional: the daemon's package_version the hub knows from the connector (12 daemon_versions), for the shell's wording before health answers. The module decides from health, never from this." }
+      }
+    }
+  },
+  "$defs": {
+    "whoami": {
+      "type": "object",
+      "description": "Who is looking, as the hub knows it (03's ids, 04's level). A hub call the shell makes and passes in (Q-08.6, notes/2026-11-01-wc-16.md section 4); never a surface route, never an access decision in the browser. The chrome and the module use it for what they show and say: the identity line, the composer's wording, the storage namespace (stage B).",
+      "additionalProperties": false,
+      "required": ["v", "user", "session", "level", "chat", "machine", "origins", "hub"],
+      "properties": {
+        "v": { "const": 1 },
+        "user": { "type": "string", "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$", "description": "The signed-in user (03 C-03.1 `user`; one person under R16)." },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The name the hub shows for the user, as the shell shows it. Optional." },
+        "session": { "type": "string", "pattern": "^(ses|srf)_[0-9a-hjkmnp-tv-z]{26}$", "description": "The credential instance behind this view: the user session (ses_) in stage B, the frame's surface session (srf_) in stage A (03 C-03.5, C-03.10)." },
+        "level": { "enum": ["basic", "read", "full"], "description": "The daemon level the hub decided for this user on this chat (04 C-04.4), as the relay stamps it in X-WC-Level. Informative: the daemon and the relay enforce it." },
+        "grants": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "enum": ["read", "message", "write_page", "files", "steer", "destructive"] },
+          "description": "The levels held and the true specifics, as X-WC-Grants carries them (04 C-04.9). Optional, informative."
+        },
+        "chat": { "type": "string", "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$" },
+        "machine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The machine's display name, as the shell shows it beside the chat." }
+          }
+        },
+        "origins": {
+          "type": "object",
+          "description": "The origins the hub minted for the chat (06-chat-assignment.json origins), so the module needs no derivation.",
+          "additionalProperties": false,
+          "required": ["surface", "answer", "shell"],
+          "properties": {
+            "surface": { "type": "string", "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}\\.[a-z0-9.-]+(:[0-9]{1,5})?$" },
+            "answer": { "type": "string", "pattern": "^https://chat-[0-9a-hjkmnp-tv-z]{26}-a\\.[a-z0-9.-]+(:[0-9]{1,5})?$" },
+            "shell": { "type": "string", "pattern": "^https://[a-z0-9.-]+(:[0-9]{1,5})?$" }
+          }
+        },
+        "hub": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version"],
+          "properties": {
+            "version": { "type": "string", "maxLength": 64, "description": "The hub's own release, for the identity line and for 12's skew wording." }
+          }
+        },
+        "agent": {
+          "type": "object",
+          "description": "The agent session the hub knows for this chat (06-chat-status.json session), when it has one. Optional, informative.",
+          "additionalProperties": false,
+          "required": ["present"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "claude_code_version": { "type": "string", "maxLength": 64 }
+          }
+        }
+      }
+    }
+  }
+}

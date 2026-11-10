@@ -1,0 +1,14 @@
+{
+  "ch": "control",
+  "kind": "machine.settings",
+  "id": "h4",
+  "seq": 4,
+  "at": 1793181400055,
+  "settings": {
+    "agents_at_once": 2,
+    "accept_new_chats": true,
+    "let_home_start_agents": false,
+    "paused": false,
+    "rev": 4
+  }
+}

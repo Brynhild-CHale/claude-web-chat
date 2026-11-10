@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-chat-control.json",
+  "title": "Connector chat assignment, status and versions",
+  "description": "The control frames that start and stop a chat's daemon on a machine and report where it is (C-05.26). Starting and stopping is desired state, contract 06's assignment, never an imperative command; the rules come from the portal's start route (web-chat-dev.worktrees/ae-int/lib/portal/start.js: by id only, never a path, rate limited, audited, wait for readiness) moved into contract 06.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/chat_assign"
+    },
+    {
+      "$ref": "#/$defs/chat_status"
+    },
+    {
+      "$ref": "#/$defs/chat_versions"
+    }
+  ],
+  "$defs": {
+    "chat_assign": {
+      "type": "object",
+      "description": "Where one chat should be on this machine (C-05.26): contract 06's assignment, with the hub's ring cursor for it (contract 07, C-07.10). Sent for every chat placed on the machine after each hello.ack, and on every new rev. Re-sending a rev already applied is harmless. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "chat.assign",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "assignment": {
+          "$ref": "06-chat-assignment.json",
+          "description": "Contract 06's assignment body: scope, desired state (running, stopped, removed), stop mode, agent, origins."
+        },
+        "cursor": {
+          "$ref": "07-cursor.json#/$defs/source",
+          "description": "The hub's durable source cursor for this chat's main ring (contract 07, C-07.10)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "assignment",
+        "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "chat_status": {
+      "type": "object",
+      "description": "Where one chat is (C-05.26): contract 06's status body. Sent on every change, for every supervised chat after each hello.ack, and in answer to a chat.assign (with `re`). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "chat.status",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "status": {
+          "$ref": "06-chat-status.json",
+          "description": "Contract 06's status body."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "chat_versions": {
+      "type": "object",
+      "description": "One daemon's versions, sent each time it starts or restarts (contract 12, C-12.12). Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "chat.versions",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "versions": {
+          "$ref": "12-compat.json#/$defs/daemon_versions",
+          "description": "Contract 12's daemon_versions record."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "versions"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

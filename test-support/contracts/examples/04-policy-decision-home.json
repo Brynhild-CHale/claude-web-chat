@@ -1,0 +1,28 @@
+{
+  "decision_id": "dec_01jbzfh8k0m2n4p6q8r0s2t4v6",
+  "version": 12,
+  "issued_at": "2026-10-28T07:00:02Z",
+  "expires_at": "2026-10-28T07:05:02Z",
+  "principal": {"v": 1, "user": "svc_home", "machine": null, "chat": null, "session": "key_01jbzpr5t7v9w1x3y5z7a9b1c3", "writer_class": "remote", "verified": true, "verified_by": "hub", "via": "mcp"},
+  "chat_id": "01jbz7h4qd2r8w1x6c9e3t5v0p",
+  "machine_id": "mch_01jbz4n2p5r8t1v4x7z0b3d6f9",
+  "relation": "home",
+  "chat_state": "archived",
+  "levels": [
+    "read"
+  ],
+  "sources": {
+    "read": "standing"
+  },
+  "specifics": {
+    "status": true,
+    "steer": false,
+    "destructive": false,
+    "private": "none"
+  },
+  "daemon_level": "read",
+  "origins": {
+    "surface": "https://chat-01jbz7h4qd2r8w1x6c9e3t5v0p.hub.example.com",
+    "answer": null
+  }
+}

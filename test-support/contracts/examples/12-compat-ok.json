@@ -1,0 +1,11 @@
+{
+  "kind": "compat",
+  "state": "ok",
+  "protocol": 1,
+  "window": { "min": "0.9.0-alpha.4", "max": "0.9.0", "protocol": { "min": 1, "max": 1 }, "claude_code_min": "2.1.287" },
+  "hub": { "version": "0.1.0", "web_chat": "0.9.0-alpha.4" },
+  "reasons": [ { "code": "daemon_below_min", "detail": "chat 01jbz8m2k4d6f8h0j2n4p6q8r0 runs 0.9.0-alpha.3; it restarts onto 0.9.0-alpha.4 when its turn ends" } ],
+  "restrictions": [],
+  "message": { "text": "Connected. One chat on this machine still runs web-chat 0.9.0-alpha.3 and is read-only until it restarts.", "command": null },
+  "daemons": [ { "chat": "01jbz8m2k4d6f8h0j2n4p6q8r0", "state": "behind", "restrictions": ["no_queue_delivery", "read_only_relay"] } ]
+}

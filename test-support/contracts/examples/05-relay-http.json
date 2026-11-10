@@ -1,0 +1,67 @@
+{
+  "ch": "relay",
+  "kind": "relay.http.request",
+  "id": "h200",
+  "seq": 1,
+  "at": 1793181490000,
+  "stream": 17,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "surface": "session",
+  "method": "GET",
+  "path": "/api/mirror?since=1793095000000",
+  "headers": {
+    "accept": "application/json",
+    "accept-language": "en-US,en;q=0.9",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Safari/605.1.15",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty"
+  },
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "via": "shell",
+    "activity": "act_fmy9tydx1y4s2xef4dgfcg8b2g"
+  },
+  "decision": {
+    "decision_id": "dec_01jbzeg7j9k1m3n5p7q9r1s3t5",
+    "version": 3,
+    "issued_at": "2026-10-28T14:03:11Z",
+    "expires_at": "2026-10-28T14:08:11Z",
+    "principal": {"v": 1, "user": "usr_f8qy40ygecyys9e9r04a2k1hyr", "machine": null, "chat": null, "session": "srf_01jbzqs6v8w0x2y4z6a8b0c2d4", "writer_class": "remote", "verified": true, "verified_by": "hub", "via": "shell"},
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "relation": "owner",
+    "chat_state": "active",
+    "levels": [
+      "read",
+      "message",
+      "write_page",
+      "files"
+    ],
+    "sources": {
+      "read": "always",
+      "message": "always",
+      "write_page": "always",
+      "files": "always"
+    },
+    "specifics": {
+      "status": true,
+      "steer": true,
+      "destructive": false,
+      "private": "none"
+    },
+    "daemon_level": "full",
+    "origins": {
+      "surface": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4.hub.hale.dev",
+      "answer": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4-a.hub.hale.dev"
+    },
+    "table": {
+      "version": 1,
+      "sha256": "4f0c2a9e1b7d3c5a8e6f0b2d4c6a8e0f1b3d5c7a9e1f3b5d7c9a1e3f5b7d9c1a"
+    }
+  },
+  "device": "desktop",
+  "end": true
+}

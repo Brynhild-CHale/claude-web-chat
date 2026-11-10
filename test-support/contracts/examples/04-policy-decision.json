@@ -1,0 +1,38 @@
+{
+  "decision_id": "dec_01jbzeg7j9k1m3n5p7q9r1s3t5",
+  "version": 3,
+  "issued_at": "2026-10-28T14:03:11Z",
+  "expires_at": "2026-10-28T14:08:11Z",
+  "principal": {"v": 1, "user": "usr_f8qy40ygecyys9e9r04a2k1hyr", "machine": null, "chat": null, "session": "srf_01jbzqs6v8w0x2y4z6a8b0c2d4", "writer_class": "remote", "verified": true, "verified_by": "hub", "via": "shell"},
+  "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "relation": "owner",
+  "chat_state": "active",
+  "levels": [
+    "read",
+    "message",
+    "write_page",
+    "files"
+  ],
+  "sources": {
+    "read": "always",
+    "message": "always",
+    "write_page": "always",
+    "files": "always"
+  },
+  "specifics": {
+    "status": true,
+    "steer": true,
+    "destructive": false,
+    "private": "none"
+  },
+  "daemon_level": "full",
+  "origins": {
+    "surface": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4.hub.example.com",
+    "answer": "https://chat-01jbz5c2d7e9f3g4h6j8k0m2n4-a.hub.example.com"
+  },
+  "table": {
+    "version": 1,
+    "sha256": "7db274986ff5a192f01b90ee1fb1cd27fe67ce0708c487f8591266f297a7e059"
+  }
+}

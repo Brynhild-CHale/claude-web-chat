@@ -1,0 +1,26 @@
+{
+  "type": "heartbeat",
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "beat": 361,
+  "interval_ms": 15000,
+  "connector_now": 1793170000900,
+  "echo_at": 1793169990950,
+  "chats": [
+    {
+      "chat_id": "01jbzbd4f6g8h0j2k4m6n8p0q2",
+      "daemon": "running",
+      "boot": "48211:1793169000000",
+      "viewers": 1,
+      "ring_seq": 314,
+      "channel_connected": true
+    },
+    {
+      "chat_id": "01jbzce5g7h9j1k3m5n7p9q1r3",
+      "daemon": "stopped",
+      "boot": null,
+      "viewers": null,
+      "ring_seq": null,
+      "channel_connected": null
+    }
+  ]
+}

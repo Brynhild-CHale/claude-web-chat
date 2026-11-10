@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/12-compat.json",
+  "title": "Version compatibility records (contract 12)",
+  "description": "The three version records that cross the hub and connector link. 'versions' is what the connector reports about itself inside its hello (contract 05 embeds it by $ref to #/$defs/versions). 'daemon_versions' is what the connector reports about one chat's daemon, at hello and whenever that daemon starts or restarts (contract 05 carries it in its chat.versions frame, C-05.26). 'compat' is the hub's verdict, sent in answer to a hello and again whenever a daemon_versions record changes a chat's verdict. Package versions are compared with web-chat's one comparator, compareVersions in web-chat-dev.worktrees/ae-int/lib/core/versions.js. The record kind is the discriminator.",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": {
+      "description": "Which record this is: 'versions' (connector about itself), 'daemon_versions' (connector about one daemon), 'compat' (hub verdict).",
+      "enum": ["versions", "daemon_versions", "compat"]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/versions" },
+    { "$ref": "#/$defs/daemon_versions" },
+    { "$ref": "#/$defs/compat" }
+  ],
+  "$defs": {
+    "package_version": {
+      "description": "A web-chat or ServerWebChat package version as package.json carries it: a release (0.9.0), an alpha (0.9.0-alpha.3) or a dev build (0.9.0-dev.202610280217.a9c22e5, see devVersion in web-chat-dev.worktrees/ae-int/scripts/build-release.js:279; its order says nothing about the age of its code, C-12.11). The pattern is VERSION_RE from web-chat-dev.worktrees/ae-int/lib/core/mod-protocol.js:158.",
+      "type": "string",
+      "pattern": "^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}(?:[-+][0-9A-Za-z.+-]{1,48})?$"
+    },
+    "chat_id": {
+      "description": "The chat label (contract 03 section 2): the chat id without its cht_ prefix, as every 05 frame names a chat. Never a path, a port or a registry instanceId.",
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "protocol_range": {
+      "description": "The connector protocol versions (contract 05) a side speaks, inclusive at both ends. An integer counter, independent of the package version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "description": "Oldest connector protocol version this side still speaks.", "type": "integer", "minimum": 1 },
+        "max": { "description": "Newest connector protocol version this side speaks.", "type": "integer", "minimum": 1 }
+      }
+    },
+    "install": {
+      "description": "How the running tree is installed, as describeInstall in web-chat-dev.worktrees/ae-int/lib/update/install-layout.js:95 classifies it. Decides which remedy the hub's message names.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "link_mismatch"],
+      "properties": {
+        "kind": {
+          "description": "'managed': unpacked under ~/.web-chat/versions/<v> (claude-web-chat update works). 'dev': a git checkout. 'unmanaged': anything else, including a copy inside another package's node_modules once describeInstall checks node_modules before its git walk (until then such a copy under a git checkout reports 'dev').",
+          "enum": ["managed", "dev", "unmanaged"]
+        },
+        "link_mismatch": {
+          "description": "describeInstall's linkMismatch: the claude-web-chat on PATH resolves to a different tree than the one running.",
+          "type": "boolean"
+        }
+      }
+    },
+    "session_versions": {
+      "description": "The web-chat builds the Claude Code sessions attached to one daemon run, one row per build, as the registry's package_versions rows carry them (web-chat-dev.worktrees/ae-int/lib/portal/picker.js:128 and versionSkew in lib/util/registry.js:932). A session keeps the MCP server build it started with until Claude Code restarts.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "sessions"],
+        "properties": {
+          "version": { "$ref": "#/$defs/package_version", "description": "The web-chat build of these sessions' MCP servers." },
+          "sessions": { "description": "How many attached sessions run that build.", "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "versions": {
+      "description": "Connector to hub, inside hello: the connector's own versions. Sent once per connection.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "package_version", "install", "protocol", "policy_protocol", "schema_version", "node", "platform", "arch", "claude_code_version"],
+      "properties": {
+        "kind": { "description": "Discriminator.", "const": "versions" },
+        "package_version": { "$ref": "#/$defs/package_version", "description": "packageVersion() of the tree the connector process runs (web-chat-dev.worktrees/ae-int/lib/core/versions.js), read from that tree's package.json." },
+        "install": { "$ref": "#/$defs/install", "description": "How that tree is installed." },
+        "protocol": { "$ref": "#/$defs/protocol_range", "description": "The connector protocol range (contract 05) the connector speaks." },
+        "policy_protocol": { "description": "PORTAL_PROTOCOL_VERSION of the connector's build (12 on the 0.9.0 alphas, web-chat-dev.worktrees/ae-int/lib/core/versions.js): the generation of the remote-policy route and frame tables the connector enforces (contract 04). Informative for the hub; it never changes the verdict on its own.", "type": "integer", "minimum": 1 },
+        "schema_version": { "description": "SCHEMA_VERSION of the connector's build (4 on the 0.9.0 alphas): the .web-chat/ state schema its daemons migrate projects to. Informative; contract 05 decides whether the hub uses it.", "type": "integer", "minimum": 1 },
+        "node": { "description": "process.versions.node of the connector process. The connector refuses to start below NODE_FLOOR (22.12) itself, so the hub only displays this.", "type": "string", "pattern": "^\\d{1,4}\\.\\d{1,4}\\.\\d{1,4}$" },
+        "platform": { "description": "process.platform of the machine. web-chat supports macOS and Linux (WSL2 counts as Linux).", "enum": ["darwin", "linux"] },
+        "arch": { "description": "process.arch of the machine, for display.", "type": "string", "maxLength": 16 },
+        "claude_code_version": {
+          "description": "The Claude Code version the connector found (the dotted version probeMod in lib/setup/registration.js reads out of `claude --version` with /(\\d+\\.\\d+\\.\\d+)/), or null when no claude binary was found. A machine with null can host no agent.",
+          "type": ["string", "null"],
+          "pattern": "^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}(?:[-+][0-9A-Za-z.+-]{1,48})?$"
+        },
+        "daemons": {
+          "description": "Daemons already running when this hello is sent (a connector restarted while its daemons kept running). Optional; absent means none.",
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/daemon_versions" }
+        }
+      }
+    },
+    "daemon_versions": {
+      "description": "Connector to hub: the versions of one chat's daemon, read from that daemon's GET /api/health (web-chat-dev.worktrees/ae-int/lib/server/routes/health.js:89-148 at aa60492e: package_version, version, boot; catalogue once it lands, C-12.6a). Sent at hello (inside versions.daemons) and on every daemon start or restart in contract 05's chat.versions frame; contract 07's chat.daemon is the hub event recorded from it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "chat", "package_version", "instance_protocol", "boot", "observed_at"],
+      "properties": {
+        "kind": { "description": "Discriminator.", "const": "daemon_versions" },
+        "chat": { "$ref": "#/$defs/chat_id", "description": "The chat this daemon serves." },
+        "package_version": { "$ref": "#/$defs/package_version", "description": "The daemon's /api/health package_version. Differs from the connector's own when the daemon was started by an older build and not yet restarted." },
+        "instance_protocol": { "description": "The daemon's /api/health version: PROTOCOL_VERSION, the hub/instance wire counter (3 today). Not the connector protocol.", "type": "integer", "minimum": 1 },
+        "boot": { "description": "The daemon's /api/health boot (the bus bootId). A new value means the daemon restarted and its sequence space reset (contract 07).", "type": "string", "minLength": 1, "maxLength": 64 },
+        "claude_sessions": { "$ref": "#/$defs/session_versions", "description": "Builds of the Claude Code sessions attached to this daemon. Optional." },
+        "catalogue_sha256": { "description": "The sha256 of the daemon's /api/health catalogue report (catalogue.sha256: CATALOGUE_SHA256 in lib/core/versions.js, contract 10 C-10.8), passed on as read. Optional: absent while the daemon's health reports no catalogue (no build at aa60492e does). The hub trusts it only when it equals a known catalogue file's catalogue_sha256; for a daemon on a dev build that decides its catalogue, and no match or no report means pre-catalogue rules (C-12.6a). For any other build the package version decides and this is informative.", "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "observed_at": { "description": "When the connector read the daemon's health, RFC 3339 UTC.", "type": "string", "format": "date-time" }
+      }
+    },
+    "reason": {
+      "description": "One machine-readable reason behind a verdict.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": {
+          "description": "protocol_unsupported: the protocol ranges do not meet. package_below_min / package_above_max: the connector's package_version is outside the window. daemon_below_min / daemon_above_max: one daemon's is. claude_code_missing / claude_code_below_min: no usable Claude Code. install_dev: the connector runs a dev build (isDevVersion), which the hub judges by its protocol range and the Claude Code rows and never by the package window, so package_below_min and package_above_max never accompany it for that reason (C-12.11); or it runs from a git checkout (install.kind dev), which is not a dev build: it reports its committed version, the package window applies, and the reason names only the remedy, a git pull. The hub tells the two apart by isDevVersion(package_version) (lib/core/versions.js:243), never by this code. install_unmanaged: the remedy is the install.sh one-liner, not `claude-web-chat update`. link_mismatch: PATH resolves to another tree.",
+          "enum": ["protocol_unsupported", "package_below_min", "package_above_max", "daemon_below_min", "daemon_above_max", "claude_code_missing", "claude_code_below_min", "install_dev", "install_unmanaged", "link_mismatch"]
+        },
+        "detail": { "description": "A short English sentence for logs. Never parsed.", "type": "string", "maxLength": 500 }
+      }
+    },
+    "restriction": {
+      "description": "What the hub withholds from a degraded machine or chat. no_new_chats: the hub places no new chat on the machine. no_queue_delivery: messages for its chats stay held in the hub's queue, as for an offline machine (contract 07). read_only_relay: the chat's surface is relayed at the read level for every user whatever their grant (contract 04).",
+      "enum": ["no_new_chats", "no_queue_delivery", "read_only_relay"]
+    },
+    "message": {
+      "description": "What the person reads, on the hub's Machines settings and in the connector's terminal output: the same text in both places.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "command"],
+      "properties": {
+        "text": { "description": "One or two sentences naming both versions and the window.", "type": "string", "minLength": 1, "maxLength": 400 },
+        "command": { "description": "The command to run on the machine, chosen by install.kind: 'claude-web-chat update' (managed), a git pull in the checkout (dev), or the install.sh one-liner (unmanaged). For a behind verdict whose only reasons are claude_code_below_min or claude_code_missing, 'claude update' (below the floor) or null (missing), never a web-chat command; the text then names the Claude Code version and claude_code_min (C-12.15). Null when nothing needs doing.", "type": ["string", "null"], "maxLength": 300 }
+      }
+    },
+    "compat": {
+      "description": "Hub to connector: the verdict on a hello, and again whenever a daemon_versions record changes a chat's verdict. The hub never follows a verdict with an instruction to restart, update or stop the connector (C-12.13).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "state", "protocol", "window", "hub", "reasons", "restrictions", "message"],
+      "properties": {
+        "kind": { "description": "Discriminator.", "const": "compat" },
+        "state": {
+          "description": "ok: inside the window. ahead: package newer than window.max, full service with a warning. behind: package older than window.min, or no Claude Code, or Claude Code below claude_code_min; degraded by restrictions. A connector on a dev build is ok; refused by the protocol row; behind by a Claude Code row: the package rows are skipped, the protocol and Claude Code rows apply (C-12.11, C-12.13). refused: the protocol ranges do not meet; the hub closes the connection after sending this.",
+          "enum": ["ok", "ahead", "behind", "refused"]
+        },
+        "protocol": { "description": "The connector protocol version the hub chose (the highest both speak), or null when refused.", "type": ["integer", "null"], "minimum": 1 },
+        "window": {
+          "description": "The web-chat versions this hub supports, inclusive at both ends, compared with compareVersions.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max", "protocol"],
+          "properties": {
+            "min": { "$ref": "#/$defs/package_version", "description": "Oldest web-chat the hub serves in full." },
+            "max": { "$ref": "#/$defs/package_version", "description": "Newest web-chat the hub was tested against." },
+            "protocol": { "$ref": "#/$defs/protocol_range", "description": "The connector protocol range the hub speaks." },
+            "claude_code_min": { "description": "The Claude Code floor for queue delivery (C-12.10): MOD_MIN_CLAUDE, 2.1.287 (web-chat-dev.worktrees/ae-int/lib/core/mod-protocol.js:105), by the user's ruling. A machine below it keeps its chats but gets no_queue_delivery (C-12.13). Null only for a hub that sets no floor.", "type": ["string", "null"], "pattern": "^\\d{1,6}\\.\\d{1,6}\\.\\d{1,6}(?:[-+][0-9A-Za-z.+-]{1,48})?$" }
+          }
+        },
+        "hub": {
+          "description": "The hub's own versions, for display on the machine.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "web_chat"],
+          "properties": {
+            "version": { "$ref": "#/$defs/package_version", "description": "ServerWebChat's package version." },
+            "web_chat": { "$ref": "#/$defs/package_version", "description": "The web-chat version the hub depends on (its pinned dependency)." }
+          }
+        },
+        "reasons": { "description": "Why the state is what it is. Empty when state is ok and nothing else is worth saying.", "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/reason" } },
+        "restrictions": { "description": "Machine-wide restrictions in force. Empty unless state is behind.", "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/restriction" } },
+        "message": { "$ref": "#/$defs/message", "description": "The person-facing message." },
+        "daemons": {
+          "description": "Per-chat verdicts for daemons whose own package_version is outside the window. A chat not listed is ok; a daemon on a dev build is never listed (C-12.11). Optional.",
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["chat", "state", "restrictions"],
+            "properties": {
+              "chat": { "$ref": "#/$defs/chat_id", "description": "The chat." },
+              "state": { "description": "That daemon's verdict, with the meanings of compat.state (never refused: a daemon cannot fail the protocol, only the connector can).", "enum": ["ok", "ahead", "behind"] },
+              "restrictions": { "description": "Restrictions on that chat only.", "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/restriction" } }
+            }
+          }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "refused" } } }, "then": { "properties": { "protocol": { "type": "null" } } }, "else": { "properties": { "protocol": { "type": "integer" } } } },
+        { "if": { "properties": { "state": { "enum": ["ok", "ahead"] } } }, "then": { "properties": { "restrictions": { "type": "array", "maxItems": 0 } } } }
+      ]
+    }
+  }
+}

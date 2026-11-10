@@ -1,0 +1,8 @@
+{
+  "text": "Message delivered to contracts-review on studio-mac: 412 chars, 1 image",
+  "source": "template",
+  "template": "queue.delivered",
+  "chars": 71,
+  "truncated": false,
+  "redaction": { "pass": "hub-rules", "masks": 0, "rules_version": "0.9.0-alpha.2" }
+}

@@ -1,0 +1,16 @@
+{
+  "type": "hello",
+  "stream": "machine:mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "cursor": {
+    "type": "hub",
+    "stream": "machine:mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "epoch": "ep_01JBE0000000000000000000AB",
+    "seq": 77
+  },
+  "state": {
+    "liveness": "online",
+    "connector_version": "0.9.0-alpha.3",
+    "claude_code_version": "2.1.290"
+  },
+  "at": 1793170000500
+}

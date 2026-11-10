@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "error": "rate_limited",
+  "retry_after_s": 420,
+  "hint": "Too many pairing codes were asked for from this address. Wait a few minutes and run claude-web-chat connect again."
+}

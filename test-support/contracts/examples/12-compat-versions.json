@@ -1,0 +1,34 @@
+{
+  "kind": "versions",
+  "package_version": "0.9.0-alpha.4",
+  "install": {
+    "kind": "managed",
+    "link_mismatch": false
+  },
+  "protocol": {
+    "min": 1,
+    "max": 1
+  },
+  "policy_protocol": 12,
+  "schema_version": 4,
+  "node": "22.14.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "claude_code_version": "2.1.301",
+  "daemons": [
+    {
+      "kind": "daemon_versions",
+      "chat": "01jbz8m2k4d6f8h0j2n4p6q8r0",
+      "package_version": "0.9.0-alpha.3",
+      "instance_protocol": 3,
+      "boot": "48211:1793162400123",
+      "claude_sessions": [
+        {
+          "version": "0.9.0-alpha.3",
+          "sessions": 1
+        }
+      ],
+      "observed_at": "2026-10-28T14:02:11Z"
+    }
+  ]
+}

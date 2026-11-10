@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "type": "GetChatAttach",
+  "request_id": "rq_01JBX5E2Q1",
+  "error": {
+    "code": "forbidden",
+    "message": "Terminal details of this chat need full on it.",
+    "hint": "Read on the chat is not enough: its owner can grant Message on it, and the user who paired its machine always reads them.",
+    "need": "full"
+  }
+}

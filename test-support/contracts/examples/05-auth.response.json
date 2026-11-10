@@ -1,0 +1,12 @@
+{
+  "ch": "control",
+  "kind": "auth.response",
+  "id": "c1",
+  "seq": 1,
+  "re": "h1",
+  "at": 1793181400041,
+  "machine_id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "key_id": "mky_y4881352x9v335ap1wtpd4q6ef",
+  "public_key": "kTCi0MViCOcU8LqIYhIzSR1xC7jW0kmKgaBHqjV2eo4",
+  "signature": "ofLboch4-f9PZNeRk11CrGvz3IHYuGAB4frOcNuYU1bmYSDlJwOYWfvmTQU_14Y4GFc_dwYHZ72svQfEBArQDQ"
+}

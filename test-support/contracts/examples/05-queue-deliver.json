@@ -1,0 +1,40 @@
+{
+  "ch": "queue",
+  "kind": "queue.deliver",
+  "id": "h500",
+  "seq": 1,
+  "at": 1793181700000,
+  "delivery": {
+    "type": "queue.deliver",
+    "hub_msg_id": "hm_01JBF7A0B1C2D3E4F5G6H7J8K9",
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "attempt": 1,
+    "enqueued_at": 1793169400000,
+    "deliver_within_ms": 3600000,
+    "from": {
+      "class": "user",
+      "id": "u_cah"
+    },
+    "message": {
+      "text": "Morning check-in: rerun the flaky test and post the result as a pane.",
+      "skill": null,
+      "files": [
+        "test/queue-held.test.js"
+      ],
+      "send": "auto",
+      "conversation_id": null
+    }
+  },
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "via": "shell",
+    "activity": "act_fmy9tydx1y4s2xef4dgfcg8b2g"
+  },
+  "decision_ref": {
+    "decision_id": "dec_01jbzeg7j9k1m3n5p7q9r1s3t5",
+    "version": 3
+  },
+  "device": "mobile"
+}

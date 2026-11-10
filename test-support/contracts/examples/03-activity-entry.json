@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "id": "act_a2mbv5575gj2pwn01nnvrz4dzs",
+  "at": "2026-10-28T14:21:37.412Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "phone"
+  },
+  "machine": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t",
+  "chat": "cht_r618kehfmbv66mnewa5ndwhe72",
+  "kind": "ask.decide",
+  "target": {
+    "type": "ask",
+    "id": "ask_7f3c21a9b04e",
+    "method": "POST",
+    "path": "/answer/api/asks/ask_7f3c21a9b04e/decide",
+    "origin": "answer"
+  },
+  "outcome": "accepted",
+  "status": 200
+}

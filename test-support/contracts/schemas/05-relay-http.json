@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-relay-http.json",
+  "title": "Connector relay: HTTP streams, flow control, decisions",
+  "description": "HTTP request and response frames per chat, derived from the portal's streamed proxy (web-chat-dev.worktrees/ae-int/lib/portal/proxy.js proxyHttp, forwardHeaders, FORWARD, responseHeaders, HOP_BY_HOP; identical on web-chat-dev main; these move to the shared lib/relay, contract 05 section 4) with the viewer's socket replaced by link frames. The connector keeps the hop to 127.0.0.1:<port>, which the hub never learns.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    },
+    {
+      "$ref": "#/$defs/body"
+    },
+    {
+      "$ref": "#/$defs/abort"
+    },
+    {
+      "$ref": "#/$defs/window"
+    },
+    {
+      "$ref": "#/$defs/decision"
+    }
+  ],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "description": "One HTTP request for a chat's daemon (C-05.28 to C-05.31), as lib/portal/proxy.js proxyHttp sends one upstream: method, path with query, the allowlisted headers, the body streamed. Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.http.request",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "stream": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "The relay stream, minted by the hub, unique per connection. One HTTP exchange or one WebSocket is one stream."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "surface": {
+          "type": "string",
+          "enum": [
+            "session",
+            "answer"
+          ],
+          "description": "session: the daemon's main port, for chat-<label>.<hub>. answer: its answer surface, for chat-<label>-a.<hub>; the connector finds its port as a host caller with GET /api/asks?ensure=1 (lib/portal/answer.js)."
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "HEAD",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "description": "The method. OPTIONS is answered by the hub and never relayed (nothing on the daemon answers a preflight, by design: lib/server/routes/queue.js writeGuard)."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/[\\x21-\\x7e]{0,8191}$",
+          "description": "Path and query exactly as the viewer sent them. Never one under /__swc/ (contract 03, C-03.10)."
+        },
+        "headers": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]{1,64}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8192
+              },
+              {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "string",
+                  "maxLength": 8192
+                }
+              }
+            ]
+          },
+          "description": "The viewer's headers after the hub's own filter: only lib/portal/proxy.js FORWARD names, sec-fetch-*, origin (only once the hub matched it against the chat's origin) and, toward the answer surface only, x-wc-answer. The connector filters again (C-05.30)."
+        },
+        "actor": {
+          "$ref": "03-actor-header.json",
+          "description": "The X-WC-Actor value for this request, built by the hub and copied verbatim by the connector (contract 03, C-03.19 to C-03.21). The connector never builds, alters or reuses one."
+        },
+        "decision": {
+          "$ref": "04-policy-decision.json",
+          "description": "The current policy decision for this principal on this chat (contract 04, C-04.8). The connector stamps X-WC-Level, X-WC-Grants and X-WC-Decision from it and gates the route with it."
+        },
+        "decision_ref": {
+          "type": "object",
+          "description": "Instead of `decision`: a decision the hub already sent on this connection in a relay.decision frame (C-05.31).",
+          "properties": {
+            "decision_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The decision's decision_id."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The decision's version."
+            }
+          },
+          "required": [
+            "decision_id",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "device": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "mobile"
+          ],
+          "description": "The viewer's device class as the hub saw it. Informative: the daemon's own push provenance comes from the request (lib/server/domain/queue.js provenance)."
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 349528,
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+          "description": "Body bytes, standard base64, at most 262144 bytes decoded per frame."
+        },
+        "end": {
+          "type": "boolean",
+          "description": "True when `body` (or no body) is the whole request body; false when relay.http.body frames follow."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "stream",
+        "chat",
+        "surface",
+        "method",
+        "path",
+        "headers",
+        "actor",
+        "end"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "decision"
+          ]
+        },
+        {
+          "required": [
+            "decision_ref"
+          ]
+        }
+      ]
+    },
+    "response": {
+      "type": "object",
+      "description": "The daemon's status and headers (C-05.32): what lib/portal/proxy.js responseHeaders receives, minus hop-by-hop names and set-cookie, with responseHeaders applied by the connector, plus contract 06's downstream set. The hub adds no security header. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.http.response",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "stream": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "The relay stream, minted by the hub, unique per connection. One HTTP exchange or one WebSocket is one stream."
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "The daemon's status; or the connector's own: 403 with contract 04's refusal body, 404 for a chat not running here with the connector's own body {ok: false, connector: true, reason: 'not-running'}, which contract 10 maps as the connector's not_found, never the daemon's (C-05.30), 502 with the portal's NOT_ANSWERING body (lib/portal/index.js) when the daemon did not answer."
+        },
+        "headers": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]{1,64}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8192
+              },
+              {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "string",
+                  "maxLength": 8192
+                }
+              }
+            ]
+          },
+          "description": "Response headers as the connector built them (C-05.32): lib/portal/proxy.js responseHeaders (proxy.js:125-150: referrer policy, nosniff, X-Frame-Options, no-store, frame-ancestors) applied with contract 06's embed ancestors (C-06.31), contract 06's downstream rules (06-relay-headers.json downstream_response), contract 04's x-wc-answer-origin and, on a relayed GET /api/health in embedded mode, x-wc-embedded and x-wc-embed-parent (contract 06 decides the form)."
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 349528,
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+          "description": "Body bytes, standard base64, at most 262144 bytes decoded per frame."
+        },
+        "end": {
+          "type": "boolean",
+          "description": "True when this frame ends the response."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "stream",
+        "status",
+        "headers",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "body": {
+      "type": "object",
+      "description": "More body bytes for a stream, either direction (C-05.33). Streamed end to end: an SSE response or an export flows chunk by chunk, never buffered whole. Direction: both directions.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.http.body",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "stream": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "The relay stream, minted by the hub, unique per connection. One HTTP exchange or one WebSocket is one stream."
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 349528,
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+          "description": "Body bytes, standard base64, at most 262144 bytes decoded per frame."
+        },
+        "end": {
+          "type": "boolean",
+          "description": "True on the last chunk."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "stream",
+        "body",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "abort": {
+      "type": "object",
+      "description": "End a stream early, either direction (C-05.33). Direction: both directions.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.http.abort",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "stream": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "The relay stream, minted by the hub, unique per connection. One HTTP exchange or one WebSocket is one stream."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "client_gone",
+            "upstream_error",
+            "timeout",
+            "window_exceeded",
+            "revoked",
+            "access_changed",
+            "chat_stopped",
+            "link_closing"
+          ],
+          "description": "Why. revoked and access_changed oblige the connector to drop the daemon request within 1 s (contract 03, C-03.31; contract 04, C-04.12)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "stream",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "window": {
+      "type": "object",
+      "description": "Grant the peer more credit on one stream (C-05.22). HTTP and WebSocket streams alike. Direction: both directions.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.window",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "stream": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "The relay stream, minted by the hub, unique per connection. One HTTP exchange or one WebSocket is one stream."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216,
+          "description": "Further decoded payload bytes the peer may send on this stream."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "stream",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "decision": {
+      "type": "object",
+      "description": "A policy decision, sent before the first request that names it by decision_ref and again whenever a new version is issued for a principal with open relays (contract 04, C-04.6, C-04.12). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "relay",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "relay.decision",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, 26 lowercase Crockford base32 characters, so that `chat-<label>.<hub>` and `chat-<label>-a.<hub>` are literal. Every 05 frame and every 06 body names a chat by its label; the hub records the id."
+        },
+        "decision": {
+          "$ref": "04-policy-decision.json",
+          "description": "The current policy decision for this principal on this chat (contract 04, C-04.8). The connector stamps X-WC-Level, X-WC-Grants and X-WC-Decision from it and gates the route with it."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "chat",
+        "decision"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

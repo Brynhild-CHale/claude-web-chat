@@ -1,0 +1,4243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-hub-request.json",
+  "title": "Hub typed requests: envelope, catalogue and error shape (contract 10)",
+  "description": "A body POSTed to /hub/api/read, /hub/api/write or /hub/api/execute ({type, params}, Komodo's API shape, inputs/komodo-template.md), or the hub's answer to one. Params and results per type are in $defs params_<Type> and result_<Type>. Relayed types pass a daemon body through unchanged as `daemon`; those bodies are web-chat's (routes named per type). Contract 10, C-10.10 to C-10.22, C-10.29.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response_ok"
+    },
+    {
+      "$ref": "#/$defs/response_error"
+    }
+  ],
+  "$defs": {
+    "opaque_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "An id the hub mints. Its form is contract 03's; this contract only needs it to be a short token."
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Epoch milliseconds on the hub's clock (C-07.3)."
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "col": {
+          "type": "integer",
+          "description": "Column it starts in, 1 to 12.",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "span": {
+          "type": "integer",
+          "description": "Columns wide, 2 to 12.",
+          "minimum": 2,
+          "maximum": 12
+        },
+        "rows": {
+          "type": "integer",
+          "description": "Rows of 40px, 2 to 24.",
+          "minimum": 2,
+          "maximum": 24
+        }
+      },
+      "description": "A proposed grid placement, the shape web-chat's render takes (web-chat-dev.worktrees/ae-int/lib/mcp/tools/render.js inputSchema.place)."
+    },
+    "scope": {
+      "description": "A chat's scope (CONTEXT.md vocabulary): a folder on one machine, a GitHub clone, or its own space.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "folder",
+              "description": "A folder the machine offers."
+            },
+            "machine_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "description": "The machine that offers the folder. Minted by the hub; its form is contract 03's."
+            },
+            "path": {
+              "type": "string",
+              "description": "The folder's path as the machine reported it in its folders offered.",
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "kind",
+            "machine_id",
+            "path"
+          ],
+          "description": "A folder chat stays on the machine with the folder."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "repo",
+              "description": "A GitHub clone."
+            },
+            "url": {
+              "type": "string",
+              "description": "The clone URL (https).",
+              "pattern": "^https://",
+              "maxLength": 512
+            },
+            "ref": {
+              "type": "string",
+              "description": "Branch, tag or commit to check out; the default branch when omitted.",
+              "maxLength": 255
+            }
+          },
+          "required": [
+            "kind",
+            "url"
+          ],
+          "description": "A repo chat may move between machines."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "space",
+              "description": "The chat's own space."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "A space chat may move between machines."
+        }
+      ]
+    },
+    "machine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        },
+        "name": {
+          "type": "string",
+          "description": "The name the user gave it.",
+          "maxLength": 64
+        },
+        "state": {
+          "enum": [
+            "online",
+            "offline",
+            "paused"
+          ],
+          "description": "From link heartbeats (C-07.34). paused: running turns finish, no new ones start."
+        },
+        "connector_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The connector's web-chat version as last reported (05, 12)."
+        },
+        "claude_code_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Claude Code's version as last reported."
+        },
+        "agents_at_once": {
+          "type": "integer",
+          "description": "The cap; more wait in the queue.",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "accept_new_chats": {
+          "type": "boolean",
+          "description": "Whether new chats may start here."
+        },
+        "home_may_start_agents": {
+          "type": "boolean",
+          "description": "Let Home start agents here."
+        },
+        "folders_offered": {
+          "type": "integer",
+          "description": "How many folders the machine offers.",
+          "minimum": 0
+        },
+        "chats": {
+          "type": "integer",
+          "description": "How many chats live here.",
+          "minimum": 0
+        },
+        "last_seen_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Hub time of the last heartbeat, epoch ms."
+        }
+      },
+      "required": [
+        "machine_id",
+        "name",
+        "state",
+        "connector_version",
+        "claude_code_version",
+        "agents_at_once",
+        "accept_new_chats",
+        "home_may_start_agents",
+        "folders_offered",
+        "chats",
+        "last_seen_at"
+      ],
+      "description": "A machine row, the fields of Settings > Machines (inputs/design.md, Topology)."
+    },
+    "folder": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The folder's path on the machine.",
+          "maxLength": 1024
+        },
+        "access": {
+          "enum": [
+            "read",
+            "write"
+          ],
+          "description": "What the machine offers on it."
+        },
+        "used_by": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opaque_id"
+          },
+          "description": "Chats whose scope is this folder."
+        }
+      },
+      "required": [
+        "path",
+        "access",
+        "used_by"
+      ],
+      "description": "A folder the machine offers. Chosen on the machine; the hub only reads it (C-10.21)."
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The workspace. Minted by the hub; its form is contract 03's."
+        },
+        "name": {
+          "type": "string",
+          "description": "Its name.",
+          "maxLength": 64
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "Whether it is archived."
+        },
+        "projects": {
+          "type": "integer",
+          "description": "How many projects it holds.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workspace_id",
+        "name",
+        "archived",
+        "projects"
+      ],
+      "description": "A workspace row."
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The project. Minted by the hub; its form is contract 03's."
+        },
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its workspace. Minted by the hub; its form is contract 03's."
+        },
+        "name": {
+          "type": "string",
+          "description": "Its name.",
+          "maxLength": 64
+        },
+        "theme": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Theme name (a builtin pack such as georgetown-blue, earthy, paper), or null to inherit."
+        },
+        "archived": {
+          "type": "boolean",
+          "description": "Whether it is archived."
+        }
+      },
+      "required": [
+        "project_id",
+        "workspace_id",
+        "name",
+        "theme",
+        "archived"
+      ],
+      "description": "A project row."
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "title": {
+          "type": "string",
+          "description": "The chat's name.",
+          "maxLength": 120
+        },
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its workspace. Minted by the hub; its form is contract 03's."
+        },
+        "project_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its project. Minted by the hub; its form is contract 03's."
+        },
+        "machine_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaque_id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The machine it lives on, or null when not yet assigned."
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "state": {
+          "enum": [
+            "working",
+            "needs_you",
+            "idle",
+            "offline",
+            "archived"
+          ],
+          "description": "The sidebar's state dot (inputs/design.md, Layout D); offline when its machine is."
+        },
+        "queue": {
+          "type": "integer",
+          "description": "Messages waiting for it, hub-held and in its daemon's queue as last reported.",
+          "minimum": 0
+        },
+        "unseen_activity": {
+          "type": "integer",
+          "description": "Activity entries the caller has not seen.",
+          "minimum": 0
+        },
+        "last_activity_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Hub time of its newest Activity entry."
+        },
+        "surface_origin": {
+          "type": "string",
+          "description": "The chat's surface endpoint, https://chat-<label>.<hub> (CONTEXT.md), where <label> is the chat label 03 defines (the id without cht_, 26 Crockford base32 characters, a valid DNS label); web-chat's tunnel uses 8 lowercase hex today (web-chat-dev.worktrees/ae-int/lib/tunnel/config.js ID_RE).",
+          "pattern": "^https://"
+        },
+        "answer_origin": {
+          "type": "string",
+          "description": "Its answer origin, https://chat-<label>-a.<hub>.",
+          "pattern": "^https://"
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "True when the machine is offline and the fields come from the last report."
+        }
+      },
+      "required": [
+        "chat_id",
+        "title",
+        "workspace_id",
+        "project_id",
+        "machine_id",
+        "scope",
+        "state",
+        "queue",
+        "unseen_activity",
+        "last_activity_at",
+        "surface_origin",
+        "answer_origin",
+        "stale"
+      ],
+      "description": "A chat row, as the sidebar and Home's list_chats read it."
+    },
+    "ask": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat that asks. Minted by the hub; its form is contract 03's."
+        },
+        "ask_id": {
+          "type": "string",
+          "description": "The daemon's ask id (web-chat-dev.worktrees/ae-int/lib/server/answer-surface/index.js ASK_ID_RE).",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "conversation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The conversation, as the daemon names it."
+        },
+        "kind": {
+          "enum": [
+            "permission",
+            "question",
+            "plan",
+            "elicitation"
+          ],
+          "description": "lib/server/domain/asks.js BEHAVIORS keys."
+        },
+        "tool_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The tool asking, for a permission."
+        },
+        "created_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The daemon's created_at."
+        },
+        "state": {
+          "type": "string",
+          "description": "The daemon's state word (pending while listed here)."
+        },
+        "answerable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "The daemon's answerable flag as last reported; an elicitation is never answerable remotely."
+        },
+        "version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The ask's version, which a decide names."
+        },
+        "frame_url": {
+          "type": "string",
+          "description": "The answer document to frame: https://chat-<label>-a.<hub>/answer/ask/<ask_id>?layout=card, or ?layout=sheet&device=mobile when ListPendingAsks asked for device mobile (C-10.20).",
+          "pattern": "^https://"
+        }
+      },
+      "required": [
+        "chat_id",
+        "ask_id",
+        "kind",
+        "state",
+        "frame_url"
+      ],
+      "description": "A pending ask, from the daemon's public row (lib/server/domain/asks.js publicOf, served whole by GET /api/asks to the connector's host read) as the connector reports it, plus where to answer it."
+    },
+    "pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pin_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The pin. Minted by the hub; its form is contract 03's."
+        },
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its dashboard. Minted by the hub; its form is contract 03's."
+        },
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat whose pane it mirrors. Minted by the hub; its form is contract 03's."
+        },
+        "mount_id": {
+          "type": "string",
+          "description": "The pane's mount id on that chat's page.",
+          "maxLength": 128
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A label, or null for the pane's own."
+        },
+        "place": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/place"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its placement on the dashboard, or null for full width."
+        }
+      },
+      "required": [
+        "pin_id",
+        "dashboard_id",
+        "chat_id",
+        "mount_id",
+        "title",
+        "place"
+      ],
+      "description": "A mirror pane pinned on a dashboard: the committed version until a live single-pane route exists, never with a write to the chat's store (C-10.26)."
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The dashboard. Minted by the hub; its form is contract 03's."
+        },
+        "title": {
+          "type": "string",
+          "description": "Its name.",
+          "maxLength": 120
+        },
+        "owner": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "project",
+                "workspace",
+                "home"
+              ],
+              "description": "Who owns it."
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/opaque_id"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The project or workspace id; null for Home."
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "description": "The owner (inputs/design.md, Structure)."
+        },
+        "keeper_chat_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/opaque_id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The chat that keeps it, or null when Home keeps it."
+        },
+        "surface_origin": {
+          "type": "string",
+          "description": "The dashboard daemon's origin on the hub.",
+          "pattern": "^https://"
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pin"
+          },
+          "description": "Its mirror panes."
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "title",
+        "owner",
+        "keeper_chat_id",
+        "surface_origin",
+        "pins"
+      ],
+      "description": "A dashboard row."
+    },
+    "push_subscription": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "The push service URL (Web Push PushSubscription.endpoint).",
+          "pattern": "^https://",
+          "maxLength": 2048
+        },
+        "expirationTime": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "PushSubscription.expirationTime."
+        },
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "p256dh": {
+              "type": "string",
+              "description": "The client public key, base64url.",
+              "maxLength": 256
+            },
+            "auth": {
+              "type": "string",
+              "description": "The auth secret, base64url.",
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "p256dh",
+            "auth"
+          ],
+          "description": "PushSubscription.keys."
+        }
+      },
+      "required": [
+        "endpoint",
+        "keys"
+      ],
+      "description": "A Web Push subscription as PushSubscription.toJSON() gives it."
+    },
+    "daemon_body": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "A daemon's JSON answer, passed through unchanged (C-10.17), whole: in result.daemon on success, in error.daemon (with error.daemon_status) on a refusal. Its shape is web-chat's; the route that produced it is named by the request type. When the connector refused (05 C-05.30) it is the connector's body as received: 04's refusal body with authority, or {ok: false, connector: true, reason: 'not-running'} (C-10.17)."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cookie": {
+          "type": "string",
+          "description": "A user session (03 C-03.5, C-03.6): the cookie __Host-swc_s on the hub apex, as the shell and the phone send it. With it the request passes the CSRF rule of 04 C-04.23. Exactly one of this or the x-api-key pair is present.",
+          "pattern": "(^|; )__Host-swc_s=[A-Za-z0-9_-]{16,128}(;|$)"
+        },
+        "x-api-key": {
+          "type": "string",
+          "description": "An API key's id (03 C-03.7, schemas/03-credential.json api_key): a user's key, or svc_home's key for Home's MCP server (C-03.16). Sent with x-api-secret.",
+          "pattern": "^key_[0-9a-hjkmnp-tv-z]{26}$"
+        },
+        "x-api-secret": {
+          "type": "string",
+          "description": "The API key's secret (03 C-03.7): sws_ and 43 base64url characters.",
+          "pattern": "^sws_[A-Za-z0-9_-]{43}$"
+        },
+        "content-type": {
+          "const": "application/json",
+          "description": "JSON only."
+        },
+        "x-swc-api": {
+          "const": "1",
+          "description": "The API major version the client speaks (C-10.29)."
+        },
+        "x-request-id": {
+          "type": "string",
+          "description": "Optional client id for the request, echoed as request_id; the hub mints one when absent.",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "idempotency-key": {
+          "type": "string",
+          "description": "On /write and /execute: the same key within 24 hours answers the first result without acting again (C-10.11).",
+          "pattern": "^[A-Za-z0-9_-]{16,64}$"
+        }
+      },
+      "required": [
+        "content-type",
+        "x-swc-api"
+      ],
+      "oneOf": [
+        { "required": ["cookie"], "not": { "anyOf": [ { "required": ["x-api-key"] }, { "required": ["x-api-secret"] } ] } },
+        { "required": ["x-api-key", "x-api-secret"], "not": { "required": ["cookie"] } }
+      ],
+      "description": "Request headers, lowercase as Node reads them. Authentication is one of contract 03's two hub-API credentials (C-03.5 to C-03.7, C-03.16): the user session cookie, or an API key as X-Api-Key plus X-Api-Secret. There is no bearer form; one would be an addition to 03-credential.json first."
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "GetApiInfo",
+            "ListMachines",
+            "GetMachine",
+            "BeginPairing",
+            "CompletePairing",
+            "RenameMachine",
+            "PauseMachine",
+            "DisconnectMachine",
+            "SetMachineCaps",
+            "ListMachineFolders",
+            "ListWorkspaces",
+            "CreateWorkspace",
+            "ArchiveWorkspace",
+            "ListProjects",
+            "CreateProject",
+            "ArchiveProject",
+            "ListChats",
+            "GetChat",
+            "CreateChat",
+            "ArchiveChat",
+            "RestoreChat",
+            "AssignChatToMachine",
+            "SetChatScope",
+            "SendMessage",
+            "HoldMessage",
+            "TakeBackMessage",
+            "PushQueue",
+            "ReadQueue",
+            "ReadChatMirror",
+            "ReadChatTurns",
+            "ListPendingAsks",
+            "DecideAsk",
+            "ReadActivity",
+            "AskHome",
+            "DelegateMessage",
+            "ListDashboards",
+            "PinPane",
+            "UnpinPane",
+            "RenderDashboardPane",
+            "RegisterPushDevice",
+            "UnregisterPushDevice"
+          ],
+          "description": "The request type; its group is the path (C-10.12)."
+        },
+        "params": {
+          "type": "object",
+          "description": "The type's params; {} when it takes none."
+        }
+      },
+      "required": [
+        "type",
+        "params"
+      ],
+      "description": "A typed request body: POST /hub/api/<group>.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetApiInfo"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_GetApiInfo"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListMachines"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListMachines"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_GetMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "BeginPairing"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_BeginPairing"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CompletePairing"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_CompletePairing"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RenameMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_RenameMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PauseMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_PauseMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DisconnectMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_DisconnectMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetMachineCaps"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_SetMachineCaps"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListMachineFolders"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListMachineFolders"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListWorkspaces"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListWorkspaces"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateWorkspace"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_CreateWorkspace"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveWorkspace"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ArchiveWorkspace"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListProjects"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListProjects"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateProject"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_CreateProject"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveProject"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ArchiveProject"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListChats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListChats"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_GetChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_CreateChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ArchiveChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RestoreChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_RestoreChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "AssignChatToMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_AssignChatToMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetChatScope"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_SetChatScope"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SendMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_SendMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "HoldMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_HoldMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "TakeBackMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_TakeBackMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PushQueue"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_PushQueue"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadQueue"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ReadQueue"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadChatMirror"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ReadChatMirror"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadChatTurns"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ReadChatTurns"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListPendingAsks"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListPendingAsks"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DecideAsk"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_DecideAsk"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadActivity"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ReadActivity"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "AskHome"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_AskHome"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DelegateMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_DelegateMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListDashboards"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_ListDashboards"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PinPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_PinPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "UnpinPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_UnpinPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RenderDashboardPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_RenderDashboardPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RegisterPushDevice"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_RegisterPushDevice"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "UnregisterPushDevice"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "params": {
+                "$ref": "#/$defs/params_UnregisterPushDevice"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "response_ok": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": true,
+          "description": "Success."
+        },
+        "type": {
+          "enum": [
+            "GetApiInfo",
+            "ListMachines",
+            "GetMachine",
+            "BeginPairing",
+            "CompletePairing",
+            "RenameMachine",
+            "PauseMachine",
+            "DisconnectMachine",
+            "SetMachineCaps",
+            "ListMachineFolders",
+            "ListWorkspaces",
+            "CreateWorkspace",
+            "ArchiveWorkspace",
+            "ListProjects",
+            "CreateProject",
+            "ArchiveProject",
+            "ListChats",
+            "GetChat",
+            "CreateChat",
+            "ArchiveChat",
+            "RestoreChat",
+            "AssignChatToMachine",
+            "SetChatScope",
+            "SendMessage",
+            "HoldMessage",
+            "TakeBackMessage",
+            "PushQueue",
+            "ReadQueue",
+            "ReadChatMirror",
+            "ReadChatTurns",
+            "ListPendingAsks",
+            "DecideAsk",
+            "ReadActivity",
+            "AskHome",
+            "DelegateMessage",
+            "ListDashboards",
+            "PinPane",
+            "UnpinPane",
+            "RenderDashboardPane",
+            "RegisterPushDevice",
+            "UnregisterPushDevice"
+          ],
+          "description": "The request's type, echoed."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "The request's id.",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "result": {
+          "type": "object",
+          "description": "The type's result."
+        }
+      },
+      "required": [
+        "ok",
+        "type",
+        "request_id",
+        "result"
+      ],
+      "description": "A success answer, HTTP 200.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetApiInfo"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_GetApiInfo"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListMachines"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListMachines"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_GetMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "BeginPairing"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_BeginPairing"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CompletePairing"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_CompletePairing"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RenameMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_RenameMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PauseMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_PauseMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DisconnectMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_DisconnectMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetMachineCaps"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_SetMachineCaps"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListMachineFolders"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListMachineFolders"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListWorkspaces"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListWorkspaces"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateWorkspace"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_CreateWorkspace"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveWorkspace"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ArchiveWorkspace"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListProjects"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListProjects"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateProject"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_CreateProject"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveProject"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ArchiveProject"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListChats"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListChats"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GetChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_GetChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "CreateChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_CreateChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ArchiveChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ArchiveChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RestoreChat"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_RestoreChat"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "AssignChatToMachine"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_AssignChatToMachine"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetChatScope"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_SetChatScope"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SendMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_SendMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "HoldMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_HoldMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "TakeBackMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_TakeBackMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PushQueue"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_PushQueue"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadQueue"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ReadQueue"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadChatMirror"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ReadChatMirror"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadChatTurns"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ReadChatTurns"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListPendingAsks"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListPendingAsks"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DecideAsk"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_DecideAsk"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ReadActivity"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ReadActivity"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "AskHome"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_AskHome"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "DelegateMessage"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_DelegateMessage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ListDashboards"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_ListDashboards"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "PinPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_PinPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "UnpinPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_UnpinPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RenderDashboardPane"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_RenderDashboardPane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "RegisterPushDevice"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_RegisterPushDevice"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "UnregisterPushDevice"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result_UnregisterPushDevice"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "response_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "const": false,
+          "description": "Failure."
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The request's type, echoed when the body named one."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "The request's id.",
+          "pattern": "^[A-Za-z0-9_-]{8,64}$"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "ok",
+        "type",
+        "request_id",
+        "error"
+      ],
+      "description": "A failure answer."
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "bad_request",
+            "unknown_type",
+            "wrong_group",
+            "too_large",
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "conflict",
+            "scope_pinned",
+            "machine_offline",
+            "refused",
+            "answer_in_frame",
+            "rate_limited",
+            "relay_failed",
+            "relay_timeout",
+            "version_skew",
+            "not_supported",
+            "unavailable",
+            "internal"
+          ],
+          "description": "The error word. Clients treat an unknown word as a generic failure (C-10.29)."
+        },
+        "message": {
+          "type": "string",
+          "description": "One sentence for a person."
+        },
+        "hint": {
+          "type": "string",
+          "description": "What to do next, written for the person reading it, as web-chat's refusal hints are."
+        },
+        "field": {
+          "type": "string",
+          "description": "bad_request: the first bad field, as a JSON pointer into params."
+        },
+        "group": {
+          "enum": [
+            "read",
+            "write",
+            "execute"
+          ],
+          "description": "wrong_group: the type's group."
+        },
+        "need": {
+          "type": "string",
+          "description": "forbidden: what the type needs (a level on a chat, a role, or a principal kind)."
+        },
+        "retry_after": {
+          "type": "integer",
+          "description": "rate_limited: seconds to wait.",
+          "minimum": 1
+        },
+        "frame_url": {
+          "type": "string",
+          "description": "answer_in_frame: the answer document.",
+          "pattern": "^https://"
+        },
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        },
+        "daemon_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "A relayed answer: the HTTP status as the hub received it, the daemon's or the connector's own refusal (05 C-05.30), beside the body in daemon (C-10.17)."
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "description": "The error shape every type shares. HTTP status per code is in C-10.13. A relayed answer maps by status first (C-10.17): a 2xx with ok:false is refused, 404 not_found, 403 forbidden with need (logged as a second lock), 400 or 415 internal, 503 unavailable, 500 relay_failed; each carries daemon and daemon_status. A relayed answer can be the connector's (05 C-05.30): a 403 whose body carries 04's authority object is forbidden, logged as a connector refusal, never a second lock; a 404 whose body is {ok: false, connector: true, reason: 'not-running'} is the connector's not_found, never the daemon's. A 502 is relay_failed and a 504 relay_timeout. Any other status is relay_failed. daemon_status is the status as the hub received it."
+    },
+    "params_GetApiInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "Params of GetApiInfo. Group: /read. Answered by: hub. Needs: any signed-in principal. What this hub answers and which catalogues it holds (C-10.29)."
+    },
+    "result_GetApiInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": 1,
+          "description": "This hub API's major version."
+        },
+        "api_revision": {
+          "type": "integer",
+          "description": "Additive revision within api_version 1.",
+          "minimum": 0
+        },
+        "request_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A request type name."
+          },
+          "description": "Every type this hub answers."
+        },
+        "mcp_catalogue_version": {
+          "type": "string",
+          "description": "The web-chat MCP catalogue the hub was built against: a version with its own schemas/10-mcp-catalogue-<version>.json (C-10.1, C-10.9)."
+        },
+        "mcp_catalogue_sha256": {
+          "type": "string",
+          "description": "Its catalogue_sha256.",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "home_tools_version": {
+          "type": "string",
+          "description": "The Home tools catalogue version (10-home-tools.json)."
+        }
+      },
+      "required": [
+        "api_version",
+        "api_revision",
+        "request_types",
+        "mcp_catalogue_version",
+        "mcp_catalogue_sha256",
+        "home_tools_version"
+      ],
+      "description": "Result of GetApiInfo."
+    },
+    "params_ListMachines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "Params of ListMachines. Group: /read. Answered by: hub. Needs: a signed-in user. The machine registry."
+    },
+    "result_ListMachines": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/machine"
+          },
+          "description": "Every machine."
+        }
+      },
+      "required": [
+        "machines"
+      ],
+      "description": "Result of ListMachines."
+    },
+    "params_GetMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "machine_id"
+      ],
+      "description": "Params of GetMachine. Group: /read. Answered by: hub. Needs: a signed-in user. One machine."
+    },
+    "result_GetMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        }
+      },
+      "required": [
+        "machine"
+      ],
+      "description": "Result of GetMachine."
+    },
+    "params_BeginPairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "description": "Params of BeginPairing. Group: /execute. Answered by: hub. Needs: the hub's admin (03). Step 1 of Add a machine: what to run on the machine. The pairing code itself is the connector's to show (05)."
+    },
+    "result_BeginPairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hub_address": {
+          "type": "string",
+          "description": "The address to give the connector.",
+          "pattern": "^https://"
+        },
+        "connect_command": {
+          "type": "string",
+          "description": "The line to run on the machine: claude-web-chat connect <hub_address>."
+        }
+      },
+      "required": [
+        "hub_address",
+        "connect_command"
+      ],
+      "description": "Result of BeginPairing."
+    },
+    "params_CompletePairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The pairing code the machine shows, XXXX-XXXX.",
+          "pattern": "^[A-Z0-9]{4}-[A-Z0-9]{4}$"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name to give the machine.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "code",
+        "name"
+      ],
+      "description": "Params of CompletePairing. Group: /execute. Answered by: hub. Needs: the hub's admin (03). Steps 2 and 3: enter the code and name the machine. Code life and the key exchange are 05's."
+    },
+    "result_CompletePairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        }
+      },
+      "required": [
+        "machine"
+      ],
+      "description": "Result of CompletePairing."
+    },
+    "params_RenameMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        },
+        "name": {
+          "type": "string",
+          "description": "The new name.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "machine_id",
+        "name"
+      ],
+      "description": "Params of RenameMachine. Group: /write. Answered by: hub. Needs: the hub's admin (03). Rename a machine."
+    },
+    "result_RenameMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        }
+      },
+      "required": [
+        "machine"
+      ],
+      "description": "Result of RenameMachine."
+    },
+    "params_PauseMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "true pauses (running turns finish), false resumes."
+        }
+      },
+      "required": [
+        "machine_id",
+        "paused"
+      ],
+      "description": "Params of PauseMachine. Group: /execute. Answered by: hub, then a connector command (05). Needs: the hub's admin (03). Pause or resume a machine."
+    },
+    "result_PauseMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        }
+      },
+      "required": [
+        "machine"
+      ],
+      "description": "Result of PauseMachine."
+    },
+    "params_DisconnectMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "machine_id"
+      ],
+      "description": "Params of DisconnectMachine. Group: /execute. Answered by: hub, then a connector command (05). Needs: the hub's admin (03). Disconnect a machine: the hub forgets its key (05); its chats stay listed, offline."
+    },
+    "result_DisconnectMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        },
+        "disconnected": {
+          "const": true,
+          "description": "Always true on success."
+        }
+      },
+      "required": [
+        "machine_id",
+        "disconnected"
+      ],
+      "description": "Result of DisconnectMachine."
+    },
+    "params_SetMachineCaps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        },
+        "agents_at_once": {
+          "type": "integer",
+          "description": "The cap.",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "accept_new_chats": {
+          "type": "boolean",
+          "description": "Accept new chats."
+        },
+        "home_may_start_agents": {
+          "type": "boolean",
+          "description": "Let Home start agents here."
+        }
+      },
+      "required": [
+        "machine_id"
+      ],
+      "description": "Params of SetMachineCaps. Group: /write. Answered by: hub, then a connector command (05). Needs: the hub's admin (03). Change a machine's settings; omitted fields keep their value."
+    },
+    "result_SetMachineCaps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        }
+      },
+      "required": [
+        "machine"
+      ],
+      "description": "Result of SetMachineCaps."
+    },
+    "params_ListMachineFolders": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "machine_id"
+      ],
+      "description": "Params of ListMachineFolders. Group: /read. Answered by: hub. Needs: a signed-in user. The folders a machine offers, as it last reported them."
+    },
+    "result_ListMachineFolders": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "folders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/folder"
+          },
+          "description": "The folders offered."
+        }
+      },
+      "required": [
+        "folders"
+      ],
+      "description": "Result of ListMachineFolders."
+    },
+    "params_ListWorkspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived workspaces."
+        }
+      },
+      "description": "Params of ListWorkspaces. Group: /read. Answered by: hub. Needs: a signed-in user. Workspaces."
+    },
+    "result_ListWorkspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workspace"
+          },
+          "description": "Workspaces."
+        }
+      },
+      "required": [
+        "workspaces"
+      ],
+      "description": "Result of ListWorkspaces."
+    },
+    "params_CreateWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Its name.",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "description": "Params of CreateWorkspace. Group: /write. Answered by: hub. Needs: a signed-in user. Create a workspace."
+    },
+    "result_CreateWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "description": "Result of CreateWorkspace."
+    },
+    "params_ArchiveWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The workspace. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "workspace_id"
+      ],
+      "description": "Params of ArchiveWorkspace. Group: /write. Answered by: hub. Needs: a signed-in user. Archive a workspace and everything in it."
+    },
+    "result_ArchiveWorkspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "$ref": "#/$defs/workspace"
+        }
+      },
+      "required": [
+        "workspace"
+      ],
+      "description": "Result of ArchiveWorkspace."
+    },
+    "params_ListProjects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Only this workspace's. Minted by the hub; its form is contract 03's."
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived projects."
+        }
+      },
+      "description": "Params of ListProjects. Group: /read. Answered by: hub. Needs: a signed-in user. Projects."
+    },
+    "result_ListProjects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/project"
+          },
+          "description": "Projects."
+        }
+      },
+      "required": [
+        "projects"
+      ],
+      "description": "Result of ListProjects."
+    },
+    "params_CreateProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its workspace. Minted by the hub; its form is contract 03's."
+        },
+        "name": {
+          "type": "string",
+          "description": "Its name.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "theme": {
+          "type": "string",
+          "description": "A theme name, omitted to inherit.",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "workspace_id",
+        "name"
+      ],
+      "description": "Params of CreateProject. Group: /write. Answered by: hub. Needs: a signed-in user. Create a project."
+    },
+    "result_CreateProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "description": "Result of CreateProject."
+    },
+    "params_ArchiveProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The project. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "description": "Params of ArchiveProject. Group: /write. Answered by: hub. Needs: a signed-in user. Archive a project."
+    },
+    "result_ArchiveProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "description": "Result of ArchiveProject."
+    },
+    "params_ListChats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Only this workspace's. Minted by the hub; its form is contract 03's."
+        },
+        "project_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Only this project's. Minted by the hub; its form is contract 03's."
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived chats."
+        }
+      },
+      "description": "Params of ListChats. Group: /read. Answered by: hub. Needs: Read on each chat listed (04); rows without it are left out. Chats with their state."
+    },
+    "result_ListChats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chat"
+          },
+          "description": "Chats."
+        }
+      },
+      "required": [
+        "chats"
+      ],
+      "description": "Result of ListChats."
+    },
+    "params_GetChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of GetChat. Group: /read. Answered by: hub. Needs: Read on the chat. One chat."
+    },
+    "result_GetChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of GetChat."
+    },
+    "params_CreateChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Its project. Minted by the hub; its form is contract 03's."
+        },
+        "title": {
+          "type": "string",
+          "description": "Its name.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Where to start it; required unless the scope is a folder (which names its machine) or the hub's default machine is set. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "project_id",
+        "title",
+        "scope"
+      ],
+      "description": "Params of CreateChat. Group: /write. Answered by: hub, then a connector command (05, 06). Needs: a signed-in user. Create a chat. A folder chat starts where its folder is."
+    },
+    "result_CreateChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of CreateChat."
+    },
+    "params_ArchiveChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of ArchiveChat. Group: /write. Answered by: hub. Needs: a signed-in user (04 may narrow it). Archive a chat: read only, grants drop to Read."
+    },
+    "result_ArchiveChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of ArchiveChat."
+    },
+    "params_RestoreChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of RestoreChat. Group: /write. Answered by: hub. Needs: as ArchiveChat. Restore an archived chat."
+    },
+    "result_RestoreChat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of RestoreChat."
+    },
+    "params_AssignChatToMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "machine_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The machine. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "chat_id",
+        "machine_id"
+      ],
+      "description": "Params of AssignChatToMachine. Group: /execute. Answered by: hub, then a connector command (05, 06). Needs: a signed-in user. Move a repo or space chat; a folder chat answers scope_pinned."
+    },
+    "result_AssignChatToMachine": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of AssignChatToMachine."
+    },
+    "params_SetChatScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        }
+      },
+      "required": [
+        "chat_id",
+        "scope"
+      ],
+      "description": "Params of SetChatScope. Group: /write. Answered by: hub. Needs: a signed-in user. Change a chat's scope while its agent is not running (else conflict)."
+    },
+    "result_SetChatScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "$ref": "#/$defs/chat"
+        }
+      },
+      "required": [
+        "chat"
+      ],
+      "description": "Result of SetChatScope."
+    },
+    "params_SendMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "text": {
+          "type": "string",
+          "description": "The message, as POST /api/queue/message takes it (web-chat-dev.worktrees/ae-int/lib/server/composer.js MESSAGE_MAX 3000).",
+          "maxLength": 3000
+        },
+        "skill": {
+          "type": "string",
+          "description": "A skill to run, as the composer takes it.",
+          "maxLength": 300
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A path in the chat's scope, as the composer takes it (PATH_MAX 240).",
+            "maxLength": 240
+          },
+          "description": "Files to attach by path (FILES_MAX 5).",
+          "maxItems": 5
+        },
+        "send": {
+          "enum": [
+            "auto",
+            "now",
+            "hold"
+          ],
+          "description": "composer.js SEND_MODES: auto sends when Claude is free, now sends at once, hold queues it unsent."
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "Which conversation (composer.js CONVERSATION_ID_RE); omitted for the primary.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "chat_id",
+        "text"
+      ],
+      "description": "Params of SendMessage. Group: /execute. Answered by: hub queue, delivered by the connector to POST /api/queue/message (C-07.24 to C-07.30). Needs: Message on the chat (04). Put a message in a chat's queue from the shell or the phone when the chat is not framed. A framed chrome's composer posts through the relay instead."
+    },
+    "result_SendMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hub_msg_id": {
+          "type": "string",
+          "description": "The hub queue id (C-07.25).",
+          "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "delivering",
+            "accepted",
+            "refused",
+            "expired"
+          ],
+          "description": "Where it is at answer time (C-07.25 to C-07.27)."
+        },
+        "msg_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The daemon's msg_id once accepted, else null."
+        }
+      },
+      "required": [
+        "hub_msg_id",
+        "state",
+        "msg_id"
+      ],
+      "description": "Result of SendMessage."
+    },
+    "params_HoldMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "item": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hub_msg_id": {
+              "type": "string",
+              "description": "A hub-queued message not yet accepted.",
+              "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "queue_item_id": {
+              "type": "string",
+              "description": "A daemon queue item id (GET /api/queue).",
+              "maxLength": 64
+            }
+          },
+          "description": "Exactly one of the two: a message still on the hub, or an item in the daemon's queue.",
+          "oneOf": [
+            {
+              "required": [
+                "hub_msg_id"
+              ]
+            },
+            {
+              "required": [
+                "queue_item_id"
+              ]
+            }
+          ]
+        },
+        "held": {
+          "type": "boolean",
+          "description": "true holds it back, false releases it."
+        }
+      },
+      "required": [
+        "chat_id",
+        "item",
+        "held"
+      ],
+      "description": "Params of HoldMessage. Group: /execute. Answered by: hub queue, or relay PATCH /api/queue/:id (lib/server/routes/queue.js), sent inverted: held true as {staged: false}, held false as {staged: true} (C-10.16). Needs: Message on the chat. Hold or release one queued message."
+    },
+    "result_HoldMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "held": {
+          "type": "boolean",
+          "description": "Its held state now."
+        },
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "held"
+      ],
+      "description": "Result of HoldMessage."
+    },
+    "params_TakeBackMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "item": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hub_msg_id": {
+              "type": "string",
+              "description": "A hub-queued message not yet accepted.",
+              "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "queue_item_id": {
+              "type": "string",
+              "description": "A daemon queue item id (GET /api/queue).",
+              "maxLength": 64
+            }
+          },
+          "description": "Exactly one of the two: a message still on the hub, or an item in the daemon's queue.",
+          "oneOf": [
+            {
+              "required": [
+                "hub_msg_id"
+              ]
+            },
+            {
+              "required": [
+                "queue_item_id"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "chat_id",
+        "item"
+      ],
+      "description": "Params of TakeBackMessage. Group: /execute. Answered by: hub queue, or relay DELETE /api/queue/:id, or POST /api/queue/pending/recall {id} when parked; a recall answering recalled: false is not_found (C-10.16). Needs: Message on the chat. Take one message back before Claude reads it."
+    },
+    "result_TakeBackMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "taken_back": {
+          "type": "boolean",
+          "description": "Whether it was removed."
+        },
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "taken_back"
+      ],
+      "description": "Result of TakeBackMessage."
+    },
+    "params_PushQueue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A queue item id.",
+            "maxLength": 64
+          },
+          "description": "Items to send now; omitted sends the staged signals.",
+          "maxItems": 50
+        },
+        "note": {
+          "type": "string",
+          "description": "A note to send with the push (lib/channel/envelope.js NOTE_MAX 1000).",
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of PushQueue. Group: /execute. Answered by: relay POST /api/queue/push. Needs: Message on the chat, with or without ids (04 C-04.14: a Push is Message because it wakes the agent). Push N to Claude from outside the framed chat (the phone's Today)."
+    },
+    "result_PushQueue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "daemon"
+      ],
+      "description": "Result of PushQueue."
+    },
+    "params_ReadQueue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of ReadQueue. Group: /read. Answered by: relay GET /api/queue, plus the hub's queued messages. Needs: Read on the chat. The chat's queue, both halves."
+    },
+    "result_ReadQueue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/daemon_body"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "GET /api/queue's body, or null when the machine is offline."
+        },
+        "hub_queued": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "hub_msg_id": {
+                "type": "string",
+                "description": "Id.",
+                "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "state": {
+                "type": "string",
+                "description": "State word (C-07.27)."
+              },
+              "summary": {
+                "type": "string",
+                "description": "First line of the text, at the reader's level (11)."
+              },
+              "from": {
+                "type": "string",
+                "description": "Who sent it (03)."
+              },
+              "at": {
+                "$ref": "#/$defs/ts"
+              }
+            },
+            "required": [
+              "hub_msg_id",
+              "state",
+              "summary",
+              "from",
+              "at"
+            ]
+          },
+          "description": "Messages the hub holds for the chat."
+        }
+      },
+      "required": [
+        "daemon",
+        "hub_queued"
+      ],
+      "description": "Result of ReadQueue."
+    },
+    "params_ReadChatMirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "since": {
+          "type": "integer",
+          "description": "The mirror's own since: epoch ms on the facade's clock (mirror.js sinceOf; default 24 h back, SINCE_DEFAULT_MS). It bounds which conversations are listed, not which turns.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "chat_id"
+      ],
+      "description": "Params of ReadChatMirror. Group: /read. Answered by: relay GET /api/mirror (web-chat-dev.worktrees/ae-int/lib/server/routes/mirror.js, BODY_VERSION 1, stable for 0.9). Needs: Read on the chat (relayed at mirror level read, 04). The chat's mirror snapshot at the caller's level: conversations, tasks, counts and asks, with no turn text (C-10.19a); turns are ReadChatTurns."
+    },
+    "result_ReadChatMirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "daemon"
+      ],
+      "description": "Result of ReadChatMirror."
+    },
+    "params_ReadChatTurns": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The conversation, as GET /api/mirror lists it (the route's :cid; mirror-query.js ID_MAX 128)."
+        },
+        "before": {
+          "type": "number",
+          "minimum": 0,
+          "description": "A turn's seq: the page of turns before it. Absent, the newest page. Pass the previous page's next_before."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Turns per page, 1 to 50 (mirror-content.js LIMIT_MAX); default 20."
+        },
+        "items": {
+          "enum": [
+            "none",
+            "summary",
+            "full"
+          ],
+          "description": "Each turn's items at this level; default summary."
+        }
+      },
+      "required": [
+        "chat_id",
+        "conversation_id"
+      ],
+      "description": "Params of ReadChatTurns. Group: /read. Answered by: relay GET /api/mirror/conversations/:cid/turns?before=&limit=&items= (web-chat-dev.worktrees/ae-int/lib/server/routes/mirror-content.js, gate requireMirror('read'), the portal's GET /api/mirror/* row). Needs: Read on the chat (relayed at mirror level read, 04). One page of a conversation's turns, the prompts and replies, newest page first and ascending within it (C-10.19a)."
+    },
+    "result_ReadChatTurns": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "daemon"
+      ],
+      "description": "Result of ReadChatTurns. daemon is the route's body, {conversation_id, turns, next_before, total, rev}, or {conversation_id, turns: [], next_before: null, total: null, indexing: true, explain, rev} while the mirror parses the conversation (read again)."
+    },
+    "params_ListPendingAsks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "Only this chat's. Minted by the hub; its form is contract 03's."
+        },
+        "device": {
+          "enum": [
+            "desktop",
+            "mobile"
+          ],
+          "description": "Which answer layout each row's frame_url names: desktop (default) layout=card, mobile layout=sheet&device=mobile (answer-surface/index.js LAYOUTS, DEVICES; C-10.20)."
+        }
+      },
+      "description": "Params of ListPendingAsks. Group: /read. Answered by: hub index of connector reports (05), rows the connector read as host from GET /api/asks with state pending. Needs: Read on each chat; rows without it are left out. Needs you: every pending ask."
+    },
+    "result_ListPendingAsks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ask"
+          },
+          "description": "Pending asks, newest first."
+        }
+      },
+      "required": [
+        "asks"
+      ],
+      "description": "Result of ListPendingAsks."
+    },
+    "params_DecideAsk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "ask_id": {
+          "type": "string",
+          "description": "The ask.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "behavior": {
+              "enum": [
+                "allow",
+                "deny",
+                "answer",
+                "decline",
+                "approve",
+                "reject",
+                "accept",
+                "cancel",
+                "terminal"
+              ],
+              "description": "asks.js BEHAVIORS."
+            },
+            "message": {
+              "type": "string",
+              "description": "A deny's message.",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "behavior"
+          ],
+          "description": "The decision as the answer surface's decide body takes it."
+        },
+        "version": {
+          "type": "integer",
+          "description": "The ask version decided on.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "chat_id",
+        "ask_id",
+        "decision",
+        "version"
+      ],
+      "description": "Params of DecideAsk. Group: /execute. Answered by: v1: none; answers answer_in_frame (C-10.20). Needs: Message on the chat. Reserved for a decide outside the framed answer document: not in v1, 1.0 at the earliest, the maintainer decides (C-10.20)."
+    },
+    "result_DecideAsk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "daemon"
+      ],
+      "description": "Result of DecideAsk."
+    },
+    "params_ReadActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stream": {
+          "type": "string",
+          "description": "chat:<chat_id>, machine:<machine_id> or hub (07's streams).",
+          "pattern": "^(chat:cht_[0-9a-hjkmnp-tv-z]{26}|machine:mch_[0-9a-hjkmnp-tv-z]{26}|hub)$"
+        },
+        "since": {
+          "type": "integer",
+          "description": "The last seq read (C-07.19).",
+          "minimum": 0
+        },
+        "epoch": {
+          "type": "string",
+          "description": "The stream epoch the since belongs to (C-07.4).",
+          "maxLength": 64
+        },
+        "limit": {
+          "type": "integer",
+          "description": "At most this many, up to 500 (C-07.21).",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "stream"
+      ],
+      "description": "Params of ReadActivity. Group: /read. Answered by: hub (the C-07.18 JSON read in typed form). Needs: Read on the stream's chat; hub-wide streams per 04. Activity, with a cursor."
+    },
+    "result_ReadActivity": {
+      "$ref": "07-stream-frame.json#/$defs/events",
+      "description": "07's events frame (schemas/07-stream-frame.json $defs/events): events, latest, oldest, gap, reset, dropped, more. Owned by contract 07."
+    },
+    "params_AskHome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "What to ask.",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "from_chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat the user asked from, if any. Minted by the hub; its form is contract 03's."
+        },
+        "from_page": {
+          "type": "string",
+          "description": "The page the user was on (a free label until pages land in 1.0).",
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "description": "Params of AskHome. Group: /execute. Answered by: hub queue to Home's chat (C-07.24). Needs: a signed-in user. Ask Home from the tab bar, the Home panel or the phone's Home sheet."
+    },
+    "result_AskHome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hub_msg_id": {
+          "type": "string",
+          "description": "The hub queue id (C-07.25).",
+          "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "delivering",
+            "accepted",
+            "refused",
+            "expired"
+          ],
+          "description": "Where it is at answer time (C-07.25 to C-07.27)."
+        },
+        "msg_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The daemon's msg_id once accepted, else null."
+        }
+      },
+      "required": [
+        "hub_msg_id",
+        "state",
+        "msg_id"
+      ],
+      "description": "Result of AskHome."
+    },
+    "params_DelegateMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "text": {
+          "type": "string",
+          "description": "The message, as POST /api/queue/message takes it (web-chat-dev.worktrees/ae-int/lib/server/composer.js MESSAGE_MAX 3000).",
+          "maxLength": 3000
+        },
+        "skill": {
+          "type": "string",
+          "description": "A skill to run, as the composer takes it.",
+          "maxLength": 300
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "A path in the chat's scope, as the composer takes it (PATH_MAX 240).",
+            "maxLength": 240
+          },
+          "description": "Files to attach by path (FILES_MAX 5).",
+          "maxItems": 5
+        },
+        "send": {
+          "enum": [
+            "auto",
+            "now",
+            "hold"
+          ],
+          "description": "composer.js SEND_MODES: auto sends when Claude is free, now sends at once, hold queues it unsent."
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "Which conversation (composer.js CONVERSATION_ID_RE); omitted for the primary.",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why Home sends it, shown on Today under Delegated messages.",
+          "minLength": 1,
+          "maxLength": 280
+        }
+      },
+      "required": [
+        "chat_id",
+        "text",
+        "reason"
+      ],
+      "description": "Params of DelegateMessage. Group: /execute. Answered by: hub queue (C-07.24), as Home. Needs: the Home principal svc_home (03 C-03.16) holding Message on the chat. Home puts a message in a chat's queue on the user's behalf. Backs Home's message_chat."
+    },
+    "result_DelegateMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hub_msg_id": {
+          "type": "string",
+          "description": "The hub queue id (C-07.25).",
+          "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "delivering",
+            "accepted",
+            "refused",
+            "expired"
+          ],
+          "description": "Where it is at answer time (C-07.25 to C-07.27)."
+        },
+        "msg_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The daemon's msg_id once accepted, else null."
+        }
+      },
+      "required": [
+        "hub_msg_id",
+        "state",
+        "msg_id"
+      ],
+      "description": "Result of DelegateMessage."
+    },
+    "params_ListDashboards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_kind": {
+          "enum": [
+            "project",
+            "workspace",
+            "home"
+          ],
+          "description": "Only this kind's."
+        },
+        "owner_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "Only this project's or workspace's. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "description": "Params of ListDashboards. Group: /read. Answered by: hub. Needs: a signed-in user, or Home. Dashboards and their pins."
+    },
+    "result_ListDashboards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dashboards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dashboard"
+          },
+          "description": "Dashboards."
+        }
+      },
+      "required": [
+        "dashboards"
+      ],
+      "description": "Result of ListDashboards."
+    },
+    "params_PinPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The dashboard. Minted by the hub; its form is contract 03's."
+        },
+        "chat_id": {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The chat. Minted by the hub; its form is contract 03's."
+        },
+        "mount_id": {
+          "type": "string",
+          "description": "The pane's mount id.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "A label.",
+          "maxLength": 120
+        },
+        "place": {
+          "$ref": "#/$defs/place"
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "chat_id",
+        "mount_id"
+      ],
+      "description": "Params of PinPane. Group: /write. Answered by: hub. Needs: Read on the chat, and the dashboard's keeper, its owner's user, or Home. Pin a mirror of a chat's pane on a dashboard. Whatever draws it hands the pane's script no write to the chat's store; until a live route exists it shows the committed version through /preview/pane/:node/:mount (C-10.26)."
+    },
+    "result_PinPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pin": {
+          "$ref": "#/$defs/pin"
+        }
+      },
+      "required": [
+        "pin"
+      ],
+      "description": "Result of PinPane."
+    },
+    "params_UnpinPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The dashboard. Minted by the hub; its form is contract 03's."
+        },
+        "pin_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The pin. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "pin_id"
+      ],
+      "description": "Params of UnpinPane. Group: /write. Answered by: hub. Needs: as PinPane. Remove a pin."
+    },
+    "result_UnpinPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "removed": {
+          "type": "boolean",
+          "description": "Whether it was there."
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "description": "Result of UnpinPane."
+    },
+    "params_RenderDashboardPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The dashboard. Minted by the hub; its form is contract 03's."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable pane id on the dashboard (render's id rules).",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,127}$"
+        },
+        "html": {
+          "type": "string",
+          "description": "The pane's HTML/JS, as render takes it.",
+          "maxLength": 262144
+        },
+        "params": {
+          "type": "object",
+          "description": "Params injected into the pane script, as render takes them."
+        },
+        "store": {
+          "type": "object",
+          "description": "A patch merged into the dashboard daemon's store before the render (driver.setStore)."
+        },
+        "title": {
+          "type": "string",
+          "description": "The pane header label (params.title).",
+          "maxLength": 120
+        },
+        "after": {
+          "type": "string",
+          "description": "Place after this pane or markdown id, or start.",
+          "maxLength": 128
+        },
+        "place": {
+          "$ref": "#/$defs/place"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Take over a pane another writer owns."
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "id",
+        "html"
+      ],
+      "description": "Params of RenderDashboardPane. Group: /execute. Answered by: hub, through lib/driver.js createDriver({owner: 'swc-home'}) on the hub VM's loopback to the dashboard daemon, leasing service:swc-home (C-10.25). Needs: the Home principal svc_home (03 C-03.16), or the dashboard's keeper. Render a built pane on a dashboard. The answer is the driver envelope ({ok, id, owner, place?} or a soft reject); owner_taken after a hub restart answers conflict until the old pid is reaped."
+    },
+    "result_RenderDashboardPane": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "daemon": {
+          "$ref": "#/$defs/daemon_body"
+        }
+      },
+      "required": [
+        "daemon"
+      ],
+      "description": "Result of RenderDashboardPane."
+    },
+    "params_RegisterPushDevice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subscription": {
+          "$ref": "#/$defs/push_subscription"
+        },
+        "label": {
+          "type": "string",
+          "description": "A name for the device.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "platform": {
+          "enum": [
+            "ios",
+            "android",
+            "desktop",
+            "other"
+          ],
+          "description": "For display and for platform quirks of Web Push."
+        }
+      },
+      "required": [
+        "subscription",
+        "label"
+      ],
+      "description": "Params of RegisterPushDevice. Group: /write. Answered by: hub. Needs: a signed-in user (the subscription is theirs). Register a phone or browser for Web Push."
+    },
+    "result_RegisterPushDevice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The device. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "description": "Result of RegisterPushDevice."
+    },
+    "params_UnregisterPushDevice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The device. Minted by the hub; its form is contract 03's."
+        }
+      },
+      "required": [
+        "device_id"
+      ],
+      "description": "Params of UnregisterPushDevice. Group: /write. Answered by: hub. Needs: the device's user. Stop pushing to a device."
+    },
+    "result_UnregisterPushDevice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "removed": {
+          "type": "boolean",
+          "description": "Whether it was registered."
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "description": "Result of UnregisterPushDevice."
+    }
+  }
+}

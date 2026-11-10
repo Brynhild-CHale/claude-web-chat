@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "chat_id": "01jc3h5k7m9n1p3q5r7s9t1v3w",
+  "rev": 1,
+  "issued_at": 1793612400000,
+  "title": "Local stack chat",
+  "scope": { "kind": "folder", "folder_id": "f_5b2d8e1a90c47f36" },
+  "desired": "running",
+  "agent": { "want": "none", "launch": "manual", "requested_by": "user" },
+  "origins": {
+    "surface": "https://chat-01jc3h5k7m9n1p3q5r7s9t1v3w.hub.test:8443",
+    "answer": "https://chat-01jc3h5k7m9n1p3q5r7s9t1v3w-a.hub.test:8443",
+    "shell": "https://hub.test:8443"
+  }
+}

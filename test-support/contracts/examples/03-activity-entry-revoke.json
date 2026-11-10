@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "id": "act_8m7h4v7wg6qqwjg6n7zp3jb9bq",
+  "at": "2026-10-28T15:03:02Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": "cht_r618kehfmbv66mnewa5ndwhe72",
+  "kind": "relay.close",
+  "target": { "type": "relay", "id": "srf_734y25zmam4prrkqgcnv780r5b" },
+  "outcome": "accepted",
+  "related": "act_fmy9tydx1y4s2xef4dgfcg8b2g",
+  "close_code": 4401
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/08-answer-message.json",
+  "title": "Chrome embedding: the answer document's messages to its parent (stage A)",
+  "description": "The postMessage set between an answer document (served by the daemon's answer surface on the answer origin chat-<label>-a.<hub>, web-chat-dev.worktrees/ae-int/lib/server/answer-surface/index.js) and the window that frames it. Today that parent is the chrome (public/app/asks.js reads size, done and open-chat; the document reads mode: lib/server/answer-surface/public/answer.js:23-29, 106-130); under 08 C-08.7 the hub shell is a parent too, when its Needs you card frames the ask document, so the whole set is written down here. 08 adds pending and undone for the undo window (C-08.8). The document posts with targetOrigin '*' because it cannot know its parent's origin (no referrer) and frame-ancestors already limits who the parent can be (answer.js:27-29); a parent checks event.source against the frame's contentWindow and event.origin against the answer origin, as asks.js does. Every message is a hint with nothing in it a page could use: counts, an ask id, a decision word.",
+  "oneOf": [
+    { "$ref": "#/$defs/size" },
+    { "$ref": "#/$defs/done" },
+    { "$ref": "#/$defs/open_chat" },
+    { "$ref": "#/$defs/pending" },
+    { "$ref": "#/$defs/undone" },
+    { "$ref": "#/$defs/mode" }
+  ],
+  "$defs": {
+    "ask_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$", "description": "The ask's id (asks.js ASK_ID_RE)." },
+    "size": {
+      "type": "object",
+      "description": "Document to parent: my content height, on every change (answer.js createMessenger size). The parent sets the iframe's height, clamped to 22..480 (asks.js SIZE_MIN, SIZE_MAX). A frame that posts no size within 3 s never loaded (asks.js LOAD_MS).",
+      "additionalProperties": false,
+      "required": ["type", "height"],
+      "properties": {
+        "type": { "const": "wc-answer:size" },
+        "height": { "type": "integer", "minimum": 22, "maximum": 480 }
+      }
+    },
+    "done": {
+      "type": "object",
+      "description": "Document to parent: the ask was decided (answer.js createMessenger done). result is counts only: numbers and booleans, at most 2 KB (answer.js cleanResult), never a restore id or a command.",
+      "additionalProperties": false,
+      "required": ["type", "id", "outcome"],
+      "properties": {
+        "type": { "const": "wc-answer:done" },
+        "id": { "$ref": "#/$defs/ask_id" },
+        "outcome": { "type": "string", "pattern": "^[a-z][a-z-]{0,39}$", "description": "The outcome word (asks.js OUTCOME_RE)." },
+        "result": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+          "additionalProperties": { "type": ["number", "boolean"] }
+        }
+      }
+    },
+    "open_chat": {
+      "type": "object",
+      "description": "Document to parent: the user asked to open the chat at this ask (answer.js createMessenger openChat). The chrome opens its awaiting view; the shell activates the chat's tab.",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "wc-answer:open-chat" },
+        "id": { "$ref": "#/$defs/ask_id" }
+      }
+    },
+    "pending": {
+      "type": "object",
+      "description": "Document to parent (08 C-08.8, new): a decision click the document's guard allowed, and the undo window is open; the document sends nothing until undo_ms has passed, then POSTs decide with the version the click saw and posts done. Only sent when the document was opened with ?undo=<ms> greater than 0 (read by answer.js readContext; the shell appends it to frame_url). The parent draws its own pending state from it (the shell's 'Allowing... Undo' line) and never decides from it; Undo is the document's own control.",
+      "additionalProperties": false,
+      "required": ["type", "id", "decision", "undo_ms"],
+      "properties": {
+        "type": { "const": "wc-answer:pending" },
+        "id": { "$ref": "#/$defs/ask_id" },
+        "decision": { "type": "string", "pattern": "^[a-z][a-z-]{0,39}$", "description": "The decision word the document will send (the decide route's `decision`)." },
+        "undo_ms": { "type": "integer", "minimum": 1, "maximum": 10000, "description": "How long the window is, as the document read it from its URL." }
+      }
+    },
+    "undone": {
+      "type": "object",
+      "description": "Document to parent (08 C-08.8, new): the window ended without sending, on Undo, on a version change of the request or on the ask leaving pending (unload apart); nothing was sent, and the document shows what the ask is now. The parent drops its pending line.",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "wc-answer:undone" },
+        "id": { "$ref": "#/$defs/ask_id" }
+      }
+    },
+    "mode": {
+      "type": "object",
+      "description": "Parent to document: light or dark (answer.js onMessage). The document accepts it from window.parent only.",
+      "additionalProperties": false,
+      "required": ["type", "mode"],
+      "properties": {
+        "type": { "const": "wc-answer:mode" },
+        "mode": { "enum": ["light", "dark"] }
+      }
+    }
+  }
+}

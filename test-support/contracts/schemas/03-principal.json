@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-principal.json",
+  "title": "Principal",
+  "description": "Who did something (contract 03, C-03.1 to C-03.4). Carried on every write the hub accepts or relays and on every record the hub keeps about an action. writer_class keeps the six classes of web-chat 0.9's resolveWriter exactly (web-chat-dev.worktrees/ae-int/lib/server/domain/writers.js, the THE CLASSES comment and resolveWriter), with null for an actor that is not a surface writer. Ids only: never an email, a display name or a path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "user",
+    "machine",
+    "session",
+    "writer_class",
+    "verified",
+    "verified_by",
+    "via"
+  ],
+  "properties": {
+    "v": {
+      "description": "Record version of this shape.",
+      "const": 1
+    },
+    "user": {
+      "description": "The account responsible: a user (usr_) or a service user (svc_, Home is svc_home). null when no account is known: a person at the machine's own browser, a daemon-local writer, or the hub's own job.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_[0-9a-hjkmnp-tv-z]{26}|svc_home)$"
+        }
+      ]
+    },
+    "machine": {
+      "description": "The machine whose credential vouches for the actor: set for anything a connector reports or performs; null for a person or key authenticated at the hub.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "chat": {
+      "description": "The chat whose daemon the writer lives in (claude, service, driver, pane, or a local browser user), or the acting agent's own chat for an agent acting by grant through the hub; null or absent otherwise.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "session": {
+      "description": "The credential instance that was checked: a user session (ses_), a surface session (srf_), an API key (key_), a connector session (cxs_), an agent token (agt_), or cc:<uuid> for the Claude Code session id a daemon reports. null when nothing was checked.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^((ses|srf|key|cxs|agt)_[0-9a-hjkmnp-tv-z]{26}|cc:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+        }
+      ]
+    },
+    "writer_class": {
+      "description": "web-chat 0.9's writer class (lib/server/domain/writers.js): remote for a person or key acting through the hub, user only for a person at the machine's own browser, claude, service, driver, pane as the daemon resolves them. null for the hub's and the connector's own actions.",
+      "enum": [
+        "claude",
+        "service",
+        "driver",
+        "pane",
+        "user",
+        "remote",
+        null
+      ]
+    },
+    "owner": {
+      "description": "The 0.9 owner string of a writer the daemon verified: claude (Claude's writer token) or service:<name> (a service child's token, or a driver's lease, whose owner is always service:<component name>, lib/server/domain/writers.js isLeasableOwner). Reported only when verified is true and verified_by is daemon (C-03.1); an unverified writer's owner is whatever a tokenless caller declared (writers.js declaredWriter) and is not reported. Absent or null otherwise.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(claude|service:[a-z][a-z0-9-]*)$"
+        }
+      ]
+    },
+    "verified": {
+      "description": "true only when a credential for this exact principal was checked by the tier named in verified_by (C-03.3). Enforced rules key only on true.",
+      "type": "boolean"
+    },
+    "verified_by": {
+      "description": "Who checked the credential: hub (a user session, surface session, API key, agent token or machine credential) or daemon (Claude's writer token, a service child's token, a driver's lease). null when verified is false.",
+      "enum": [
+        "hub",
+        "daemon",
+        null
+      ]
+    },
+    "via": {
+      "description": "How the action entered the system: shell (desktop shell, including the framed chat origin), phone (phone app), notification (a Web Push notification action), api (an API key), mcp (an MCP server over the hub API: Home's with an API key, or another chat's agent with an agent token), scheduler (a queued message the hub released for its sender), connector (reported or performed by a machine's connector), hub (the hub's own job).",
+      "enum": [
+        "shell",
+        "phone",
+        "notification",
+        "api",
+        "mcp",
+        "scheduler",
+        "connector",
+        "hub"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verified": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "verified_by": {
+            "enum": [
+              "hub",
+              "daemon"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "verified_by": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verified_by": {
+            "const": "daemon"
+          }
+        },
+        "required": [
+          "verified_by"
+        ]
+      },
+      "then": {
+        "properties": {
+          "user": {
+            "const": null
+          },
+          "machine": {
+            "type": "string"
+          },
+          "writer_class": {
+            "enum": [
+              "claude",
+              "service",
+              "driver"
+            ]
+          },
+          "via": {
+            "const": "connector"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "via": {
+            "enum": [
+              "shell",
+              "phone",
+              "notification",
+              "api"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "machine": {
+            "const": null
+          },
+          "writer_class": {
+            "const": "remote"
+          },
+          "verified": {
+            "const": true
+          },
+          "verified_by": {
+            "const": "hub"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "via": {
+            "const": "mcp"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "writer_class": {
+            "const": "remote"
+          },
+          "verified": {
+            "const": true
+          },
+          "verified_by": {
+            "const": "hub"
+          }
+        },
+        "oneOf": [
+          {
+            "description": "An account's MCP server (Home's) holding an API key.",
+            "properties": {
+              "user": {
+                "type": "string"
+              },
+              "machine": {
+                "const": null
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^key_"
+              }
+            }
+          },
+          {
+            "description": "Another chat's agent acting by grant, holding an agent token (contract 10).",
+            "required": [
+              "chat"
+            ],
+            "properties": {
+              "user": {
+                "const": null
+              },
+              "machine": {
+                "type": "string"
+              },
+              "chat": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^agt_"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "via": {
+            "const": "hub"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "user": {
+            "const": null
+          },
+          "machine": {
+            "const": null
+          },
+          "session": {
+            "const": null
+          },
+          "writer_class": {
+            "const": null
+          },
+          "verified": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "writer_class": {
+            "enum": [
+              "pane",
+              "user"
+            ]
+          }
+        },
+        "required": [
+          "writer_class"
+        ]
+      },
+      "then": {
+        "properties": {
+          "verified": {
+            "const": false
+          },
+          "user": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "description": "C-03.1: a daemon reports owner only for a writer it verified.",
+      "if": {
+        "properties": {
+          "owner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner"
+        ]
+      },
+      "then": {
+        "properties": {
+          "verified": {
+            "const": true
+          },
+          "verified_by": {
+            "const": "daemon"
+          }
+        }
+      }
+    }
+  ]
+}

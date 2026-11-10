@@ -1,0 +1,77 @@
+{
+  "commit": "cad3e8e72a0cf9462bc655ad86f0b8186b11bd29",
+  "tag": "contracts-v1.4",
+  "lock_md_sha256": "f93182ab024999d2ae316426d9c1e0c7163bb5e2dfbd7271ede386a9a56fdcfc",
+  "unlocked_present": [
+    {
+      "path": "examples/08-answer-message-done.json",
+      "sha256": "bc4b7d77df13d6aec61ad56ca0d40eec4f6fd15209ef862262779f4661fd6c1b",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-answer-message-pending.json",
+      "sha256": "50f89ce8c43197cc4e5efb344dd6fea50530741b936f1cf39cb9eff0da79cdb8",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-hotkeys.json",
+      "sha256": "8c77f2cc6ed374f1fc2c7aacb8e3c953e22191f991b564c96b0e1c758687958f",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-key.json",
+      "sha256": "b5d37d85b8f9f69e6d72ddbea3aec7f13c42d89ebce8009088b19df09d5b17aa",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-ready.json",
+      "sha256": "4040a4025c8dd8981e7281b7230fab6698dd9b39706ea2578f504374831a3e92",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-status.json",
+      "sha256": "6bf679eb0778997980c41d4a96e16d4dce502bda06ca0d9aed26c17711340ae2",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-theme.json",
+      "sha256": "c65306637f39b6f8fde0792506f0733daadfa2976da598eec2fcd6696f81def2",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-frame-message-whoami.json",
+      "sha256": "f27607c0e10944ddfc9da8bef8546b71167cd7ef11a0e27c37c7f10556cad1e2",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-module-state.json",
+      "sha256": "0232a74c57ccc1764cf1ff6cbd7de75ba35de004ab95254b7e992a6e9e5f51f4",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "examples/08-mount-options.json",
+      "sha256": "79541613b52073305ba32b5fb35acb007e61709afdb823ef51a34518599b9b05",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "schemas/08-answer-message.json",
+      "sha256": "058d5cf256a9d30358270154f8b8e2b84a1db94d5bddc8c36f146d76ed2d5721",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "schemas/08-frame-message.json",
+      "sha256": "3ccf619741a2a6047518e7b90c73e31924ab9d236067923fa3857a5362ed37b5",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "schemas/08-module-state.json",
+      "sha256": "0264e5920b064cccd234241e8eb274419b9892d036abf7e322ffcd020d7e3184",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    },
+    {
+      "path": "schemas/08-mount-options.json",
+      "sha256": "47b0de1496b44338d15ff40cf50d9ba6a6a97c8e6a5a928baf31235ed1cf58b9",
+      "why": "contract 08 v2 draft, counted in LOCK.md validation lines, not sha-locked"
+    }
+  ]
+}

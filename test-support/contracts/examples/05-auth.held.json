@@ -1,0 +1,9 @@
+{
+  "ch": "control",
+  "kind": "auth.refused",
+  "id": "h2",
+  "seq": 2,
+  "re": "c1",
+  "reason": "key_held",
+  "hint": "This machine presented a key the hub does not know. Its owner can accept it in Settings > Machines; until then it stays offline."
+}

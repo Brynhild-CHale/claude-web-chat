@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "pairing_id": "pr_01jbz3hq2w5e7r9t1y3x5x7x9p",
+  "code": "7KQ2-M9XD",
+  "expires_at": 1793181700000,
+  "poll_after_ms": 2000,
+  "fingerprint": "SHA256:8RCAjKLqdjGVVg81ZpLmc+7/fOPgiDSG8BRyRVXXMGs",
+  "hub_id": "hub-hale"
+}

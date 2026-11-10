@@ -1,0 +1,11 @@
+{
+  "request": {
+    "x-wc-remote": "1",
+    "x-wc-level": "full",
+    "x-wc-grants": "status,read,message,write_page,files,steer",
+    "x-wc-decision": "dec_01jc3j6m8p0r2t4w6y8a0c2e4g"
+  },
+  "response": {
+    "x-wc-answer-origin": "https://chat-01jc3h5k7m9n1p3q5r7s9t1v3w-a.hub.test:8443"
+  }
+}

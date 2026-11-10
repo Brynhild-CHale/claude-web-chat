@@ -1,0 +1,126 @@
+{
+  "package": "claude-web-chat",
+  "web_chat_version": "0.9.0-alpha.4",
+  "everything_else_private": true,
+  "entries": [
+    {
+      "subpath": "./server",
+      "target": "./lib/server/index.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["createServer"],
+      "purpose": "Stand up a real daemon in ServerWebChat's real-daemon test leg; the hub's own daemons are spawned through ./bin/claude-web-chat, not created in-process. There is no root export: '.' would duplicate this entry.",
+      "consumers": ["hub-tests"]
+    },
+    {
+      "subpath": "./portal",
+      "target": "./lib/portal/index.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["createPortal", "csrfRefusal"],
+      "purpose": "csrfRefusal for the hub, and the portal in the hub's tests. The connector does not use it: it requires the shared lib/relay in-tree, which v1 does not export.",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./client",
+      "target": "./lib/client/index.js",
+      "kind": "module",
+      "stability": "stable",
+      "names": ["NoServerError", "HttpError", "request", "api", "get", "post", "probeHealth", "probeReachable", "subscribeSSE"],
+      "purpose": "The one daemon HTTP client, for the hub's own daemons on the hub VM (Home, dashboards).",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./driver",
+      "target": "./lib/driver.js",
+      "kind": "module",
+      "stability": "stable",
+      "names": ["createDriver", "guardDriver", "NoServerError"],
+      "purpose": "Render built panes and write the store of a dashboard daemon through the driver API (confirmed by contract 10, Q-10.9).",
+      "consumers": ["hub"]
+    },
+    {
+      "subpath": "./core/remote-policy",
+      "target": "./lib/core/remote-policy.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["RULES", "classify", "classifier", "refusalBody", "MIRROR_LEVELS", "rankLevel", "atLeast", "FRAME_RULES", "projectFrame", "TEXT_RULES", "stripText", "PRIVATE_RULES", "dropPrivate", "ANSWER_RULES", "classifyAnswer", "ELEMENT_POLICY"],
+      "pending_names": ["AUDIT_RULES", "projectAudit"],
+      "purpose": "The route and frame tables the connector enforces per level (contract 04), read by the hub to explain a refusal and by its policy tests; once they land, the ring-entry allowlist the hub applies again before it stores (contract 11, C-11.18).",
+      "consumers": ["hub", "hub-tests", "connector"]
+    },
+    {
+      "subpath": "./core/redact",
+      "target": "./lib/core/redact.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["createRedactor", "redactText", "redactValue", "redactPatch", "sensitivePath", "sensitiveKey", "classifyContext", "MASK", "WITHHELD", "NEVER_EMIT"],
+      "purpose": "The redactor at the boundary contract 11 fixes, so the hub masks with the same rules the machine does.",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./core/paths",
+      "target": "./lib/core/paths.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["redactHostPaths"],
+      "purpose": "Host-path masking of user-text summaries at the hub, with the chat's folder as root and the home its display implies (contract 11, C-11.8 and C-11.13), and in the hub's run of the same projection (C-11.18).",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./core/text",
+      "target": "./lib/core/text.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["stripControls"],
+      "purpose": "Strip control, bidi and invisible characters from user text before the hub shows or pushes it (contract 11).",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./core/versions",
+      "target": "./lib/core/versions.js",
+      "kind": "module",
+      "stability": "stable",
+      "names": ["packageVersion", "compareVersions", "isPrerelease", "isDevVersion", "PROTOCOL_VERSION", "PORTAL_PROTOCOL_VERSION", "SCHEMA_VERSION", "NODE_FLOOR", "INSTALL_SH_URL"],
+      "pending_names": ["CONNECTOR_PROTOCOL_VERSION", "CONNECTOR_PROTOCOL_MIN"],
+      "purpose": "The one version comparator, the version facts and the install.sh URL the compat message names, so the hub judges the window exactly as web-chat orders versions; the connector protocol constants once they land (C-12.20).",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./tunnel/config",
+      "target": "./lib/tunnel/config.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["sessionHost", "answerHost"],
+      "purpose": "The per-chat hostname scheme the hub copies. parseHost is not public: its ID_RE takes 8 hex characters and returns null for a 26-character chat label.",
+      "consumers": ["hub"]
+    },
+    {
+      "subpath": "./util/registry",
+      "target": "./lib/util/registry.js",
+      "kind": "module",
+      "stability": "provisional",
+      "names": ["instanceId", "readInstances", "sessions", "enrichSessions", "versionSkew", "versionNote", "daemonFor"],
+      "purpose": "Read the hub VM's own instance registry and phrase daemon and session skew the way the picker does.",
+      "consumers": ["hub", "connector"]
+    },
+    {
+      "subpath": "./bin/*",
+      "target": "./bin/*.js",
+      "kind": "executable",
+      "stability": "stable",
+      "names": [],
+      "purpose": "Resolve claude-web-chat, claude-web-chat-mcp and claude-web-chat-hook to spawn them on the hub VM; the argv contract of connect is contract 06's.",
+      "consumers": ["hub", "hub-tests"]
+    },
+    {
+      "subpath": "./package.json",
+      "target": "./package.json",
+      "kind": "metadata",
+      "stability": "stable",
+      "names": [],
+      "purpose": "Read the dependency's version, which the hub reports as hub.web_chat in compat.",
+      "consumers": ["hub"]
+    }
+  ]
+}

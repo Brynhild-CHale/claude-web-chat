@@ -1,0 +1,21 @@
+{
+  "ch": "queue",
+  "kind": "queue.ack",
+  "id": "c501",
+  "seq": 1,
+  "re": "h500",
+  "ack": {
+    "type": "queue.ack",
+    "hub_msg_id": "hm_01JBF7A0B1C2D3E4F5G6H7J8K9",
+    "chat_id": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+    "attempt": 2,
+    "outcome": "duplicate",
+    "daemon": {
+      "boot": "48302:1793181402551",
+      "msg_id": "m-3fa91c07",
+      "item_id": "q41",
+      "mode": "queued"
+    },
+    "dedupe": "connector"
+  }
+}

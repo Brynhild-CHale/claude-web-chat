@@ -1,0 +1,14 @@
+{
+  "ch": "relay",
+  "kind": "relay.ws.refused",
+  "id": "c311",
+  "seq": 6,
+  "re": "h211",
+  "stream": 20,
+  "status": 502,
+  "body": {
+    "ok": false,
+    "remote": true,
+    "error": "this session's daemon is not answering"
+  }
+}

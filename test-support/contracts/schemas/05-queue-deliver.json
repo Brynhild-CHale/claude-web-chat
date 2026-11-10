@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-queue-deliver.json",
+  "title": "Connector queue delivery",
+  "description": "Hub to connector delivery of hub-queued composer messages (C-05.44 to C-05.46). Bodies, idempotency (hub_msg_id sent as client_msg_id), outcomes and replay are contract 07's. The connector posts each to the daemon's POST /api/queue/message (web-chat-dev.worktrees/ae-int/lib/server/routes/queue.js) the way the relayed chrome does. Push to Claude is not here: it is a relayed POST /api/queue/push (contract 07, C-07.24; contract 10, C-10.14).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/deliver"
+    },
+    {
+      "$ref": "#/$defs/ack"
+    }
+  ],
+  "$defs": {
+    "deliver": {
+      "type": "object",
+      "description": "One hub-queued message for one chat (C-05.44; contract 07, C-07.24 to C-07.29). The connector posts it to the daemon as a relayed request, never as a host request (C-05.45). Direction: hub to connector.",
+      "properties": {
+        "ch": {
+          "const": "queue",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "queue.deliver",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "delivery": {
+          "$ref": "07-queue-deliver.json",
+          "description": "Contract 07's delivery body: hub_msg_id, attempt, the composer fields, deliver_within_ms."
+        },
+        "actor": {
+          "$ref": "03-actor-header.json",
+          "description": "The X-WC-Actor value for this request, built by the hub and copied verbatim by the connector (contract 03, C-03.19 to C-03.21). The connector never builds, alters or reuses one."
+        },
+        "decision": {
+          "$ref": "04-policy-decision.json",
+          "description": "The current policy decision for this principal on this chat (contract 04, C-04.8). The connector stamps X-WC-Level, X-WC-Grants and X-WC-Decision from it and gates the route with it."
+        },
+        "decision_ref": {
+          "type": "object",
+          "description": "Instead of `decision`: a decision the hub already sent on this connection in a relay.decision frame (C-05.31).",
+          "properties": {
+            "decision_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "description": "The decision's decision_id."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The decision's version."
+            }
+          },
+          "required": [
+            "decision_id",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "device": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "mobile"
+          ],
+          "description": "The viewer's device class as the hub saw it. Informative: the daemon's own push provenance comes from the request (lib/server/domain/queue.js provenance)."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "delivery",
+        "actor"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "decision"
+          ]
+        },
+        {
+          "required": [
+            "decision_ref"
+          ]
+        }
+      ]
+    },
+    "ack": {
+      "type": "object",
+      "description": "What became of one delivery (contract 07, C-07.27), sent only after the daemon answered. Direction: connector to hub.",
+      "properties": {
+        "ch": {
+          "const": "queue",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "queue.ack",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. A reply names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the frame this one answers."
+        },
+        "ack": {
+          "$ref": "07-ack.json#/$defs/queueAck",
+          "description": "Contract 07's queue ack body."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "ack"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "ch": "control",
+  "kind": "machine.facts",
+  "id": "c3",
+  "seq": 3,
+  "at": 1793558460800,
+  "hostname": "studio-mac.local",
+  "login": "dev-hale",
+  "tailnet_name": null,
+  "folders": [
+    {
+      "id": "f_29491e3e12425c85",
+      "path": "/Users/dev-hale/Dev/contracts-review",
+      "display": "~/Dev/contracts-review",
+      "label": "contracts-review",
+      "access": "read-write",
+      "offered_at": 1793550000000
+    }
+  ],
+  "settings": {
+    "agents_at_once": 1,
+    "local_cap": null,
+    "accept_new_chats": true,
+    "let_home_start_agents": false,
+    "paused": false,
+    "rev": 2
+  },
+  "mcp_servers": [
+    "web-chat"
+  ],
+  "skills": [
+    "web-chat",
+    "respond-to-comment"
+  ],
+  "ceiling": "full"
+}

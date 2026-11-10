@@ -1,0 +1,5 @@
+{
+  "ok": false,
+  "error": "clock_skew",
+  "hint": "This machine's clock is more than 120 s from the hub's. Set the clock, then run claude-web-chat connect again."
+}

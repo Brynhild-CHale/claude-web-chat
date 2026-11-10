@@ -1,0 +1,19 @@
+{
+  "ch": "relay",
+  "kind": "relay.http.response",
+  "id": "c301",
+  "seq": 1,
+  "re": "h200",
+  "stream": 17,
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": "37",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "cache-control": "no-store",
+    "content-security-policy": "frame-ancestors https://hub.hale.dev"
+  },
+  "body": "eyJ2IjoxLCJlbmFibGVkIjp0cnVlLCJjb250ZW50Ijp0cnVlfQ==",
+  "end": true
+}

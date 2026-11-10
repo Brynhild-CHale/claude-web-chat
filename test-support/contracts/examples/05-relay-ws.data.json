@@ -1,0 +1,9 @@
+{
+  "ch": "relay",
+  "kind": "relay.ws.data",
+  "id": "c312",
+  "seq": 7,
+  "stream": 19,
+  "binary": false,
+  "data": "{\"type\":\"lock\",\"lock\":null}"
+}

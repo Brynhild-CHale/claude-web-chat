@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "type": "GetChatAttach",
+  "request_id": "rq_01JBX5D6W9",
+  "result": {
+    "chat_id": "cht_r618kehfmbv66mnewa5ndwhe72",
+    "machine": {
+      "id": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t",
+      "name": "studio-mac",
+      "tailnet_name": null,
+      "login": "dev-hale",
+      "online": true
+    },
+    "folder": {
+      "id": "f_29491e3e12425c85",
+      "display": "~/Dev/contracts-review"
+    },
+    "session": {
+      "multiplexer": "tmux",
+      "name": "wc-r618kehfmbv66mnewa5ndwhe72"
+    },
+    "launch": "connector",
+    "commands": {
+      "terminal": null,
+      "shell": null,
+      "code": null,
+      "unavailable": {
+        "terminal": "no-tailnet",
+        "shell": "no-tailnet",
+        "code": "no-tailnet"
+      }
+    }
+  }
+}

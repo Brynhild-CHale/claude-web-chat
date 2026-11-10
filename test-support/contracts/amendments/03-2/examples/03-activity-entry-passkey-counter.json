@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_3x3rmpdnr08ahm4vfpv5zp74mc",
+  "at": "2026-10-30T09:47:58.206Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "auth.sign_in_refused",
+  "target": {
+    "type": "credential",
+    "id": "pky_sbt1z4wr7y3794rzv2fcp2d2tz"
+  },
+  "outcome": "refused:passkey_counter",
+  "summary": {
+    "text": "Passkey sign-in refused: signature counter did not increase (passkey suspect)",
+    "source": "template",
+    "template": "auth.passkey-counter",
+    "chars": 77,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

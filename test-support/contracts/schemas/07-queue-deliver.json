@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/07-queue-deliver.json",
+  "title": "Queue delivery",
+  "description": "Hub to connector: place one hub-queued message in a chat's daemon queue (C-07.26). The connector sends it as a relayed POST /api/queue/message (05 C-05.45), never a host request, with hub_msg_id as client_msg_id and the actor header (03) when it holds one. The message fields are those POST /api/queue/message takes (web-chat-dev.worktrees/ae-int/lib/server/composer.js badField and validateMessage); the limits are composer.js's MESSAGE_MAX 3000, SKILL_ARGS_MAX 300, FILES_MAX 5, PATH_MAX 240.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "hub_msg_id",
+    "chat_id",
+    "attempt",
+    "enqueued_at",
+    "message"
+  ],
+  "properties": {
+    "type": {
+      "const": "queue.deliver",
+      "description": "Discriminator."
+    },
+    "hub_msg_id": {
+      "type": "string",
+      "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "The hub's message id: hm_ and a ULID, minted once when the hub accepts the message (C-07.25). Also sent to the daemon as client_msg_id."
+    },
+    "chat_id": {
+      "type": "string",
+      "pattern": "^[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "The chat label (contract 03 section 2): the chat id without its `cht_` prefix, as every 05 frame names a chat on the link. The hub maps it to the chat id it records."
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1 on first send, plus 1 on each redelivery (C-07.28)."
+    },
+    "enqueued_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hub clock when the hub accepted the message. For display only on the connector (C-07.31)."
+    },
+    "deliver_within_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Remaining life at send time, measured by the connector from receipt on a monotonic clock; past it the connector answers expired without posting (C-07.27, C-07.31). Absent: no expiry."
+    },
+    "from": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true,
+      "description": "Who sent it, as contract 03's principal, for Activity. Not sent to the daemon in the body. The X-WC-Actor the connector stamps on the delivery comes from 05's frame field `actor`, never from this field (C-05.44)."
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The body the connector POSTs, with hub_msg_id added as client_msg_id.",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 3000,
+          "description": "The message text. The daemon normalises it and refuses over MESSAGE_MAX (too_large)."
+        },
+        "skill": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9:_-]{1,64}$",
+                  "description": "The skill (composer.js SKILL_NAME_RE)."
+                },
+                "args": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "description": "The skill's arguments."
+                }
+              }
+            }
+          ],
+          "description": "A skill to run, or null."
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 5,
+          "description": "Project-relative paths to attach.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "description": "A path."
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240,
+                    "description": "A path."
+                  }
+                },
+                "description": "A path as an object, as the composer sends it."
+              }
+            ]
+          }
+        },
+        "send": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "now",
+            "hold"
+          ],
+          "description": "composer.js SEND_MODES; auto by default."
+        },
+        "conversation_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            }
+          ],
+          "description": "The conversation to target (composer.js CONVERSATION_ID_RE), or null."
+        },
+        "device": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "mobile"
+          ],
+          "description": "The sender's device, which pushProvenance records with origin remote (web-chat-dev.worktrees/ae-int/lib/server/routes/queue.js:28-32; lib/server/domain/queue.js DEVICES). Absent: the daemon falls back to the User-Agent (C-07.26)."
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "skill"
+          ]
+        },
+        {
+          "required": [
+            "files"
+          ]
+        }
+      ]
+    }
+  }
+}

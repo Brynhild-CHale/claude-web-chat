@@ -1,0 +1,16 @@
+{
+  "ch": "relay",
+  "kind": "relay.http.response",
+  "id": "c302",
+  "seq": 2,
+  "re": "h232",
+  "stream": 23,
+  "status": 403,
+  "headers": {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer"
+  },
+  "body": "eyJvayI6ZmFsc2UsInJlbW90ZSI6dHJ1ZSwiaGludCI6InRoaXMgbmVlZHMgV3JpdGUgcGFnZSBvbiB0aGlzIGNoYXQsIHdoaWNoIG9ubHkgaXRzIG93bmVyIGhvbGRzIGZvciBub3ciLCJtaXJyb3IiOiJmdWxsIiwiYXV0aG9yaXR5Ijp7InJlYXNvbiI6ImxldmVsIiwibmVlZCI6IndyaXRlX3BhZ2UiLCJydWxlIjoiUE9TVCAvYXBpL3N0b3JlIiwiZGVjaXNpb25faWQiOiJkZWNfUDVXOFoyTjZIVDBDIn19",
+  "end": true
+}

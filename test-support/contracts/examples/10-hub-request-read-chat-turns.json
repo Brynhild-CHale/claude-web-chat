@@ -1,0 +1,10 @@
+{
+  "type": "ReadChatTurns",
+  "params": {
+    "chat_id": "cht_01jbzdf6h8j0k2m4n6p8q0r2s4",
+    "conversation_id": "5f0c2a9e-3b7d-4e61-9a2f-8c1d0b4e7a35",
+    "before": 42,
+    "limit": 20,
+    "items": "summary"
+  }
+}

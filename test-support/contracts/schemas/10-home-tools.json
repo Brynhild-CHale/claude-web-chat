@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-home-tools.json",
+  "title": "Home's MCP tools (contract 10)",
+  "description": "The tools the hub-side MCP server `hub` gives Home's Claude Code session on the hub VM, beside web-chat's 24 against Home's own daemon. Each tool is a thin caller of the typed requests it names (10-hub-request.json) under the Home principal, the service user svc_home authenticating with its api_key (03 C-03.16); it holds no right the requests do not grant. Contract 10, C-10.23 to C-10.28.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "catalogue",
+    "catalogue_version",
+    "server_name",
+    "tools"
+  ],
+  "properties": {
+    "catalogue": {
+      "const": "swc-home-tools",
+      "description": "Which catalogue this is."
+    },
+    "catalogue_version": {
+      "type": "string",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Semver; additive within 1.x (C-10.27)."
+    },
+    "server_name": {
+      "const": "hub",
+      "description": "The MCP server name Home's session registers."
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "enum": [
+              "list_chats",
+              "read_chat",
+              "read_activity",
+              "message_chat",
+              "pin_to_dashboard",
+              "render_dashboard_pane"
+            ],
+            "description": "The tool name; Claude Code shows it as mcp__hub__<name>."
+          },
+          "description": {
+            "type": "string",
+            "description": "The description Claude reads. Load-bearing: it is part of the contract (C-10.27)."
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "The tool's inputSchema, written in web-chat's style (properties described, required named)."
+          },
+          "backing": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "GetApiInfo",
+                "ListMachines",
+                "GetMachine",
+                "BeginPairing",
+                "CompletePairing",
+                "RenameMachine",
+                "PauseMachine",
+                "DisconnectMachine",
+                "SetMachineCaps",
+                "ListMachineFolders",
+                "ListWorkspaces",
+                "CreateWorkspace",
+                "ArchiveWorkspace",
+                "ListProjects",
+                "CreateProject",
+                "ArchiveProject",
+                "ListChats",
+                "GetChat",
+                "CreateChat",
+                "ArchiveChat",
+                "RestoreChat",
+                "AssignChatToMachine",
+                "SetChatScope",
+                "SendMessage",
+                "HoldMessage",
+                "TakeBackMessage",
+                "PushQueue",
+                "ReadQueue",
+                "ReadChatMirror",
+                "ReadChatTurns",
+                "ListPendingAsks",
+                "DecideAsk",
+                "ReadActivity",
+                "AskHome",
+                "DelegateMessage",
+                "ListDashboards",
+                "PinPane",
+                "UnpinPane",
+                "RenderDashboardPane",
+                "RegisterPushDevice",
+                "UnregisterPushDevice"
+              ],
+              "description": "A hub request type."
+            },
+            "description": "The typed requests the tool makes (C-10.23).",
+            "minItems": 1
+          },
+          "needs": {
+            "type": "string",
+            "description": "What the Home principal must hold, in 04's words."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "inputSchema",
+          "backing",
+          "needs"
+        ],
+        "description": "One Home tool."
+      },
+      "description": "The tools."
+    }
+  },
+  "$defs": {
+    "input_list_chats": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "A workspace name or id; only its chats."
+        },
+        "project": {
+          "type": "string",
+          "description": "A project name or id; only its chats."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "working",
+            "needs_you",
+            "idle",
+            "offline",
+            "archived"
+          ],
+          "description": "Only chats in this state."
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived chats (they are read only). Default false."
+        }
+      }
+    },
+    "input_read_chat": {
+      "type": "object",
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "description": "The chat, from list_chats."
+        },
+        "since": {
+          "type": "number",
+          "description": "Epoch ms; list only conversations active since then. Default: 24 hours back."
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "Which listed conversation's turns to return. Default: the most recently active one."
+        },
+        "before": {
+          "type": "number",
+          "description": "Page back: the `next_before` of your previous read of that conversation; turns before it. Default: the newest page."
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "status",
+              "queue",
+              "asks",
+              "conversation"
+            ]
+          },
+          "description": "Which parts to return. Default: all four."
+        }
+      },
+      "required": [
+        "chat_id"
+      ]
+    },
+    "input_read_activity": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "type": "string",
+          "description": "chat:<chat_id>, machine:<machine_id>, or hub."
+        },
+        "since": {
+          "type": "number",
+          "description": "The last seq you read on this stream."
+        },
+        "epoch": {
+          "type": "string",
+          "description": "The epoch that since belongs to, from the previous answer."
+        },
+        "limit": {
+          "type": "number",
+          "description": "At most this many entries, up to 500. Default 100."
+        }
+      },
+      "required": [
+        "stream"
+      ]
+    },
+    "input_message_chat": {
+      "type": "object",
+      "properties": {
+        "chat_id": {
+          "type": "string",
+          "description": "The chat, from list_chats."
+        },
+        "text": {
+          "type": "string",
+          "description": "The message, written as the user would write it to that chat. At most 3000 characters."
+        },
+        "reason": {
+          "type": "string",
+          "description": "One line for the user's Today board: why you sent it. At most 280 characters."
+        },
+        "send": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "now",
+            "hold"
+          ],
+          "description": "auto (default): when that Claude is free; now: at once; hold: queue it unsent for the user."
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "A conversation in that chat, if not its primary one."
+        }
+      },
+      "required": [
+        "chat_id",
+        "text",
+        "reason"
+      ]
+    },
+    "input_pin_to_dashboard": {
+      "type": "object",
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "description": "The dashboard (list it through the user's request or the Board)."
+        },
+        "chat_id": {
+          "type": "string",
+          "description": "The chat whose pane to mirror."
+        },
+        "mount_id": {
+          "type": "string",
+          "description": "The pane's mount id on that chat's page."
+        },
+        "title": {
+          "type": "string",
+          "description": "A label for the mirror; default the pane's own."
+        },
+        "place": {
+          "type": "object",
+          "description": "Proposed placement on the dashboard's 12-column grid, as web-chat's render takes it: col (1 to 12), span (2 to 12), rows (2 to 24 rows of 40px). Omit for full width.",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "span": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 12
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 24
+            }
+          }
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "chat_id",
+        "mount_id"
+      ]
+    },
+    "input_render_dashboard_pane": {
+      "type": "object",
+      "properties": {
+        "dashboard_id": {
+          "type": "string",
+          "description": "The dashboard."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable pane id on the dashboard; reuse it to update in place. Prefix it (e.g. \"home-releases\")."
+        },
+        "html": {
+          "type": "string",
+          "description": "The pane's HTML/JS, as web-chat's render takes it."
+        },
+        "params": {
+          "type": "object",
+          "description": "Injected into the pane script as `params`. `title` labels the pane header."
+        },
+        "store": {
+          "type": "object",
+          "description": "A patch merged into the dashboard's store before the render; the pane can read and subscribe to it."
+        },
+        "after": {
+          "type": "string",
+          "description": "Place the pane after this pane or markdown id, or \"start\"."
+        },
+        "place": {
+          "type": "object",
+          "description": "Proposed placement on the dashboard's 12-column grid, as web-chat's render takes it: col (1 to 12), span (2 to 12), rows (2 to 24 rows of 40px). Omit for full width.",
+          "properties": {
+            "col": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            },
+            "span": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 12
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 24
+            }
+          }
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Take over a pane another writer owns. Only when the user asked."
+        }
+      },
+      "required": [
+        "dashboard_id",
+        "id",
+        "html"
+      ]
+    }
+  }
+}

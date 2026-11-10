@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-activity-entry.json",
+  "title": "Activity entry",
+  "description": "One action as the hub records it (contract 03, C-03.25 to C-03.29). The relayed-request part generalises the portal's remote access log line {ts, email, instance, method, path, status} (web-chat-dev.worktrees/ae-int/lib/portal/access-log.js) with a principal in place of the email and hub ids in place of the instance id; targets keep ids only, as the control audit's auditTarget does (lib/server/control/index.js). No field holds body content, a secret or a query string; the optional summary is the one field that may hold words, under contract 11.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "id",
+    "at",
+    "actor",
+    "machine",
+    "chat",
+    "kind",
+    "target",
+    "outcome"
+  ],
+  "properties": {
+    "v": {
+      "description": "Entry format version.",
+      "const": 1
+    },
+    "id": {
+      "description": "The entry id, minted before a relayed request is forwarded so it can ride X-WC-Actor.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "at": {
+      "description": "When the hub recorded the outcome, RFC 3339 UTC. Ordering across entries is contract 07's.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "description": "Who did it.",
+      "$ref": "https://web-chat-contracts/schemas/03-principal.json"
+    },
+    "machine": {
+      "description": "The machine the action touched (the chat's machine for a relayed request), or null for a hub-only action.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "chat": {
+      "description": "The chat the action touched, or null.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "kind": {
+      "description": "What happened. Relayed routes map to kinds by the table in C-03.27; the rest are hub and connector events. A closed list for round v1; a new kind is an amendment.",
+      "enum": [
+        "auth.sign_in",
+        "auth.sign_in_refused",
+        "auth.sign_out",
+        "auth.epoch_bump",
+        "session.revoke",
+        "session.expire",
+        "surface.enter",
+        "key.create",
+        "key.revoke",
+        "key.expire",
+        "machine.pair",
+        "machine.connect",
+        "machine.disconnect",
+        "machine.rotate_key",
+        "machine.revoke",
+        "machine.settings",
+        "chat.create",
+        "chat.start",
+        "chat.stop",
+        "chat.archive",
+        "relay.open",
+        "relay.close",
+        "relay.refused",
+        "relay.write",
+        "message.send",
+        "message.release",
+        "queue.push",
+        "queue.edit",
+        "queue.remove",
+        "ask.decide",
+        "control.action",
+        "element.write",
+        "store.write",
+        "page.write",
+        "graph.write",
+        "settings.write",
+        "attachment.add",
+        "grant.set",
+        "grant.revoke",
+        "device.register",
+        "device.revoke"
+      ]
+    },
+    "target": {
+      "description": "What the action was on. ids only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "description": "The kind of thing acted on.",
+          "enum": [
+            "route",
+            "relay",
+            "message",
+            "ask",
+            "control",
+            "element",
+            "chat",
+            "machine",
+            "credential",
+            "device",
+            "grant",
+            "user"
+          ]
+        },
+        "id": {
+          "description": "Its id when it has one: a hub id, a daemon id from the path (ask id, element id, queue item id), or a credential id. Never a secret.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_:.@-]+$"
+        },
+        "action": {
+          "description": "For control.action: the action name as the daemon's control table names it (lib/server/control/index.js), or task-stop.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "method": {
+          "description": "For a relayed request: the HTTP method, or WS for an upgrade (as access-log.js writes it).",
+          "enum": [
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE",
+            "WS"
+          ]
+        },
+        "path": {
+          "description": "For a relayed request: the path without query or fragment, at most 512 characters (access-log.js).",
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^/[^?#]*$"
+        },
+        "origin": {
+          "description": "For a relayed request: which chat origin it arrived on.",
+          "enum": [
+            "session",
+            "answer"
+          ]
+        }
+      }
+    },
+    "outcome": {
+      "description": "accepted, refused:<code> (the hub's or the daemon's refusal word, or the HTTP status), or failed (upstream error, timeout).",
+      "type": "string",
+      "pattern": "^(accepted|failed|refused:[a-z0-9_-]{1,40})$"
+    },
+    "status": {
+      "description": "For a relayed request: the HTTP status returned to the client (101 for an accepted upgrade). Absent for hub-only actions.",
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "related": {
+      "description": "Another entry this one belongs with: a relay.close names its relay.open, a message.release names the message.send that queued it, a revocation's cascade names the event that caused it.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "close_code": {
+      "description": "For relay.close: the WebSocket close code sent to the viewer (4401, 4403, 4503 as in lib/portal/ws-relay.js, or a standard code).",
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 4999
+    },
+    "summary": {
+      "description": "At most one summary, the only field of an entry that may hold words; its sources, cap and redaction are contract 11's (C-11.12, C-11.13).",
+      "$ref": "https://web-chat-contracts/schemas/11-activity-summary.json"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "relay.open",
+              "relay.write",
+              "message.send",
+              "queue.push",
+              "queue.edit",
+              "queue.remove",
+              "ask.decide",
+              "control.action",
+              "element.write",
+              "store.write",
+              "page.write",
+              "graph.write",
+              "settings.write",
+              "attachment.add"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "machine": {
+            "type": "string"
+          },
+          "chat": {
+            "type": "string"
+          },
+          "target": {
+            "required": [
+              "type",
+              "method",
+              "path"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

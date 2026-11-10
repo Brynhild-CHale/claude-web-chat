@@ -1,0 +1,12 @@
+{
+  "ch": "events",
+  "kind": "turn.begun",
+  "id": "c402",
+  "seq": 2,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "boot": "48302:1793181402551",
+  "daemon_seq": 312,
+  "daemon_at": 1793181449870,
+  "author": "wake",
+  "session_id": "5c0e7a52-1d4b-4c7e-9e1a-6f3b2d8c9a10"
+}

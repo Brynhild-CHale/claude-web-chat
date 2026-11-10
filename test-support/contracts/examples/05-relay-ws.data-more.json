@@ -1,0 +1,10 @@
+{
+  "ch": "relay",
+  "kind": "relay.ws.data",
+  "id": "c313",
+  "seq": 8,
+  "stream": 19,
+  "binary": false,
+  "more": true,
+  "data": "{\"type\":\"hello\",\"store\":{\"plan\":{\"steps\":[\"pair\",\"connect\""
+}

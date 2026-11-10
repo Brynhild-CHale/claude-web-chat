@@ -1,0 +1,22 @@
+{
+  "ch": "relay",
+  "kind": "relay.ws.open",
+  "id": "h210",
+  "seq": 11,
+  "stream": 19,
+  "chat": "01jbz5c2d7e9f3g4h6j8k0m2n4",
+  "path": "/ws",
+  "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "session": "srf_734y25zmam4prrkqgcnv780r5b",
+    "via": "shell",
+    "activity": "act_fmy9tydx1y4s2xef4dgfcg8b2g"
+  },
+  "decision_ref": {
+    "decision_id": "dec_01jbzeg7j9k1m3n5p7q9r1s3t5",
+    "version": 3
+  },
+  "device": "mobile"
+}

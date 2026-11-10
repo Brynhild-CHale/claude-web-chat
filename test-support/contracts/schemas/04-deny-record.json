@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/04-deny-record.json",
+  "title": "Authority deny record (contract 04)",
+  "description": "One denial, as the enforcer records it (C-04.27). Every record is a log line in the hub's audit store (the connector ships its own over contract 05); a record with sink 'activity' is also an Activity entry on the reached chat, and then carries a contract 11 summary. Extends the line web-chat's remote access log writes today ({ts, email, instance, method, path, status}, web-chat-dev.worktrees/ae-int/lib/portal/access-log.js), which records writes and upgrades only and names an email, not a principal. Identical denials are coalesced: count says how many, first_ts and ts bound them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "first_ts", "count", "enforcer", "sink", "principal", "chat_id", "machine_id", "decision_id", "origin", "method", "path", "rule", "need", "reason", "status"],
+  "properties": {
+    "ts": { "type": "string", "format": "date-time", "description": "The last denial the record covers." },
+    "first_ts": { "type": "string", "format": "date-time", "description": "The first denial the record covers; equal to ts when count is 1." },
+    "count": { "type": "integer", "minimum": 1, "description": "Identical denials coalesced into this record: same principal, chat, rule, reason, within 60 s for a log line and 10 minutes for an Activity entry." },
+    "enforcer": {
+      "enum": ["hub", "connector", "daemon"],
+      "description": "Who refused. hub: the hub's front (no Read, or its pre-check). connector: the route table or the inbound message filter. daemon: the daemon refused what the connector let through, which the connector sees as the daemon's 403: reason 'second-lock' when the body carries mirror (requireMirror, the queue) or is the answer engine's refusal (a 403 to an answer-origin request whose body is {ok: false, remote: true, error}, lib/server/isolated-origin.js), reason 'daemon-rule' for any other daemon 403, a surface-origin one with remote: true and no mirror included (C-04.21)."
+    },
+    "sink": {
+      "enum": ["log", "activity"],
+      "description": "log: an audit line only. activity: also an Activity entry on the reached chat (C-04.27 says when)."
+    },
+    "principal": {
+      "$ref": "https://web-chat-contracts/schemas/03-principal.json",
+      "description": "Who was refused: the contract 03 principal record (schemas/03-principal.json), as the decision carries it."
+    },
+    "chat_id": { "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{26}$", "description": "The chat the request was for, by its label (contract 03 section 2)." },
+    "machine_id": {
+      "description": "The chat's machine, or null when the hub refused before choosing one.",
+      "oneOf": [ { "type": "null" }, { "type": "string", "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$" } ]
+    },
+    "decision_id": {
+      "description": "The decision the request was judged with, or null when none was current.",
+      "oneOf": [ { "type": "null" }, { "type": "string", "pattern": "^dec_[0-9a-hjkmnp-tv-z]{26}$" } ]
+    },
+    "origin": {
+      "enum": ["session", "answer", "ws-inbound"],
+      "description": "session or answer: an HTTP request or upgrade on that origin. ws-inbound: a viewer-to-daemon socket message the filter dropped (C-04.18)."
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|WS|MSG)$",
+      "description": "The HTTP method; WS for an upgrade (as access-log.js writes it); MSG for a dropped socket message."
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "The request path without its query string, cut at 512 (as access-log.js records it); for a dropped socket message, the message type."
+    },
+    "rule": {
+      "description": "The row that decided, as remote-policy keyOf() prints it, or null for a default deny, a malformed path or a refusal before the table.",
+      "oneOf": [ { "type": "null" }, { "type": "string", "pattern": "^(\\*|[A-Z]+(\\|[A-Z]+)*) /" } ]
+    },
+    "need": {
+      "description": "The table level the row needs, or null.",
+      "oneOf": [ { "type": "null" }, { "enum": ["status", "read", "message", "write_page", "files", "host_only", "retired"] } ]
+    },
+    "reason": { "$ref": "#/$defs/reason" },
+    "status": {
+      "description": "The HTTP status answered: 403, or 404 for no-access (the hub answers a chat the principal cannot read as it answers one that does not exist); null for a dropped socket message.",
+      "oneOf": [ { "type": "null" }, { "type": "integer", "minimum": 400, "maximum": 599 } ]
+    },
+    "summary": {
+      "$ref": "https://web-chat-contracts/schemas/11-activity-summary.json",
+      "description": "Present when sink is 'activity': the entry's one line, built from a hub template (contract 11)."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "sink": { "const": "activity" } }, "required": ["sink"] },
+      "then": { "required": ["summary"] },
+      "else": { "properties": { "summary": false } }
+    }
+  ],
+  "$defs": {
+    "reason": {
+      "enum": ["no-access", "level", "requires", "host-only", "retired", "unknown", "malformed", "query", "ceiling", "archived", "expired", "no-decision", "second-lock", "daemon-rule"],
+      "description": "no-access: the principal holds no Read (the hub's 404). level: the row's level is not held. requires: a specific the row needs is false. host-only and retired: the row's level. unknown: no row matched (default deny). malformed: remote-policy normalize refused the path. query: the row's refuse_query matched. ceiling: above the machine's ceiling. archived: a level the archived chat no longer allows. expired and no-decision: no current decision. second-lock: the daemon's level check refused what the connector allowed (a 403 whose body carries mirror, from lib/server/audience.js requireMirror or lib/server/routes/queue.js, or the answer engine's refusal, a 403 to an answer-origin request whose body is {ok: false, remote: true, error}, lib/server/isolated-origin.js): a table skew to fix, logged, an Activity entry, and a notice to the hub's admins. daemon-rule: any other daemon 403, a surface-origin one with remote: true and no mirror included: a body-level rule under X-WC-Remote (C-04.17, such as an html spawn): a log line only (C-04.21, C-04.27)."
+    }
+  }
+}

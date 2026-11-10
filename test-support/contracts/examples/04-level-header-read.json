@@ -1,0 +1,8 @@
+{
+  "request": {
+    "x-wc-remote": "1",
+    "x-wc-level": "read",
+    "x-wc-grants": "status,read",
+    "x-wc-decision": "dec_01jbzjm1p3q5r7s9t1v3w5x7y9"
+  }
+}

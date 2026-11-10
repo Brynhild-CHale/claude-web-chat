@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "type": "ReadQueue",
+  "request_id": "rq_01JBX4W9Q7",
+  "error": {
+    "code": "not_found",
+    "message": "This chat is not running on its machine.",
+    "hint": "Start the chat from the hub, then read its queue again.",
+    "daemon": {
+      "ok": false,
+      "connector": true,
+      "reason": "not-running"
+    },
+    "daemon_status": 404
+  }
+}

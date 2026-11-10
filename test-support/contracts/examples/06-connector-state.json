@@ -1,0 +1,87 @@
+{
+  "v": 1,
+  "hub": {
+    "id": "hale-hub",
+    "origin": "https://hub.hale.dev",
+    "name": "Hale hub"
+  },
+  "machine": {
+    "id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "name": "studio-mbp"
+  },
+  "credential": {
+    "state": "paired",
+    "algorithm": "ed25519",
+    "key_file": "/Users/dev-hale/.web-chat/connector/hale-hub.key",
+    "key_id": "mky_y4881352x9v335ap1wtpd4q6ef",
+    "public_key": "kTCi0MViCOcU8LqIYhIzSR1xC7jW0kmKgaBHqjV2eo4",
+    "fingerprint": "SHA256:8RCAjKLqdjGVVg81ZpLmc+7/fOPgiDSG8BRyRVXXMGs",
+    "paired_at": 1793177460000,
+    "revoked_at": null
+  },
+  "workdir": "/Users/dev-hale/web-chat-hub/hale-hub",
+  "ceiling": "full",
+  "settings": {
+    "agents_at_once": 2,
+    "local_cap": null,
+    "accept_new_chats": true,
+    "let_home_start_agents": false,
+    "paused": false,
+    "rev": 4
+  },
+  "folders": [
+    {
+      "id": "f_3a9c1e07b54d2f68",
+      "path": "/Users/dev-hale/Dev/ServerWebChat",
+      "display": "~/Dev/ServerWebChat",
+      "label": "ServerWebChat",
+      "access": "read-write",
+      "offered_at": 1793177520000
+    },
+    {
+      "id": "f_c0d4e19a7b2f5836",
+      "path": "/Users/dev-hale/Dev/web-chat-contracts",
+      "display": "~/Dev/web-chat-contracts",
+      "access": "read-write",
+      "offered_at": 1793177580000
+    }
+  ],
+  "chats": [
+    {
+      "chat_id": "01jbz9a1b2c3d4e5f6g7h8j9k0",
+      "rev": 3,
+      "scope_kind": "folder",
+      "folder_id": "f_3a9c1e07b54d2f68",
+      "root": "/Users/dev-hale/Dev/ServerWebChat",
+      "instance": "5b1e9c04",
+      "owned_root": false,
+      "desired": "running",
+      "manual_attach_at": 1793177760000,
+      "assigned_at": 1793177700000
+    },
+    {
+      "chat_id": "01jbzam3n5p7q9r1s3t5v7w9x1",
+      "rev": 1,
+      "scope_kind": "repo",
+      "root": "/Users/dev-hale/web-chat-hub/hale-hub/repos/01jbzam3n5p7q9r1s3t5v7w9x1",
+      "instance": "e07a3d92",
+      "owned_root": true,
+      "desired": "stopped",
+      "manual_attach_at": null,
+      "assigned_at": 1793181300000
+    }
+  ],
+  "service": {
+    "kind": "launchd",
+    "label": "com.claude-web-chat.connector",
+    "unit_path": "/Users/dev-hale/Library/LaunchAgents/com.claude-web-chat.connector.plist",
+    "path_env": "/Users/dev-hale/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+    "installed_at": 1793177465000
+  },
+  "last_reported": {
+    "connector_version": "0.9.0-alpha.3",
+    "install_kind": "managed",
+    "claude_code_version": "2.1.301",
+    "at": 1793181360000
+  }
+}

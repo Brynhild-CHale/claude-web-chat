@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "chat_id": "01jbzam3n5p7q9r1s3t5v7w9x1",
+  "rev": 2,
+  "issued_at": 1793184900000,
+  "title": "Triage open issues",
+  "scope": { "kind": "repo", "url": "https://github.com/hale-lab/claude-web-chat.git", "ref": "ae/int" },
+  "desired": "stopped",
+  "stop_mode": "release",
+  "agent": { "want": "none", "launch": "connector", "requested_by": "home" },
+  "origins": {
+    "surface": "https://chat-01jbzam3n5p7q9r1s3t5v7w9x1.hub.hale.dev",
+    "answer": "https://chat-01jbzam3n5p7q9r1s3t5v7w9x1-a.hub.hale.dev",
+    "shell": "https://hub.hale.dev"
+  }
+}
