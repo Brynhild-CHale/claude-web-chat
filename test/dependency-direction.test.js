@@ -55,7 +55,7 @@ const LIB = path.join(REPO_ROOT, 'lib');
 // A shared library importing another shared library is allowed and expected —
 // lib/packs consumes lib/update's archive reader, and that is composition, not
 // a direction violation.
-const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal']);
+const ENTRY = new Set(['cli', 'mcp', 'hooks', 'hub', 'driver', 'server', 'portal', 'connector']);
 // lib/setup is SHARED: the project-registration model (what it means for a
 // project to be registered with Claude Code), consumed by the cli and mcp entry
 // points and layered on lib/update's managed-file primitives. It must never
