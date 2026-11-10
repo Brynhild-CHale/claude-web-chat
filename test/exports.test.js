@@ -58,10 +58,7 @@ const EXPECTED = [
 // here may be absent (the test says it skipped it); one that exists while it
 // is still listed fails, so the unit that adds it takes it off this list in
 // the same change. Every other pending name must exist.
-const PENDING_ABSENT = new Map([
-  ['AUDIT_RULES', 'U724 (11 C-11.18)'],
-  ['projectAudit', 'U724 (11 C-11.18)'],
-]);
+const PENDING_ABSENT = new Map([]);
 
 const isModule = (e) => e.target.endsWith('.js') && !e.subpath.includes('*');
 
