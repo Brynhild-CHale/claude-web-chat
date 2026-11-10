@@ -710,11 +710,17 @@ test('registerRole without a port: port null and url null, read back, listed unp
   assert.equal(read.url, null);
   assert.equal(read.pid, process.pid);
 
+  // The probe is an http.request (lib/core/portfiles); a port-less row must
+  // never reach one — a probe of port null would ask 127.0.0.1:80.
+  const http = require('http');
+  const probes = t.mock.method(http, 'request', () => { throw new Error('a port-less row was probed'); });
   const rows = await registry.rows({ role: 'connector', timeoutMs: 50 });
+  assert.equal(probes.mock.callCount(), 0, 'a port-less row is never probed');
+  probes.mock.restore();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].port, null);
   assert.equal(rows[0].pid_alive, true);
-  assert.equal(rows[0].reachable, false, 'a port-less row is never probed');
+  assert.equal(rows[0].reachable, false);
   assert.deepEqual(await registry.rows(), [], 'it is not an instance');
   assert.deepEqual(registry.sessions({ inactive: false }), [], 'a singleton is never a session');
   assert.deepEqual(registry.readInstances(), []);
