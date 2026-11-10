@@ -187,11 +187,18 @@ async function stubDaemon(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-relay-stub-'));
   const seen = [];
   const sockets = [];
+  const held = []; // responses left open after their head (a long read), with a promise of their socket's close
   const server = http.createServer((req, res) => {
     seen.push({ method: req.method, url: req.url, headers: { ...req.headers } });
     if (req.url === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, instance: instanceId(root) }));
+      return;
+    }
+    if (req.url.startsWith('/api/store?hold=')) {
+      held.push({ res, closed: new Promise((r) => res.on('close', r)) });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"held":');
       return;
     }
     res.writeHead(404);
@@ -215,12 +222,13 @@ async function stubDaemon(t) {
   }
   t.after(async () => {
     for (const s of sockets) s.ws.terminate();
+    for (const h of held) h.res.destroy();
     wss.close();
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return { root, port: server.address().port, seen, sockets, server };
+  return { root, port: server.address().port, seen, sockets, held, server };
 }
 
 const json = (r) => JSON.parse(r.body.toString('utf8'));
@@ -554,7 +562,11 @@ test('WS inbound filter: a store:set at read, a binary message and a 1 MiB + 1 B
   const s = c.d.sockets[0];
   ws.send(JSON.stringify({ type: 'store:set', patch: { k: 1 } }));
   ws.send(Buffer.from([1, 2, 3]));
-  ws.send(JSON.stringify({ type: 'client', pad: 'p'.repeat(MiB) }).slice(0, MiB + 1).padEnd(MiB + 1, 'p'));
+  // Valid JSON of an allowed type, exactly 1 MiB + 1 B: only the size rule drops it.
+  const over = JSON.stringify({ type: 'client', pad: 'p'.repeat(MiB + 1 - JSON.stringify({ type: 'client', pad: '' }).length) });
+  assert.strictEqual(Buffer.byteLength(over), MiB + 1);
+  assert.strictEqual(JSON.parse(over).type, 'client');
+  ws.send(over);
   ws.send('not json');
   ws.send(JSON.stringify({ type: 'nope' }));
   ws.send(JSON.stringify({ type: 'report' }));
@@ -628,6 +640,22 @@ test('a decision change closes the open relay with 4403 within 1 s and the daemo
   const r = await c.http({ method: 'GET', path: '/api/health', decisionRef: ref });
   assert.strictEqual(r.status, 403);
   assert.strictEqual(json(r).authority.reason, 'no-decision');
+});
+
+test('a decision change aborts an in-flight relayed HTTP request within 1 s (relay.http.abort access_changed) and drops the daemon request', async (t) => {
+  const c = await setup(t, { stub: true });
+  const d1 = c.decision({ daemon_level: 'full', version: 1 });
+  const ref1 = c.fake.sendDecision(d1);
+  const p = c.http({ method: 'GET', path: '/api/store?hold=1', decisionRef: ref1 });
+  await waitUntil(() => c.d.held.length === 1, { timeout: 5000, what: 'the held daemon request' });
+  await waitUntil(() => c.fake.frames.some((f) => f.dir === 'in' && f.kind === 'relay.http.response'), { timeout: 5000, what: 'the response head' });
+  const t0 = Date.now();
+  c.fake.sendDecision(c.decision({ daemon_level: 'read', version: 2 }));
+  const err = await within(p.then(() => { throw new Error('the request completed'); }, (e) => e), 1000, 'the abort');
+  assert.strictEqual(err.close && err.close.reason, 'access_changed');
+  await within(c.d.held[0].closed, 1000, 'the daemon request dropped');
+  assert.ok(Date.now() - t0 < 1000, 'within 1 s');
+  assert.strictEqual(c.relay.openCount, 0, 'the stream is released');
 });
 
 test('relay.request: a connector-originated POST is refused at read (one deny, never at the daemon) and reaches the daemon at full with the closed header set, taking no stream slot', async (t) => {
