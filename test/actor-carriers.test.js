@@ -724,3 +724,54 @@ test('U743b: a relayed undo\'s version carries the actor (no name); a local undo
   assert.equal(lv.length, 3);
   assert.ok(!('actor' in lv[2]), 'a local undo records no actor field');
 });
+
+test('U743b: Send now for a gone conversation parks through the scheduler with the handed by, and none when none is handed', (t) => {
+  const { createQueueRelease } = require('../lib/server/queue-release');
+  const { stopGraph } = require('../lib/server/domain/turns');
+  const C1 = 'conv-gone';
+  const harness = (lives) => {
+    const state = {
+      queue: [], queueSeq: 0, mounts: new Map(), store: {}, signals: {},
+      wakeConsumers: 0, wakeConsumerSeenAt: 0, pendingAck: null, pendingWake: null, pendingWakeSeq: 0,
+    };
+    const bus = createBus({ bootId: 'boot-u743b' });
+    const graph = { lock: null, active: null, saveMeta() {} };
+    t.after(() => stopGraph(graph));
+    const timers = [];
+    const mirror = {
+      snapshot() { return { primary: null }; },
+      liveOf(cid) { return lives[cid] || null; },
+      conversationOfPid() { return null; },
+      enabled() { return { enabled: true }; },
+      subscribe() { return () => {}; },
+    };
+    const rel = createQueueRelease({
+      state, bus, graph, mirror, asks: null,
+      setTimer(fn, ms) { const h = { fn, ms, cleared: false, unref() {} }; timers.push(h); return h; },
+      clearTimer(h) { if (h) h.cleared = true; },
+    });
+    rel.start();
+    t.after(() => rel.stop());
+    const enqueue = (text, extra = {}) => queue.enqueueMessage(state, bus, { text, skill: null, files: [], chars: text.length }, {
+      conversation_id: C1, autosend: true, staged: true, origin: 'remote', device: 'desktop', ...extra,
+    });
+    return { state, bus, rel, timers, enqueue };
+  };
+
+  // Gone: the scheduler's own park (releaseItem's park branch), not queue.release's.
+  const gone = harness({ [C1]: { state: 'ended', process: { pid: 111, alive: false } } });
+  const item = gone.enqueue('for the gone one');
+  const r = gone.rel.send(item, { mode: 'now', prov: { origin: 'remote', device: 'desktop', by: NAME } });
+  assert.ok(r.parked, JSON.stringify(r));
+  assert.equal(gone.state.pendingWake.by, NAME, 'the forced park keeps the handed by');
+  assert.match(gone.state.pendingWake.envelope.content, new RegExp(`^Pushed from: origin=remote device=desktop by=${NAME}$`, 'm'));
+
+  // No by handed (a local Send now, or a non-string): the park carries none.
+  for (const prov of [{}, { origin: 'remote', device: 'desktop', by: '' }, { origin: 'remote', device: 'desktop', by: 42 }]) {
+    const h = harness({ [C1]: { state: 'ended', process: { pid: 111, alive: false } } });
+    const it = h.enqueue('no by');
+    assert.ok(h.rel.send(it, { mode: 'now', prov }).parked);
+    assert.ok(!('by' in h.state.pendingWake), `no by on the park (${JSON.stringify(prov)})`);
+    assert.ok(!/^Pushed from:.* by=/m.test(h.state.pendingWake.envelope.content), 'and no by= on its Pushed-from line');
+  }
+});
