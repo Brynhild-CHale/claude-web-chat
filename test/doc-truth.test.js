@@ -985,3 +985,20 @@ test('install.md\'s "What it writes" names the tunnel, brand and replay scratch 
   assert.doesNotMatch(section, /does not stop a running portal/,
     'the inventory still says `uninstall --self` leaves a running portal up');
 });
+
+// ---------------------------------------------------------------------------
+// The help's connect rows (U791, hand fold 9 C5).
+//
+// lib/cli/index.js may not require lib/connector (test/connect-cli.test.js's
+// one-file rule), so showHelp() spells the connect rows by hand; this holds
+// them to lib/connector/cli.js's table, one line per row, in both directions.
+
+test('showHelp() names every connect subcommand lib/connector/cli.js registers, and no other', () => {
+  const { ROWS } = require('../lib/connector/cli');
+  const src = read('lib/cli/index.js');
+  const help = src.slice(src.indexOf('function showHelp()'));
+  const listed = [...help.matchAll(/\n {24}connect (\S+)/g)].map((m) => m[1]);
+  const want = ROWS.map((r) => (r.name === 'pair' ? '<hub-url>' : r.name));
+  assert.deepStrictEqual(listed.slice().sort(), want.slice().sort(),
+    'the help\'s connect lines have drifted from lib/connector/cli.js ROWS');
+});

@@ -348,9 +348,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (a downloaded export is a file: download it again); `public/app/overlay.js`,
   `chat-pins.js` and `event-anchor.js` need a browser refresh only. Nothing
   needs a tunnel restart.
+- **Require the driver as `claude-web-chat/driver` (0.9.0-alpha.7).** The
+  package now carries an exports map, which closes every path it does not
+  list: `require('claude-web-chat/driver')` is the driver, and the old deep
+  path `require('claude-web-chat/lib/driver')`, like any other unlisted
+  subpath, throws `ERR_PACKAGE_PATH_NOT_EXPORTED`. Change a driver that
+  required the deep path; `docs/driving-the-surface.md` shows the new line.
+- **`/exit` and reopen Claude Code once after installing 0.9.0-alpha.7.** The
+  web-chat MCP server's client gained the no-spawn knob: in a session the hub
+  connector supervises (`WEB_CHAT_SUPERVISED` names its folder) it never
+  starts a daemon itself and waits for the connector's instead, and the
+  channel's message blocks can carry `by=<name>`. A session started before
+  the install keeps the old client until it is reopened.
+- **Rolling back with a connector paired.** `claude-web-chat update --to` a
+  build without `connect` (0.9.0-alpha.6 or older) stops the connector and
+  removes its start-at-login unit before it switches, and keeps the record
+  and the key: nothing is disconnected. A rollback made any other way leaves
+  the LaunchAgent (or systemd unit) behind, which 0.9.0-alpha.6 cannot run,
+  until `update` removes it or `claude-web-chat connect disconnect` runs.
+  Back on a build that has `connect`, `claude-web-chat connect <hub-url>`
+  rewrites the unit without pairing again.
+- **What 0.9.0-alpha.6 and 0.9.0-alpha.5 keep and ignore.** A version record
+  written for a request the hub relayed carries an `actor` sibling (who the
+  request acted for, never the display name): both builds keep it as a field
+  they do not know, outside the node and element hashes. The accepted-message
+  record (`.web-chat/queue/accepted-messages.json`, the ids of the last 1000
+  accepted messages, so a repeat is answered once and never queued twice) is
+  a file they never read, and they leave it as it is.
+- **The portal and the schema stay put again; still 24 tools (0.9.0-alpha.7).** The tunnel portal
+  stays on 12, so a running portal needs no restart for the protocol; the
+  project schema stays 4. No MCP tool was added or removed (still 24) and no
+  tool's description changed. The rules file gains a few sentences (a new
+  mount id outside letters, digits, `-` and `_` is refused; `by=<name>` on a
+  push or message the hub relayed; how a refusal through the hub reads; what
+  a relayed viewer at full reports and what the machine's facts tell the
+  hub) and one paragraph under Render etiquette saying the page is the
+  working surface, not the archive; they reach a project when
+  `claude-web-chat install` or `update` runs there. The surface page's
+  Content-Security-Policy stays report-only: the enforced policy waits for
+  0.9.0-alpha.8.
+- **What restarts after alpha.7's edits.** For work on web-chat itself: an
+  edit to `lib/server` or `lib/core` (`lib/core/remote-policy.js` and
+  `lib/core/cors.js` included) needs `claude-web-chat restart`; `public/app`
+  a browser refresh; `lib/portal` (and `lib/core/remote-policy.js`, which the
+  portal enforces too) `claude-web-chat tunnel down`, then `tunnel up`;
+  `lib/mcp` and `lib/channel` `/exit` and a reopened Claude Code;
+  `lib/cli`, `lib/connector` and `lib/setup` the next invocation, and a
+  running `connect run` is restarted to pick them up (`update` restarts the
+  start-at-login service, as rerunning `claude-web-chat connect <hub-url>`
+  does). A capture entry on `/api/events` now carries `capture_seq` beside
+  its `seq`, which is the ring position.
 
 ### Added
 
+- **Pair this machine with a hub: `claude-web-chat connect` (manual mode,
+  0.9.0-alpha.7).** `claude-web-chat connect <hub-url>` pairs this machine
+  with a hub and writes and starts a start-at-login service for the
+  connector, the process that keeps one outbound link to the hub and relays
+  its requests to the surfaces it supervises (a LaunchAgent on macOS, a
+  systemd user unit on Linux, the foreground `connect run` elsewhere). It
+  runs only from the managed install. `connect status`, `offer`, `withdraw`,
+  `folders`, `ceiling`, `cap`, `attach`, `ls`, `open`, `shell`, `code`,
+  `rotate`, `disconnect` and `help` do the rest (`docs/guide.md`, *Connect
+  this machine to a hub*), and `claude-web-chat status` carries one
+  `Connector:` line. A chat's session starts with `connect attach
+  <chat-label>` at the machine; connector mode, the tmux launcher, is not in
+  this build. A hub viewer reaches a route only through the connected route
+  table, and a route added since its table_version 1 waits in the pending
+  list, refused for a hub viewer, until its row is agreed.
+- **`GET /api/elements/anchor-stats`, host only.** The local browsers'
+  event-anchor counts, from local sockets only.
+- **A new mount id a page record cannot hold is refused.** `render` and
+  `use_component` refuse a new id outside letters, digits, `-` and `_`, or
+  longer than 256 characters, with `{ok:false, bad_id:true, hint}`; a pane
+  already live under such an id keeps it, and markdown items, captures and a
+  spawn's explicit id keep their own rules.
 - **An annotation toolbar.** Arm one tool at a time — the pointer, a comment
   pin, a highlight, a box grab — pin the tools you use, keep the rest behind
   the reveal, and change a tool's few settings in its small menu. Its keys
@@ -481,6 +553,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- **The relay credential, and the daemon as the second lock (0.9.0-alpha.7).**
+  A daemon the connector spawns is handed a relay secret on fd 3 (else the
+  weaker `WEB_CHAT_RELAY_SECRET` variable), read once at its boot; both
+  variables are then deleted, so no child meets them, and the boot line names
+  the channel, never the value. A relayed request counts only when it comes
+  from a loopback peer with the portal's remote label and the relay header
+  exactly once, equal to that secret. The hub's level stamp is honoured only
+  beside a valid credential, at the lesser of the stamp and this machine's
+  ceiling (`connect ceiling`), so a stamp the hub sent cannot widen what this
+  machine allows. A request without it is read as 0.9 reads a tunnel request.
+- **Host paths are masked for every viewer below local.** The graph's
+  conversation text, element text and the health lock are served with the
+  project root as `<project>` and the home directory as `~` to a tunnel
+  viewer, a relayed request or a network peer; the host's own history is never
+  rewritten.
 - **The daemon withholds private elements itself.** A private comment pin or
   highlight reaches only a browser on this machine: the element list, a node's
   read and its preview leave it out for Claude's tools, other local programs

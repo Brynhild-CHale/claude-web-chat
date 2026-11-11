@@ -352,3 +352,68 @@ test('status says an unreadable record and two hub records in one line each', as
   });
   assert.deepEqual(connectorLines(two), ['Connector: more than one hub record (v1 pairs with one hub) — see `claude-web-chat connect status`']);
 });
+
+// ── uninstall --self through the running connector (hand fold 9 C1) ───────
+
+// A short HOME under /tmp, so the connector's socket path fits a Unix socket
+// (the sandbox HOME's own path is long on macOS).
+function shortHome(t) {
+  const base = fs.existsSync('/tmp') ? '/tmp' : os.tmpdir();
+  const home = fs.mkdtempSync(path.join(base, 'wcu-'));
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  t.after(() => {
+    process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prevProfile;
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+  return home;
+}
+
+// The running connector's local socket, through its one engine
+// (lib/connector/local-socket install) with a stub ctx: releaseAll answers
+// what `left` says, and a hub read finds the link down. Records each local
+// request it is asked.
+async function stubConnectorSocket(t, hubId, { left = [] } = {}) {
+  const asked = [];
+  const ctx = {
+    hubId,
+    log: () => {},
+    link: { state: 'down', request: async () => { throw new Error('no link'); }, leave: async () => { asked.push('connector.leave'); return { sent: true }; } },
+    releaseAll: async () => { asked.push('connector.release-all'); return { left }; },
+  };
+  const stop = await require('../lib/connector/local-socket').install(ctx);
+  t.after(() => stop());
+  return asked;
+}
+
+test('uninstall --self asks the running connector release-all over its socket by default: the daemons step is via connector, and no leave is sent', async (t) => {
+  shortHome(t);
+  const { keyFile } = pairedRecord();
+  fs.writeFileSync(keyFile, 'not a real key\n', { mode: 0o600 });
+  // A second, revoked record on disk: soleHub refuses, so only the record's
+  // own socket (not the sole hub's) reaches the running connector.
+  const old = setup.newRecord({ hubId: 'a-old-hub', origin: 'https://old.example.com' });
+  old.credential = { state: 'revoked' };
+  setup.writeRecord(old);
+  assert.equal(setup.soleHub().ok, false, 'two records: soleHub refuses');
+  const asked = await stubConnectorSocket(t, HUB);
+  const order = [];
+  const results = new Map();
+  const { opts } = seams(order, {
+    // The real disconnectLocal and NO connectorDeps: uninstall's own default
+    // viaConnector is what runs.
+    disconnectLocal: async (args) => { order.push('disconnect'); const r = await setup.disconnectLocal(args); results.set(args.hubId, r); return r; },
+  });
+  const { error, text } = await captured(() => uninstall(['--self'], { cwd: projectRoot(t), ...opts }));
+  assert.equal(error, null, error && error.message);
+  assert.deepEqual(asked, ['connector.release-all'], 'release-all only: no connector.leave on uninstall');
+  const result = results.get(HUB);
+  assert.deepEqual(result.steps.find((s) => s.step === 'daemons'), { step: 'daemons', via: 'connector' });
+  assert.equal(results.get('a-old-hub').steps.find((s) => s.step === 'daemons').via, 'direct', 'no connector answers on the revoked record\'s socket');
+  assert.match(text, /every hold released and its daemons stopped/);
+  assert.match(text, /The hub keeps this machine until you revoke it there\./);
+  assert.ok(!fs.existsSync(keyFile), 'the key file was deleted');
+});

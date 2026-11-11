@@ -830,3 +830,56 @@ test('every file the install writes is under the sandbox HOME', async (t) => {
   const fresh = fs.readdirSync(os.tmpdir()).filter((n) => !tmpBefore.has(n) && !s.home.endsWith(n));
   assert.deepEqual(fresh.filter((n) => /claude-web-chat|connector|LaunchAgents/.test(n)), [], 'nothing beside the HOME');
 });
+
+// ── the relay secrets a connector keeps registered (hand fold 9 C3) ────────
+
+test('connect run keeps at most the last 8 relay secrets of a chat registered on the link and the redactor; a forgotten chat keeps none', async (t) => {
+  const s = sandbox(t);
+  seedPaired();
+  const CHAT = '1'.repeat(26);
+  const link = stubLink();
+  const onLink = new Set();
+  link.registerSecret = (secret) => { onLink.add(secret); return () => { onLink.delete(secret); }; };
+  const known = new Set();
+  let supervised = null;
+  let spawns = 0;
+  const current = new Map();
+  const done = runMod.run([], runDeps(s, {
+    createLink: () => link,
+    createRedactor: () => {
+      const r = require('../lib/core/redact').createRedactor();
+      const add = r.addKnown;
+      const remove = r.removeKnown;
+      return { ...r, addKnown: (v, l) => { known.add(v); return add(v, l); }, removeKnown: (v) => { known.delete(v); return remove(v); } };
+    },
+    // A stub chat: every ensureRunning is a respawn with a new secret.
+    createSupervisor: (o) => {
+      const real = require('../lib/connector/supervisor').createSupervisor(o);
+      return {
+        ...real,
+        ensureRunning: async (chat) => {
+          spawns += 1;
+          current.set(chat.id, `relay-secret-${String(spawns).padStart(4, '0')}-${'x'.repeat(40)}`);
+          return { state: 'running', port: 41000 + spawns, pid: 61000 + spawns };
+        },
+        relayCredential: (id) => current.get(id) || null,
+        forget: (id) => { current.delete(id); },
+      };
+    },
+    createLifecycle: (o) => { supervised = o.supervisor; return lifecycleMod.createLifecycle(o); },
+  }));
+  // A failed assertion still ends the run (its handles would hold the file open).
+  let ended = false;
+  t.after(async () => { if (!ended) { s.deps.signals.emit('SIGTERM'); await done; } });
+  await waitUntil(() => link.started === 1, { what: 'the link started' });
+  for (let i = 0; i < 10; i++) await supervised.ensureRunning({ id: CHAT, root: s.home });
+  const last8 = Array.from({ length: 8 }, (_, i) => `relay-secret-${String(i + 3).padStart(4, '0')}-${'x'.repeat(40)}`);
+  assert.deepEqual([...onLink].sort(), last8, 'the link holds the last 8, the two oldest unregistered');
+  assert.deepEqual([...known].sort(), last8, 'the redactor holds the same 8');
+  supervised.forget(CHAT);
+  assert.equal(onLink.size, 0, 'a forgotten chat keeps no secret on the link');
+  assert.equal(known.size, 0, 'nor on the redactor');
+  ended = true;
+  s.deps.signals.emit('SIGTERM');
+  assert.equal(await done, 0);
+});

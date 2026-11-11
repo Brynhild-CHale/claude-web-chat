@@ -214,10 +214,11 @@ review.
 ## Dependency direction (what may import what)
 
 ```
-entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/*
+entry points       cli/* · mcp/* · hooks/* · driver.js · hub/* · server/* · portal/* ·
+                   connector/*
                          │  import ↓ only      (never each other)
 shared libraries   util/* · toggle/* · update/* · setup/* · packs/* · capture/* ·
-                   channel/* · tunnel/* · replay/*
+                   channel/* · tunnel/* · replay/* · relay/*
                          │  import ↓ only      (may import each OTHER — that is
                          │                      composition, not direction)
 lib/client/        the one daemon HTTP client
@@ -262,6 +263,20 @@ fails as stale, so a consolidation tightens the rule in the same PR. One entry i
 marked `OWED` — `lib/packs` still reaches into `lib/server` for the components
 registry (the reserved-name list now lives in `lib/core/names.js`).
 
+The hub connector (tranche 6) is an entry point of its own, `lib/connector`,
+and the relay code it shares with the tunnel portal moved down a layer into
+`lib/relay`, a shared library (the header rules, the streamed HTTP proxy, the
+answer surface's port, the one identity probe, the WebSocket's upstream half
+and the start rate limit; it requires `lib/client`, `lib/core` and `ws` only,
+and the portal re-requires it). Three reviewed baseline rows reach across into
+it or out of it: `lib/cli/commands/connect.js => lib/connector/index.js`
+(connect run is the CLI face of the connector process, the `portal.js` shape),
+`lib/cli/commands/connect.js => lib/connector/local-socket.js` (the CLI's one
+client of the connector's local socket, `askConnector`), and
+`lib/connector/chats.js => lib/server/git-run.js` (a repo chat is cloned
+through the daemon's one git runner), whose target is pinned to Node alone:
+`{bare: ['child_process', 'fs'], files: []}`.
+
 A baseline edge is keyed per file, so it admits everything the target file
 requires as well. Where the edge crosses into another entry point, the target is
 **pinned** (`PINNED` in the same file): the portal picker's edge into
@@ -295,6 +310,7 @@ were the only places they lived.
 | check whether a daemon is alive / reachable | `core/portfiles` `probeReachable` / `probeHealth` | `http.request` a health check |
 | wait for a daemon to come up / go away | `core/portfiles` `waitUntilReachable` / `waitUntilGone` — the raw primitives, for a caller that does not need to know WHOSE daemon answers; after a spawn, wait with `lib/util/daemon` `waitForDaemon` (below) | spin your own `readPortfile` loop |
 | wait for THIS root's daemon after a spawn (verified, not just reachable) | `lib/util/daemon` `waitForDaemon(root, {maxMs, intervalMs, daemonFor, not})` — polls registry `daemonFor` until it verifies this root's daemon (skipping the `not` pid and port, the daemon a bounce replaced) → the record or null; `DAEMON_WAIT_MS`; `start --daemon`, `open` and `spawnDaemon` all wait through it | `waitUntilReachable` or a raw-portfile loop after a spawn (a copied portfile names another project's daemon), or a private daemonFor polling loop |
+| make sure a root's daemon is up — spawn it once, or adopt the one that won (the MCP client's auto-start, the portal's start, the connector's supervisor) | `lib/util/daemon` `spawnDaemon(root, {maxMs})` — takes the root's spawn lock (`spawnLockFor(root)`: one lock file per instance id in the user tier's spawn directory) BEFORE it asks `daemonFor`, and holds it through `waitForDaemon`, over `lib/util/registry` `withHeldLockFile` (a record of the holder's pid and start time; a lock whose holder is gone, is another process, or is older than `HELD_LOCK_MAX_MS` is stale): of concurrent first spawns one child binds and every other caller adopts it | a second spawn path, or a spawn of a root's daemon outside the lock |
 | ask whether a pid is alive | `core/portfiles` `isPidAlive(pid)` | `try { process.kill(pid, 0) }` inline (the type guard is the point) |
 | ask whether a pid is still the process that started at a given time, or sample many processes at once | `core/portfiles` `isPidAlive(pid, {startedAt, sample})` → true / false / null (null is no verdict, never "a different process"; pass `sample` so nothing spawns synchronously) · `sampleProcs(pids)` → start time, CPU time and run state for every pid in one async read · `parseProcStart` / `formatProcStart` (the start-time text Claude Code's sessions files carry) · `processCommand(pid)` | trust a pid read out of a file without its start time (pids are reused), or spawn a process listing per pid on a daemon tick |
 | start a detached child whose output goes to a log file | `lib/util/daemon` `spawnDetached({bin, args, log, cwd, env})` — opens the log once, closes the parent's copy of the descriptor, and derives the CLI bin from `core/paths` `PACKAGE_ROOT` | `spawn` + `openSync` at a call site (two spawners each leaked their log fd, and one opened it twice) |
@@ -579,6 +595,20 @@ were the only places they lived.
 | pin a socket open with a client that never answers the close frame | `test-support/helpers` `deafWs(t, port)` | a hand-written `Sec-WebSocket-Key:` upgrade over `net.connect` (`ws` always answers the close, so it cannot stand in) |
 | assert what the code contains — the tool set, the doc set, the routes, the CLI commands | `test-support/doc-truth` `mcpTools()` / `docFiles()` / `routePaths()` / `cliCommands()` | a literal count, or a hand-written list of files to check |
 | merge two or more tiers of a record key by key (project over user over a default), keeping which tier won and what it shadowed | `core/tier-merge` `mergeByKey` / `effective` / `tiersOf` (served to the chrome as `/app/tier-merge.js`) | `Object.assign` over tiers, a theme-style whole-file override, or a private per-key loop |
+| relay an HTTP request or a WebSocket to a daemon, from the tunnel portal or the connector | `lib/relay` (`forwardHeaders` / `responseHeaders` / `proxyHttp` / `openUpstream` / `probeHealthIdentity` / `createAnswerPorts`, and the start constants `START_EVERY_MS` / `START_WAIT_MS`) — SHARED: both entry points require it | a second proxy, header list, identity probe or start limit in `lib/portal` or `lib/connector` |
+| run the hub connector (pair, keep the link, supervise its daemons, relay the hub's requests), or add a part to it | `lib/connector` — an ENTRY point; `lib/connector/run.js` (`run`) composes it, and each part plugs in through its own `install(ctx)` (the supervisor, the lifecycle, the facts, the relay, the ring, the delivery, the signals, the authority log, the chats, the folders, the local socket): one module per concept | a part wired anywhere but `run.js`, or a second module for a concept the connector already has |
+| add a `connect` subcommand | `lib/connector/cli.js` (`ROWS` — one row each: `name`, `usage`, `summary`, an optional `match`, `run`; `main` dispatches, `usageText` prints them) | a second dispatcher, or a subcommand parsed outside the table |
+| read or write the connector's record, its key, the start-at-login unit or the service argv (the connector, `update`, `uninstall` and `status`) | `lib/setup/connector.js` (`readRecord` / `updateRecord` / `writeMachineKey` / `unitFor` / `plistText` / `systemdText` / `serviceArgv` / `serviceRun` / `disconnectLocal` / `soleHub`) — every record write is made under the record's lock file | a record written by hand, a service manager run outside `serviceRun`'s injected runner, or a unit path read out of a record |
+| reach the running connector from the CLI (`connect ls`, `open`, `shell`, `code`, `connect disconnect`, `uninstall --self`) | `lib/connector/local-socket.js` (`install(ctx)` — the one Unix socket, 0600 in the 0700 connector directory; `askConnector` — the CLI's half; `HUB_REQUEST_TYPES` / `LOCAL_REQUEST_TYPES`) · `lib/cli/commands/connect.js` (`askConnector(request, socketPath)` — the CLI's binding: the socket a row names, else the sole hub's) | a TCP port, a second socket, or a credential held by the CLI |
+| run a program from the connector (tailscale, ssh, tmux, an opener) or the service manager | `lib/connector/exec.js` (`run` over `findProgram`; `sshPlan` / `tmuxAttachPlan` / `runPlan`) · `lib/setup/connector.js` (`serviceArgv` / `serviceRun` / `runServiceManager` — the default runner refuses under the Node test runner) | a literal program name at a call site (ratcheted) |
+| build the command a chat's Claude Code session runs (`connect attach`) | `lib/core/claude-cli.js` (`sessionCommand` / `runSession`) | a session argv built at a call site |
+| decide what a relayed request may reach at the connector | `lib/core/connected-policy.js` (`classifySession` / `classifyAnswerRoute` / `wsInboundLevel` / `TABLE_VERSION` / `TABLE_SHA256`, over its JSON copy of the agreed table, never edited by hand) — a route no row covers is refused (the default deny); the routes added since table_version 1 are listed, with what added them, in the pending list (CONNECTED_PENDING in test/remote-policy.test.js), and a hub viewer is refused one until its row is agreed in table_version 2 | a second compile of the table, or a route admitted by a row nobody agreed |
+| judge a relayed request's credential, or read who it acts for | `lib/server/relay-credential.js` (`takeRelaySecret` — the secret handed on fd 3, `WEB_CHAT_RELAY_SECRET_FD`, else the environment, read once at boot; `createRelayCredential` → `valid(req)` / `actorOf(req)`; `storedActor` / `actorName`) — the audience honours the hub's level stamp only beside a valid credential, at the lesser of the stamp and the machine's ceiling (`lib/core/connected-ceiling.js` `readCeiling`) | a stamp honoured without the credential, or the relay header read past this module |
+| move a test daemon's port walk off the production band (the walk seam) | `lib/server/index.js` (`WEB_CHAT_FIRST_PORT`, or createServer's `firstPort`: read once at construction, set only by tests, the gates and the soak, never in lib/; a set walk never lands on 5170, 5171 or 5173–5272) | a test daemon bound on the band, or a production caller that sets it |
+| mask the host's paths in what a viewer below local is served | `lib/server/host-mask.js` (`hostMaskBelowLocal` — one middleware over `HOST_MASK_PREFIXES`; `maskFrameText` for a socket; `maskHostText` for a value) over `lib/core/paths` `redactHostPaths` — at serve, so the host keeps its history whole | a path rewritten at write, or a second path rule |
+| refuse a new mount id a page record cannot hold | `lib/server/domain/mounts.js` (`refusesNewId` / `badIdReject` / `BAD_ID_HINT`, over `lib/core/strokes.js` `PAGE_ITEM_RE` / `PAGE_ITEM_MAX`) — on render and use_component only; a pane already live under an id keeps it | a second id grammar |
+| read the local chromes' event-anchor counts | `lib/server/ws.js` (`anchorStats`, the route ctx's `anchorStats`), served by `lib/server/routes/elements.js` at GET `/api/elements/anchor-stats`, host only (local sockets only) | a count read from a remote socket, or a second stats route |
+| resend a chat's events after the connector's link reconnects | `lib/connector/ring.js` (`createRing` → `setCursor`: after every link `ready` each chat's ring is held — it sends and re-reads nothing — until that chat's `chat.assign` hands its cursor back; then only what the cursor does not cover is resent) | a resend at `ready`, or a timer standing in for the cursor |
 
 ## The engines in detail
 
@@ -2237,7 +2267,7 @@ Current homes (baselines move toward these):
 | `TIOCSTI` (typing into the terminal) | `lib/mcp/interrupt.js` (`HELPER_SCRIPT`, the Esc injector): the helper's request constant, its guard and its one ioctl | landed with the control layer ✅ |
 | `document.title =` **in `public/app` only** | `public/app/project.js`, the tab title's one writer | landed with the chat mirror ✅ |
 | `claudeSessionStateFile(` | `lib/core/claude-sessions.js` (the reader) and `lib/server/mirror/claude-state.js` (the live-state follower); `lib/core/paths.js` builds the path | landed with the chat mirror ✅ |
-| `remoteAddress` **in `lib/server` only** | `lib/server/audience.js` — who is asking is decided there, once | landed with the chat mirror ✅ |
+| `remoteAddress` **in `lib/server` only** | `lib/server/audience.js` — who is asking is decided there, once; plus `lib/server/relay-credential.js`'s one peer check (03 C-03.21: a relay credential is valid only from a loopback peer), which the audience reads through `valid(req)` | landed with the chat mirror; the relay credential's peer check with tranche 6 (U741) ✅ |
 | `X-WC-Writer` / `X-WC-Pane` / `X-WC-Relay` / `X-WC-Actor` (the writer-identity and relay-credential headers), in `lib`, `public`, `bin` and `scripts` | `lib/core/writer-token.js` — `WRITER_HEADER` / `PANE_HEADER` / `RELAY_HEADER` / `ACTOR_HEADER`; the daemon reads the writer pair through `lib/server/domain/writers` `resolveWriter` (and `lib/server/routes/writers.js`, for the token a lease release names), Claude's token is sent only by `lib/mcp/client` and a lease's or a service's only by `lib/driver` — plus `public/mount-runtime.js`'s one `PANE_HEADER` spelling, the realm's stamp (`paneFetch`): the runtime is spliced into documents and served to the browser, so it cannot require the constant, and `test/pane-attribution.test.js` holds the two spellings equal; the relay pair (contract 03 C-03.19 to C-03.21) is judged only by `lib/server/relay-credential.js` (`valid(req)` / `actorOf(req)`, each over `soleHeader`'s exactly-once count) and sent only by the connector | landed with writer identity (annotation engine, tranche 1); the relay pair with the relay credential (tranche 6, U741) ✅ |
 | `express.raw(` (a raw-bytes request body) | `lib/server/routes/brand.js` (`readImageBody`, the image upload) | landed with the project identity ✅ |
 | `graph.redactText` (on lines that are not comments) | `lib/server/domain/turns.js` reads it (`redactGraphText`), `lib/server/index.js` installs it | landed with the graph link ✅ |

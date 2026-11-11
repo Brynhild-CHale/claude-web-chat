@@ -641,3 +641,18 @@ test('heartbeat rows: valid 07-heartbeat chat items, no pid, ring_seq the highes
   await r2.tick();
   assert.strictEqual(r2.signals.heartbeatRows()[0].ring_seq, 4242);
 });
+
+// ── tool_kind at the machine's edge (hand fold 11 C7) ──────────────────────
+
+test('an ask\'s tool_kind crosses as a class word: a tool the table does not know as tool, a known class as itself, an mcp__ tool as mcp', () => {
+  const { cutAsk } = require('../lib/connector/signals');
+  const base = { id: 'ask1', kind: 'permission', state: 'pending', answerable: true, version: 1, created_at: 1 };
+  const kindOf = (tool_kind) => cutAsk({ ...base, tool_kind }).tool_kind;
+  assert.strictEqual(kindOf('lsp'), 'tool', 'a Claude Code tool newer than the table never crosses by name');
+  assert.strictEqual(kindOf('LSP'), 'tool');
+  assert.strictEqual(kindOf('Bash'), 'bash');
+  assert.strictEqual(kindOf('Edit'), 'edit');
+  assert.strictEqual(kindOf('MCP'), 'mcp', 'the daemon\'s class word for an MCP tool');
+  assert.strictEqual(kindOf('mcp__github__create_issue'), 'mcp', 'a raw mcp__ name too');
+  assert.strictEqual(kindOf(undefined), null);
+});
