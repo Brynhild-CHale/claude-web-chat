@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "ReadEvents",
+  "request_id": "rq_01JC4MHM1N",
+  "error": {
+    "code": "unavailable",
+    "message": "EventsDB did not answer for source signal.",
+    "hint": "EventsDB is unreachable (its machine may be asleep); this is not an empty history. Try again later and say the source is unavailable."
+  }
+}

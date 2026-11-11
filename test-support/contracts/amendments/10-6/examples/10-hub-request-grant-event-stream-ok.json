@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "type": "GrantEventStream",
+  "request_id": "rq_01JC8S2T4V",
+  "result": {
+    "grant_id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m",
+    "state": "proposed",
+    "card": {
+      "events_so_far": 37,
+      "participants": 3,
+      "opening": [
+        "evt-synthetic-0101",
+        "evt-synthetic-0102",
+        "evt-synthetic-0103"
+      ]
+    }
+  }
+}

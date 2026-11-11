@@ -2449,12 +2449,12 @@ test('U424a (Y5 = b): a comment group\'s members from the real producer are text
   assert.equal(JSON.stringify(wakeEnvelope([group], { note: 'n' })), JSON.stringify(wakeEnvelope([bare], { note: 'n' })), 'the envelope is byte-equal');
 });
 
-// ── 6. THE CONNECTED TABLE'S RATCHET (tranche 6 U744; contract 04 C-04.19) ───
+// ── 6. THE CONNECTED TABLE'S RATCHET (tranche 6 U744, U793; contract 04 C-04.19) ─
 // lib/core/connected-policy.js compiles the locked connected route table
-// (lib/core/connected-routes.json, table_version 1) for the connector's gate.
-// It is a separate table beside RULES and ANSWER_RULES (which stay as they
-// are, pinned above), so this ratchet holds it to the code the same way the
-// one above holds RULES. It fails on:
+// (lib/core/connected-routes.json, table_version 2: A-04.2, round v1.6.1) for
+// the connector's gate. It is a separate table beside RULES and ANSWER_RULES
+// (which stay as they are, pinned above), so this ratchet holds it to the code
+// the same way the one above holds RULES. It fails on:
 //   (a) an `app.<verb>(` route in lib/server/routes or index.js that hits no
 //       session or answer row (falls to the default deny) and is not pending;
 //   (b) a RULES or ANSWER_RULES key no row names as its from_rule, not pending;
@@ -2466,58 +2466,218 @@ test('U424a (Y5 = b): a comment group\'s members from the real producer are text
 //   (f) a table whose sha256 (crypto over stableStringify) is not the one
 //       pinned for its table_version — a changed table without a bump;
 //   (g) lib/core/connected-routes.json not byte-equal to the locked example
-//       (test-support/contracts/examples/04-route-table.json, U734's copy at
-//       contracts-v1.4 cad3e8e);
+//       (test-support/contracts/amendments/04-2/examples/04-route-table.json,
+//       the copy at contracts-v1.6.1 2c881a5f);
 //   (h) a pending entry that is stale: its route or rule no longer exists, or
 //       the table now has a row for it (as a stale baseline fails).
 //
 // THE PENDING LIST IS TEST-ONLY (ROUTES@table-version (a), U744-U761@pending-
-// list-home (a)). It names what the code has grown since the table was
-// derived (ae/int 826442d6) and the table has no row for yet: "known,
-// unclassified, awaiting its agreed row". It changes only what this ratchet
-// accepts. At runtime a route with no row is C-04.13's default deny for every
-// relayed request whatever this list says, and nothing here is a row of
-// lib/core/connected-routes.json. A route a later tranche-6 unit adds appends
-// its own entry here (in that unit); table_version 2, once the contracts lock
-// carries it (U744b), copies the agreed example, pins its sha and empties the
-// list. An entry for a route the v1 table admits by a wildcard row while the
-// daemon serves it host only (U761's GET /api/elements/anchor-stats under
-// GET /api/elements/*) says so with `admitted_by` (the wildcard row's key); it
-// is stale once another row decides the route.
-//
-// Derived at this unit's base (ae/int 0fbfcd07): every `app.<verb>(` route the
-// code has grown since 826442d6 (ROUTES@table-version (a): "every route the
-// code has grown since 826442d6 named in a pending list"), measured by diffing
-// the route scan at 826442d6 against the base. Running the checks against
-// table_version 1 with an empty list finds one route and its one RULES key
-// (GET /api/forms/shifts, * /api/forms/*), which no row decides; the other
-// eight a v1 wildcard row admits at the connector, so each says so with
-// `admitted_by` (GET /api/elements/search, also grown, has its own v1 row and
-// is not pending). The daemon's own gate still decides each one (C-04.21):
-// POST /api/elements/:id/picture is host only there, the rest read or send.
+// list-home (a)), and it is EMPTY. It named what the code had grown since
+// table_version 1 was derived (ae/int 826442d6) and that table had no row
+// for: under version 1, ten routes and one RULES key. table_version 2
+// (U793, A-04.2) decides every one of them: three by host_only rows of its own
+// (`* /api/forms/*`, GET /api/elements/anchor-stats, POST
+// /api/elements/:id/picture — (h) flags those entries against version 2), the
+// other seven by version 1's wildcard rows at the level the daemon checks
+// (agreed in the round, so those entries await nothing and were dropped). At
+// runtime a route with no row is C-04.13's default deny for every relayed
+// request whatever this list says. The list is held empty, and the route scan
+// is held to CONNECTED_ROUTE_SET (the scan when version 2 was copied), so a
+// route the code grows later fails here until a table version names or admits
+// it — a contracts note first, never a row written into the shipped table. An
+// entry may carry `admitted_by` (a wildcard row's key) for a route a wildcard
+// row admits while the agreed row is awaited; it is stale once another row
+// decides the route.
 const connectedPolicy = require('../lib/core/connected-policy');
 
 const CONNECTED_TABLE_SHA256 = Object.freeze({
   1: '7db274986ff5a192f01b90ee1fb1cd27fe67ce0708c487f8591266f297a7e059',
+  2: 'f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028',
 });
-const AWAITS_V2 = 'table_version 2';
-const CONNECTED_PENDING = Object.freeze([
-  Object.freeze({ route: 'GET /api/forms/shifts', added_by: 'c930c0d1 (U541, the form-shift counter, DECISIONS.md C4; host only)', awaits: AWAITS_V2 }),
-  Object.freeze({ rule: '* /api/forms/*', added_by: 'c930c0d1 (U541, the form-shift counter, DECISIONS.md C4; a host-only RULES row)', awaits: AWAITS_V2 }),
-  Object.freeze({ route: 'GET /api/elements/types/:type/draw.js', added_by: 'b367af32 (U511, the element-type file route; read)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
-  Object.freeze({ route: 'GET /api/elements/types/:type/assets/*', added_by: 'b367af32 (U511, the element-type file route; read)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
-  Object.freeze({ route: 'POST /api/elements/:id/glyph', added_by: 'd3efa425 (U587, the detachable glyph; send floor)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
-  Object.freeze({ route: 'GET /api/elements/:id/picture', added_by: '912cd349 (U564, INK@picture; see floor)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
-  Object.freeze({ route: 'POST /api/elements/:id/picture', added_by: '912cd349 (U564, INK@picture; host only at the daemon)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
-  Object.freeze({ route: 'POST /api/elements/undo', added_by: '67b74017 (U518, the engine\'s undo; send floor)', awaits: AWAITS_V2, admitted_by: 'POST|PATCH|DELETE /api/elements/*' }),
-  Object.freeze({ route: 'GET /app/strokes.js', added_by: 'a2b6baf8 (U561, the stroke frame; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
-  Object.freeze({ route: 'GET /app/element-assets.js', added_by: 'a439d3f1 (U512a, mediaOf served to the chrome; a chrome module)', awaits: AWAITS_V2, admitted_by: 'GET /app/*' }),
-  // Tranche 6's own (ROUTES@new-routes-pending; U744-U761@pending-list-home (a)).
-  Object.freeze({ route: 'GET /api/elements/anchor-stats', added_by: 'U761 (the event-anchor stats exposure, 6C.1; host only at the daemon — proposed host_only for table_version 2)', awaits: AWAITS_V2, admitted_by: 'GET /api/elements/*' }),
+// An entry awaits the table version after the shipped one.
+const AWAITS_NEXT = `table_version ${connectedPolicy.TABLE_VERSION + 1}`;
+const CONNECTED_PENDING = Object.freeze([]);
+
+// The route scan (daemonRoutes(): `METHOD path`, one per registration, sorted)
+// when table_version 2 was copied (U793, at ae/int f8b10259): 169 entries.
+// Every one of them is decided by a row of table_version 2.
+const CONNECTED_ROUTE_SET = Object.freeze([
+  '* /api/comments',
+  '* /api/packs',
+  '* /api/project',
+  '* /embed-helper/files',
+  '* /extensions/${name}/files',
+  'DELETE /api/brand/:slot',
+  'DELETE /api/elements/:id',
+  'DELETE /api/packs/:name',
+  'DELETE /api/packs/quarantine/:name',
+  'DELETE /api/project/favicon',
+  'DELETE /api/project/favicon-dark',
+  'DELETE /api/project/logo',
+  'DELETE /api/project/logo-dark',
+  'DELETE /api/project/name',
+  'DELETE /api/project/touch-icon',
+  'DELETE /api/queue/:id',
+  'DELETE /api/writers/lease',
+  'GET /api/asks',
+  'GET /api/asks/:id/decision',
+  'GET /api/brand',
+  'GET /api/bridge/ops',
+  'GET /api/bridge/status',
+  'GET /api/captures',
+  'GET /api/captures/:id/raw',
+  'GET /api/captures/:id/simplified',
+  'GET /api/code/preview',
+  'GET /api/components',
+  'GET /api/components/:name',
+  'GET /api/components/:name/seed',
+  'GET /api/elements',
+  'GET /api/elements/:id/grab',
+  'GET /api/elements/:id/picture',
+  'GET /api/elements/anchor-stats',
+  'GET /api/elements/search',
+  'GET /api/elements/types/:type/assets/*',
+  'GET /api/elements/types/:type/draw.js',
+  'GET /api/embed-check',
+  'GET /api/events',
+  'GET /api/events/stream',
+  'GET /api/export/:ref',
+  'GET /api/files',
+  'GET /api/forms/shifts',
+  'GET /api/graph',
+  'GET /api/graph/changes',
+  'GET /api/graph/diff',
+  'GET /api/graph/node/:id',
+  'GET /api/health',
+  'GET /api/machine/sessions',
+  'GET /api/marks',
+  'GET /api/mirror',
+  'GET /api/mirror/access',
+  'GET /api/mirror/context',
+  'GET /api/mirror/status',
+  'GET /api/mounts',
+  'GET /api/mounts/:id/history',
+  'GET /api/packs',
+  'GET /api/packs/audit',
+  'GET /api/packs/quarantine/:name/logo',
+  'GET /api/packs/quarantine/:name/review',
+  'GET /api/profile-match',
+  'GET /api/profiles',
+  'GET /api/project',
+  'GET /api/queue',
+  'GET /api/queue/pending',
+  'GET /api/queue/policy',
+  'GET /api/replay/capabilities',
+  'GET /api/replay/file/:name',
+  'GET /api/replay/html',
+  'GET /api/replay/path',
+  'GET /api/services/pack/:name',
+  'GET /api/services/pending',
+  'GET /api/store',
+  'GET /api/theme',
+  'GET /api/themes',
+  'GET /api/toolbar',
+  'GET /api/toolbar/icon/:type',
+  'GET /api/version',
+  'GET /app/anchors.js',
+  'GET /app/element-assets.js',
+  'GET /app/markdown.js',
+  'GET /app/strokes.js',
+  'GET /app/tier-merge.js',
+  'GET /brand/:slot',
+  'GET /embed-helper',
+  'GET /embed-helper/download',
+  'GET /extensions',
+  'GET /extensions/:name',
+  'GET /extensions/:name/download',
+  'GET /preview/node/:id',
+  'GET /preview/pane/:node/:mount',
+  'GET /project/logo',
+  'GET /project/mark',
+  'GET /project/touch-icon',
+  'GET /replay',
+  'GET /tunnel/setup',
+  'PATCH /api/elements/:id',
+  'PATCH /api/queue/:id',
+  'PATCH /api/toolbar',
+  'PATCH /api/toolbar/user',
+  'POST /api/asks',
+  'POST /api/asks/:id/handed',
+  'POST /api/asks/:id/withdraw',
+  'POST /api/bridge/events',
+  'POST /api/bridge/hello',
+  'POST /api/bridge/result',
+  'POST /api/capture',
+  'POST /api/channel/ack',
+  'POST /api/channel/heartbeat',
+  'POST /api/clear',
+  'POST /api/clear',
+  'POST /api/commit',
+  'POST /api/components',
+  'POST /api/components/:name/use',
+  'POST /api/control/notices/claim',
+  'POST /api/elements',
+  'POST /api/elements/:id/glyph',
+  'POST /api/elements/:id/picture',
+  'POST /api/elements/:id/reply',
+  'POST /api/elements/:id/send',
+  'POST /api/elements/undo',
+  'POST /api/graph/active',
+  'POST /api/graph/bookmark',
+  'POST /api/graph/new',
+  'POST /api/graph/wipe',
+  'POST /api/hooks/event',
+  'POST /api/markdown',
+  'POST /api/markdown',
+  'POST /api/marks',
+  'POST /api/mounts/:id/restore',
+  'POST /api/packs/announce',
+  'POST /api/packs/install',
+  'POST /api/packs/quarantine',
+  'POST /api/packs/quarantine/:name/approve',
+  'POST /api/page/move',
+  'POST /api/page/reset-layout',
+  'POST /api/page/run',
+  'POST /api/pane/close',
+  'POST /api/pane/spawn',
+  'POST /api/profiles/reload',
+  'POST /api/queue/items/:id/resend',
+  'POST /api/queue/message',
+  'POST /api/queue/pending/consume',
+  'POST /api/queue/pending/recall',
+  'POST /api/queue/push',
+  'POST /api/queue/repush',
+  'POST /api/queue/task-stop',
+  'POST /api/render',
+  'POST /api/render',
+  'POST /api/replay/open',
+  'POST /api/replay/render',
+  'POST /api/services/refresh-trust',
+  'POST /api/shutdown',
+  'POST /api/store',
+  'POST /api/theme',
+  'POST /api/theme/apply',
+  'POST /api/themes',
+  'POST /api/turn-begin',
+  'POST /api/turn-end',
+  'POST /api/unlock',
+  'POST /api/wait',
+  'POST /api/writers/lease',
+  'PUT /api/brand/:slot',
+  'PUT /api/project/favicon',
+  'PUT /api/project/favicon-dark',
+  'PUT /api/project/logo',
+  'PUT /api/project/logo-dark',
+  'PUT /api/project/name',
+  'PUT /api/project/show-name',
+  'PUT /api/project/touch-icon',
 ]);
 
 const CONNECTED_FILE = path.join(REPO_ROOT, 'lib/core/connected-routes.json');
-const LOCKED_TABLE_FILE = path.join(REPO_ROOT, 'test-support/contracts/examples/04-route-table.json');
+const LOCKED_TABLE_FILE = path.join(REPO_ROOT, 'test-support/contracts/amendments/04-2/examples/04-route-table.json');
+// Version 1 (the base example at contracts-v1.4, unchanged in the copy): the
+// table version 2 must widen nothing against.
+const V1_TABLE_FILE = path.join(REPO_ROOT, 'test-support/contracts/examples/04-route-table.json');
 
 // The control action names registered under lib/server/control, from the
 // source as daemonRoutes() reads routes: `action('<name>'`, `action(NAME,`
@@ -2566,7 +2726,7 @@ function connectedProblems(inp) {
   const out = [];
   const say = (check, what) => out.push({ check, what });
   if (!inp.tableBytes.equals(inp.lockedBytes)) {
-    say('g', 'lib/core/connected-routes.json is not byte-equal to the locked example (U734\'s copy at cad3e8e) — copy the agreed example, never edit the shipped table');
+    say('g', 'lib/core/connected-routes.json is not byte-equal to the locked example (A-04.2\'s, the contracts copy at contracts-v1.6.1) — copy the agreed example, never edit the shipped table');
   }
   let table;
   try { table = JSON.parse(inp.tableBytes.toString('utf8')); } catch (e) {
@@ -2638,27 +2798,80 @@ test('connected ratchet: the table, the code and the pending list agree (C-04.19
   const problems = connectedProblems(connectedInputs());
   assert.deepStrictEqual(problems, [],
     'the connected route table (lib/core/connected-routes.json, contract 04) and the code disagree. A new route or RULES key '
-    + 'goes on CONNECTED_PENDING (test-only; it awaits table_version 2 — the runtime still default-denies it), never as a row '
-    + 'in the shipped table, which is the contracts lock\'s copy:\n  ' + fmtProblems(problems));
+    + 'is decided only by a table version the contracts agree (a wc note first), never by a row written into the shipped '
+    + 'table, which is the contracts lock\'s copy:\n  ' + fmtProblems(problems));
   // The module the connector reads is the table this ratchet read.
   assert.equal(connectedPolicy.TABLE_SHA256, CONNECTED_TABLE_SHA256[connectedPolicy.TABLE_VERSION], '(f) the module\'s sha is the pinned one');
   assert.equal(connectedPolicy.TABLE_VERSION, JSON.parse(fs.readFileSync(CONNECTED_FILE, 'utf8')).table_version);
 });
 
-test('connected ratchet: the pending list is well-formed — each entry a route or a rule, who added it, awaiting table_version 2; no duplicates', () => {
-  const seen = new Set();
-  for (const p of CONNECTED_PENDING) {
-    assert.ok(Object.isFrozen(p));
-    assert.ok(!!p.route !== !!p.rule, JSON.stringify(p));
-    const name = p.route || p.rule;
-    assert.match(name, /^(\*|[A-Z]+(\|[A-Z]+)*) \//, name);
-    assert.equal(typeof p.added_by, 'string');
-    assert.ok(p.added_by.length > 0, name);
-    assert.equal(p.awaits, AWAITS_V2, name);
-    if (p.admitted_by !== undefined) assert.ok(p.route && typeof p.admitted_by === 'string', name);
-    assert.ok(!seen.has(name), `${name} twice`);
-    seen.add(name);
+test('connected ratchet: table_version 2 ships — the locked A-04.2 example byte for byte, its canonical sha256 pinned as version 2', () => {
+  assert.equal(connectedPolicy.TABLE_FILE, CONNECTED_FILE);
+  assert.ok(fs.readFileSync(CONNECTED_FILE).equals(fs.readFileSync(LOCKED_TABLE_FILE)), 'lib/core/connected-routes.json is the A-04.2 example');
+  assert.equal(connectedPolicy.TABLE_VERSION, 2);
+  assert.equal(connectedPolicy.TABLE_SHA256, 'f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028');
+  assert.equal(CONNECTED_TABLE_SHA256[2], connectedPolicy.TABLE_SHA256);
+  // Version 1's pin is the base example's, still in the copy.
+  const v1 = connectedPolicy.compileTable(JSON.parse(fs.readFileSync(V1_TABLE_FILE, 'utf8')));
+  assert.equal(v1.TABLE_VERSION, 1);
+  assert.equal(v1.TABLE_SHA256, CONNECTED_TABLE_SHA256[1]);
+});
+
+test('connected ratchet: the pending list is EMPTY and held empty; the route scan is the pinned route set (a route grown later fails until a table version names or admits it)', () => {
+  assert.deepStrictEqual(CONNECTED_PENDING, [], 'table_version 2 decides every route the code has; a pending entry is a route no agreed table version decides yet');
+  assert.ok(Object.isFrozen(CONNECTED_PENDING));
+  const scan = daemonRoutes().map((r) => `${r.method} ${r.path}`).sort();
+  assert.equal(CONNECTED_ROUTE_SET.length, 169);
+  assert.deepStrictEqual(scan, [...CONNECTED_ROUTE_SET],
+    'the daemon\'s route set moved since table_version 2 was copied. A route the code grows is decided by a table version only '
+    + 'once the contracts agree it (a wc note first); until then this fails. When a table version names or admits it, copy '
+    + 'that version and add the route here in the same change; a route removed comes out of this list.');
+  // Every route of the set is decided by a row of the shipped table.
+  for (const name of CONNECTED_ROUTE_SET) {
+    const [m, pat] = name.split(' ');
+    for (const method of m === '*' ? ['GET', 'POST', 'DELETE'] : [m]) {
+      const u = sample(pat);
+      const key = connectedPolicy.classifySession(method, u).key ?? connectedPolicy.classifyAnswerRoute(method, u).key;
+      assert.notEqual(key, null, `${method} ${pat}: no row of table_version 2`);
+    }
   }
+  // Any well-formed entry the list may take later: a route or a rule, who added it, awaiting the next table version.
+  const wellFormed = (p) => Object.isFrozen(p) && !!p.route !== !!p.rule && /^(\*|[A-Z]+(\|[A-Z]+)*) \//.test(p.route || p.rule)
+    && typeof p.added_by === 'string' && p.added_by.length > 0 && p.awaits === AWAITS_NEXT
+    && (p.admitted_by === undefined || (!!p.route && typeof p.admitted_by === 'string'));
+  for (const p of CONNECTED_PENDING) assert.ok(wellFormed(p), JSON.stringify(p));
+  assert.equal(AWAITS_NEXT, 'table_version 3');
+});
+
+test('connected ratchet: version 2 widens nothing — over the whole route set every outcome is version 1\'s but the three new host_only rows, which only refuse', () => {
+  const v1 = connectedPolicy.compileTable(JSON.parse(fs.readFileSync(V1_TABLE_FILE, 'utf8')));
+  const v2 = connectedPolicy;
+  const changed = [];
+  // allow, level, requires, daemon_mirror and refuse_query: everything the connector's gate reads of a row.
+  const facts = (v) => [v.allow, v.reason || null, v.row ? v.row.level : null, v.row ? [...v.row.requires].sort().join(',') : null,
+    v.row ? v.row.daemon_mirror : null, v.row && v.row.refuseQuery ? JSON.stringify(v.row.refuseQuery) : null];
+  const outcome = (c, m, u) => ({ session: facts(c.classifySession(m, u)), answer: facts(c.classifyAnswerRoute(m, u)), key: c.classifySession(m, u).key });
+  const names = new Set();
+  for (const name of CONNECTED_ROUTE_SET) {
+    const [m, pat] = name.split(' ');
+    for (const method of m === '*' ? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] : [m]) names.add(`${method} ${pat}`);
+  }
+  for (const name of names) {
+    const [m, pat] = name.split(' ');
+    const u = sample(pat);
+    const o1 = outcome(v1, m, u);
+    const o2 = outcome(v2, m, u);
+    assert.deepStrictEqual(o2.answer, o1.answer, `${name}: the answer origin moved`);
+    if (JSON.stringify(o1.session) === JSON.stringify(o2.session)) continue;
+    changed.push(`${name} ${o2.key}`);
+    // A change is only ever a refusal: version 2 admits nothing version 1 refused.
+    assert.deepStrictEqual(o2.session, [false, 'refused', 'host_only', '', null, null], `${name}: version 2 ${JSON.stringify(o2.session)}`);
+  }
+  assert.deepStrictEqual(changed.sort(), [
+    'GET /api/elements/anchor-stats GET /api/elements/anchor-stats',
+    'GET /api/forms/shifts * /api/forms/*',
+    'POST /api/elements/:id/picture POST /api/elements/:id/picture',
+  ], 'exactly the three routes version 2 gives host_only rows');
 });
 
 test('connected ratchet: each check fails on its own mutation (a–h)', () => {
@@ -2669,15 +2882,29 @@ test('connected ratchet: each check fails on its own mutation (a–h)', () => {
     assert.ok(s.includes(from), from);
     return Buffer.from(s.replace(from, to), 'utf8');
   };
-  // (a) removing the pending route's entry.
-  const noRoute = mutate({ pending: CONNECTED_PENDING.filter((p) => p.route !== 'GET /api/forms/shifts') });
-  assert.deepStrictEqual(checksOf(noRoute), ['a'], fmtProblems(noRoute));
-  assert.match(noRoute[0].what, /^GET \/api\/forms\/shifts /);
+  const fixtureTable = (fn) => {
+    const t = JSON.parse(base.tableBytes.toString('utf8'));
+    fn(t);
+    const bytes = Buffer.from(JSON.stringify(t, null, 2), 'utf8');
+    return { tableBytes: bytes, lockedBytes: bytes, pinned: { [t.table_version]: connectedPolicy.tableSha256(t) } };
+  };
   // (a) a new route the code grows, with no row and no entry.
   const newRoute = mutate({ routes: [...base.routes, { method: 'POST', path: '/api/brand-new-thing', file: 'fixture' }] });
   assert.deepStrictEqual(checksOf(newRoute), ['a'], fmtProblems(newRoute));
-  // (b) removing the pending rule's entry; a fake RULES key.
-  assert.deepStrictEqual(checksOf(mutate({ pending: CONNECTED_PENDING.filter((p) => !p.rule) })), ['b']);
+  assert.match(newRoute[0].what, /^POST \/api\/brand-new-thing /);
+  // ...and the same route on the pending list passes (a) (the list is how a route awaits its row).
+  assert.deepStrictEqual(mutate({ routes: [...base.routes, { method: 'POST', path: '/api/brand-new-thing', file: 'fixture' }],
+    pending: [{ route: 'POST /api/brand-new-thing', added_by: 'fixture', awaits: AWAITS_NEXT }] }), []);
+  // (a) and (b) a table without version 2's forms row: the route and its RULES key are undecided again...
+  const noForms = fixtureTable((t) => { t.session = t.session.filter((r) => r.from_rule !== '* /api/forms/*'); });
+  const undecided = mutate(noForms);
+  assert.deepStrictEqual(checksOf(undecided), ['a', 'b'], fmtProblems(undecided));
+  assert.match(undecided.find((p) => p.check === 'a').what, /^GET \/api\/forms\/shifts /);
+  // ...and version 1's two entries for them make that table pass.
+  assert.deepStrictEqual(mutate({ ...noForms, pending: [
+    { route: 'GET /api/forms/shifts', added_by: 'fixture', awaits: AWAITS_NEXT },
+    { rule: '* /api/forms/*', added_by: 'fixture', awaits: AWAITS_NEXT }] }), []);
+  // (b) a fake RULES key.
   const fakeKey = mutate({ liveKeys: [...base.liveKeys, 'GET /api/fake-rule'] });
   assert.deepStrictEqual(checksOf(fakeKey), ['b'], fmtProblems(fakeKey));
   assert.match(fakeKey[0].what, /GET \/api\/fake-rule/);
@@ -2693,12 +2920,6 @@ test('connected ratchet: each check fails on its own mutation (a–h)', () => {
   assert.deepStrictEqual(checksOf(action), ['d'], fmtProblems(action));
   assert.equal(action.length, 2, 'both the document and the action rows');
   // ...and a wildcard answer row is not an action's row: each action needs its own literal rows.
-  const fixtureTable = (fn) => {
-    const t = JSON.parse(base.tableBytes.toString('utf8'));
-    fn(t);
-    const bytes = Buffer.from(JSON.stringify(t, null, 2), 'utf8');
-    return { tableBytes: bytes, lockedBytes: bytes, pinned: { [t.table_version]: connectedPolicy.tableSha256(t) } };
-  };
   const wild = fixtureTable((t) => t.answer.push(
     { methods: ['GET'], path: '/answer/control/:action', level: 'message', from_rule: 'GET /answer/control/:action' },
     { methods: ['POST'], path: '/answer/api/control/:action', level: 'message', from_rule: 'POST /answer/api/control/:action' }));
@@ -2724,49 +2945,71 @@ test('connected ratchet: each check fails on its own mutation (a–h)', () => {
   const bumpless = edit('"level": "read",\n      "from_rule": "GET /api/graph"', '"level": "message",\n      "from_rule": "GET /api/graph"');
   assert.deepStrictEqual(checksOf(mutate({ tableBytes: bumpless, lockedBytes: bumpless })), ['f']);
   // ...and the same table with its bump and its own pin passes.
-  const bumped = Buffer.from(bumpless.toString('utf8').replace('"table_version": 1', '"table_version": 2'), 'utf8');
+  const bumped = Buffer.from(bumpless.toString('utf8').replace('"table_version": 2', '"table_version": 3'), 'utf8');
   const bumpedSha = connectedPolicy.tableSha256(JSON.parse(bumped.toString('utf8')));
-  assert.deepStrictEqual(mutate({ tableBytes: bumped, lockedBytes: bumped, pinned: { ...CONNECTED_TABLE_SHA256, 2: bumpedSha } }), []);
+  assert.deepStrictEqual(mutate({ tableBytes: bumped, lockedBytes: bumped, pinned: { ...CONNECTED_TABLE_SHA256, 3: bumpedSha } }), []);
+  // ...and version 1's bytes shipped in version 2's place are not the locked example (g), and leave the
+  // forms route and its RULES key undecided (a, b); its own pin holds (no f).
+  const v1Bytes = fs.readFileSync(V1_TABLE_FILE);
+  assert.deepStrictEqual(checksOf(mutate({ tableBytes: v1Bytes })), ['a', 'b', 'g']);
   // (g) alone: whitespace moves the bytes but not the canonical sha.
   const spaced = Buffer.concat([base.tableBytes, Buffer.from('\n')]);
   assert.deepStrictEqual(checksOf(mutate({ tableBytes: spaced })), ['g']);
-  // (h) a pending entry that now hits a row — table_version 2's row for the forms route.
-  const withRow = Buffer.from(base.tableBytes.toString('utf8').replace('"session": [',
-    '"session": [\n    {"methods": "*", "path": "/api/forms/*", "level": "host_only", "from_rule": "* /api/forms/*"},'), 'utf8');
-  const stale = mutate({ tableBytes: withRow, lockedBytes: withRow, pinned: { 1: connectedPolicy.tableSha256(JSON.parse(withRow.toString('utf8'))) } });
-  assert.deepStrictEqual(checksOf(stale), ['h'], fmtProblems(stale));
-  assert.equal(stale.length, 2, 'the route entry and the rule entry are both stale');
+  // (h) version 1's pending list against version 2: exactly the entries version 2 decides with rows of its
+  // own are stale (the forms route and rule, the picture POST, anchor-stats); the seven a wildcard still
+  // admits are not, and were dropped by hand since version 2 is agreed and they await nothing.
+  const V1_PENDING = [
+    { route: 'GET /api/forms/shifts', added_by: 'c930c0d1 (U541)', awaits: 'table_version 2' },
+    { rule: '* /api/forms/*', added_by: 'c930c0d1 (U541)', awaits: 'table_version 2' },
+    { route: 'GET /api/elements/types/:type/draw.js', added_by: 'b367af32 (U511)', awaits: 'table_version 2', admitted_by: 'GET /api/elements/*' },
+    { route: 'GET /api/elements/types/:type/assets/*', added_by: 'b367af32 (U511)', awaits: 'table_version 2', admitted_by: 'GET /api/elements/*' },
+    { route: 'POST /api/elements/:id/glyph', added_by: 'd3efa425 (U587)', awaits: 'table_version 2', admitted_by: 'POST|PATCH|DELETE /api/elements/*' },
+    { route: 'GET /api/elements/:id/picture', added_by: '912cd349 (U564)', awaits: 'table_version 2', admitted_by: 'GET /api/elements/*' },
+    { route: 'POST /api/elements/:id/picture', added_by: '912cd349 (U564)', awaits: 'table_version 2', admitted_by: 'POST|PATCH|DELETE /api/elements/*' },
+    { route: 'POST /api/elements/undo', added_by: '67b74017 (U518)', awaits: 'table_version 2', admitted_by: 'POST|PATCH|DELETE /api/elements/*' },
+    { route: 'GET /app/strokes.js', added_by: 'a2b6baf8 (U561)', awaits: 'table_version 2', admitted_by: 'GET /app/*' },
+    { route: 'GET /app/element-assets.js', added_by: 'a439d3f1 (U512a)', awaits: 'table_version 2', admitted_by: 'GET /app/*' },
+    { route: 'GET /api/elements/anchor-stats', added_by: 'U761', awaits: 'table_version 2', admitted_by: 'GET /api/elements/*' },
+  ];
+  const v1Stale = mutate({ pending: V1_PENDING });
+  assert.deepStrictEqual(checksOf(v1Stale), ['h'], fmtProblems(v1Stale));
+  assert.deepStrictEqual(v1Stale.map((p) => p.what.match(/^pending (?:rule )?(\S+ \S+?): /)[1]).sort(), [
+    '* /api/forms/*', 'GET /api/elements/anchor-stats', 'GET /api/forms/shifts', 'POST /api/elements/:id/picture',
+  ], fmtProblems(v1Stale));
+  // ...and the same list is clean against version 1's table (where it was the baseline).
+  const v1Table = JSON.parse(v1Bytes.toString('utf8'));
+  assert.deepStrictEqual(mutate({ tableBytes: v1Bytes, lockedBytes: v1Bytes, pinned: { 1: connectedPolicy.tableSha256(v1Table) }, pending: V1_PENDING }), []);
   // (h) an entry for a route that hits a row today, or that the code no longer has.
-  const hits = mutate({ pending: [...CONNECTED_PENDING, { route: 'GET /api/graph', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  const hits = mutate({ pending: [{ route: 'GET /api/graph', added_by: 'fixture', awaits: AWAITS_NEXT }] });
   assert.deepStrictEqual(checksOf(hits), ['h'], fmtProblems(hits));
-  const vanished = mutate({ pending: [...CONNECTED_PENDING, { route: 'GET /api/no-such-route', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  const vanished = mutate({ pending: [{ route: 'GET /api/no-such-route', added_by: 'fixture', awaits: AWAITS_NEXT }] });
   assert.deepStrictEqual(checksOf(vanished), ['h'], fmtProblems(vanished));
-  const ruleGone = mutate({ pending: [...CONNECTED_PENDING, { rule: 'GET /api/no-such-rule', added_by: 'fixture', awaits: AWAITS_V2 }] });
+  const ruleGone = mutate({ pending: [{ rule: 'GET /api/no-such-rule', added_by: 'fixture', awaits: AWAITS_NEXT }] });
   assert.deepStrictEqual(checksOf(ruleGone), ['h'], fmtProblems(ruleGone));
-  // (h) the wildcard form (U761's shape): admitted by the named row is not stale; by another row it is.
+  // (h) the wildcard form: admitted by the named row is not stale; by another row, or with no admitted_by, it is.
   const DRAW = 'GET /api/elements/types/:type/draw.js';
-  assert.ok(CONNECTED_PENDING.some((p) => p.route === DRAW && p.admitted_by === 'GET /api/elements/*'), 'the list names it, admitted by the wildcard');
-  const withDraw = (patch) => CONNECTED_PENDING.map((p) => (p.route === DRAW ? { ...p, ...patch } : p));
-  assert.deepStrictEqual(checksOf(mutate({ pending: withDraw({ admitted_by: 'GET /api/elements/search' }) })), ['h']);
-  assert.deepStrictEqual(checksOf(mutate({ pending: withDraw({ admitted_by: undefined }) })), ['h'], 'a row decides it: not a default-deny entry');
-  // A table_version 2 row of its own makes the entry stale, as for the forms route.
+  const draw = (patch) => [{ route: DRAW, added_by: 'fixture', awaits: AWAITS_NEXT, admitted_by: 'GET /api/elements/*', ...patch }];
+  assert.deepStrictEqual(mutate({ pending: draw({}) }), [], 'admitted by the wildcard it names');
+  assert.deepStrictEqual(checksOf(mutate({ pending: draw({ admitted_by: 'GET /api/elements/search' }) })), ['h']);
+  assert.deepStrictEqual(checksOf(mutate({ pending: draw({ admitted_by: undefined }) })), ['h'], 'a row decides it: not a default-deny entry');
+  // A row of its own makes the entry stale.
   const drawRow = fixtureTable((t) => t.session.unshift(
     { methods: ['GET'], path: '/api/elements/types/:type/draw.js', level: 'read', from_rule: 'GET /api/elements/*' }));
-  const drawStale = mutate(drawRow);
+  const drawStale = mutate({ ...drawRow, pending: draw({}) });
   assert.deepStrictEqual(checksOf(drawStale), ['h'], fmtProblems(drawStale));
   assert.equal(drawStale.length, 1, fmtProblems(drawStale));
 });
 
-test('connected ratchet: the pending list is test-only — the runtime default-denies every pending route, and RULES never learns of the table', () => {
-  for (const p of CONNECTED_PENDING.filter((x) => x.route && !x.admitted_by)) {
-    const [m, pat] = p.route.split(' ');
-    const v = connectedPolicy.classifySession(m, sample(pat));
-    assert.deepStrictEqual([v.allow, v.key, v.reason], [false, null, 'unknown'], p.route);
-  }
-  // The shipped table holds no row of the pending list's.
-  const table = JSON.parse(fs.readFileSync(CONNECTED_FILE, 'utf8'));
-  for (const p of CONNECTED_PENDING.filter((x) => x.rule)) {
-    assert.ok(![...table.session, ...table.answer].some((r) => r.from_rule === p.rule), p.rule);
+test('connected ratchet: the pending list is test-only — the shipped table holds the rows, and RULES never learns of the table', () => {
+  // The three routes version 2 decides by rows of its own are refused host_only at the connector.
+  for (const [m, u, key] of [
+    ['GET', '/api/forms/shifts', '* /api/forms/*'],
+    ['POST', '/api/forms/anything', '* /api/forms/*'],
+    ['GET', '/api/elements/anchor-stats', 'GET /api/elements/anchor-stats'],
+    ['POST', '/api/elements/e1/picture', 'POST /api/elements/:id/picture'],
+  ]) {
+    const v = connectedPolicy.classifySession(m, u);
+    assert.deepStrictEqual([v.allow, v.key, v.reason, v.row.level], [false, key, 'refused', 'host_only'], `${m} ${u}`);
   }
   // No field on RULES rows (C-04.19: a separate compiled table).
   for (const r of [...RULES, ...ANSWER_RULES]) {
@@ -2774,19 +3017,14 @@ test('connected ratchet: the pending list is test-only — the runtime default-d
   }
 });
 
-// U761 (6C.1): the event-anchor stats route sits on the pending list, admitted
-// at the connector by the v1 wildcard GET /api/elements/* (a read row) while
-// the daemon serves it host only (requireHost refuses a relayed request 403:
-// test/anchor-stats.test.js). RULES classifies it by its GET /api/elements/*
-// row, so no RULES row was added.
-test('connected ratchet: U761\'s GET /api/elements/anchor-stats awaits table_version 2, admitted by the v1 wildcard; RULES classifies it by its element row', () => {
-  const p = CONNECTED_PENDING.find((x) => x.route === 'GET /api/elements/anchor-stats');
-  assert.ok(p, 'the pending list names the route');
-  assert.match(p.added_by, /^U761 /);
-  assert.equal(p.awaits, AWAITS_V2);
-  assert.equal(p.admitted_by, 'GET /api/elements/*');
+// U761 (6C.1): the event-anchor stats route, host only at the daemon
+// (requireHost refuses a relayed request 403: test/anchor-stats.test.js), is a
+// host_only row of table_version 2's own, so the connector refuses it before
+// any daemon is reached. RULES classifies it by its GET /api/elements/* row, so
+// no RULES row was added.
+test('connected ratchet: U761\'s GET /api/elements/anchor-stats is table_version 2\'s host_only row; RULES classifies it by its element row', () => {
   const v = connectedPolicy.classifySession('GET', '/api/elements/anchor-stats');
-  assert.equal(v.key, 'GET /api/elements/*', 'the connector admits it by the wildcard row');
+  assert.deepStrictEqual([v.allow, v.key, v.row.level, v.row.from_rule], [false, 'GET /api/elements/anchor-stats', 'host_only', 'GET /api/elements/*']);
   assert.equal(classify('GET', '/api/elements/anchor-stats').key, 'GET /api/elements/*', 'RULES\' element row decides it at the portal');
   assert.ok(daemonRoutes().some((r) => r.method === 'GET' && r.path === '/api/elements/anchor-stats'), 'the route scan finds it');
 });

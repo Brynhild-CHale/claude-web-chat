@@ -1,0 +1,10 @@
+{
+  "type": "ReadEvents",
+  "params": {
+    "mode": "query",
+    "source": "signal",
+    "subject": "signal://group/trip-planning-synthetic",
+    "since": "2026-11-07T00:00:00Z",
+    "limit": 20
+  }
+}

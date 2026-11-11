@@ -1,0 +1,6 @@
+{
+  "type": "SetHomeSettings",
+  "params": {
+    "delegation_needs_approval": true
+  }
+}

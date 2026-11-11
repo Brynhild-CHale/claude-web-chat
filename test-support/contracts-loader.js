@@ -18,8 +18,10 @@
 // base; where two folders replace one path the later lock wins (LOCK.md v1.1:
 // "a loader takes the later file where both replace one path"). The order is
 // the order of LOCK.md's own `amendment <id>:` validation lines, parsed from the
-// copied LOCK.md, never written here — so 03-activity-entry resolves
-// 03-1 < 03-2 < 10-1 < 03-5, whatever order a caller names the folders in.
+// copied LOCK.md, never written here — so 03-activity-entry resolves in that
+// order (at contracts-v1.6.1: 03-1 < 03-2 < 10-1 < 03-5 < 10-4 < 10-5 < 03-7 <
+// 10-6 < 03-8 < 03-6, which is not the folders' numeric order), whatever order
+// a caller names the folders in.
 //
 // THE RULE. validateExample is the contracts folder's own tools/validate.js at
 // the lock (the rule LOCK.md's counts were computed with): an example goes to

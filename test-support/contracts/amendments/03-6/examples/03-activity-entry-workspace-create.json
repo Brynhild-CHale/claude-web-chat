@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_9a1b3c5d7e9f1g3h5j7k9m1n3p",
+  "at": "2026-11-10T21:04:12.318Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "workspace.create",
+  "target": {
+    "type": "workspace",
+    "id": "wsp_01jc6w2s4p6k8m0q2r4t6v8x0z"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Workspace created from the shell",
+    "source": "template",
+    "template": "workspace.create",
+    "chars": 32,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

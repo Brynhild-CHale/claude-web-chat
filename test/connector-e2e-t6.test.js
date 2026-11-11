@@ -329,7 +329,8 @@ test('(2) hello and hello.ack in the compat window; every frame sent and receive
   const ack = W.fake.find('hello.ack', { dir: 'out' })[0].frame;
   assert.equal(ack.compat.state, 'ok', 'inside the compat window');
   const hello = W.fake.find('hello', { dir: 'in' })[0].frame;
-  assert.equal(hello.route_table.table_version, 1);
+  assert.equal(hello.route_table.table_version, 2);
+  assert.equal(hello.route_table.sha256, 'f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028', 'A-04.2\'s canonical sha256');
   await W.fake.waitFor('machine.facts', { dir: 'in' });
   for (const f of W.fake.frames) {
     if (f.ch === 'pairing') continue;

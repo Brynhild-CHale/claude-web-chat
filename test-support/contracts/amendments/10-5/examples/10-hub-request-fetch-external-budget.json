@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "FetchExternal",
+  "request_id": "rq_01JC5F5N0S",
+  "error": {
+    "code": "refused",
+    "message": "FetchExternal refused (budget_terms): 39 of 40 terms used today, this request needs 2.",
+    "hint": "The term budget resets at midnight in the user's zone; the user can raise it in Settings with a passkey."
+  }
+}

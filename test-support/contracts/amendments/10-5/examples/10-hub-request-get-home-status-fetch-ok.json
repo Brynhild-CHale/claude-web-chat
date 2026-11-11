@@ -1,0 +1,63 @@
+{
+  "ok": true,
+  "type": "GetHomeStatus",
+  "request_id": "rq_01JC5FBV6Z",
+  "result": {
+    "session": {
+      "started_at": "2026-11-08T11:00:04.311Z",
+      "restarts_today": 1,
+      "taint": [
+        "events",
+        "fetched"
+      ]
+    },
+    "settings": {
+      "delegation_needs_approval": true,
+      "paused": false
+    },
+    "checkins": {
+      "enabled": 2,
+      "open_fires": 0
+    },
+    "metering": {
+      "turns_today": 9,
+      "metered": 7,
+      "unmetered": 2,
+      "cost_usd_today": null
+    },
+    "held_messages": 0,
+    "fetch": {
+      "hosts": [
+        {
+          "host": "search.example",
+          "prefixes": [
+            "/search"
+          ],
+          "kinds": [
+            "search"
+          ]
+        },
+        {
+          "host": "docs.example",
+          "prefixes": [
+            "/guide/",
+            "/api/"
+          ],
+          "kinds": [
+            "url"
+          ]
+        }
+      ],
+      "per_day": {
+        "limit": 40,
+        "used": 4
+      },
+      "bytes_per_day": {
+        "limit": 8388608,
+        "used": 4152
+      },
+      "allowances": 0,
+      "pending": 0
+    }
+  }
+}

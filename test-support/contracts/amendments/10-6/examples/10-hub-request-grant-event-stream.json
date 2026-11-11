@@ -1,0 +1,20 @@
+{
+  "type": "GrantEventStream",
+  "params": {
+    "selector": {
+      "source": "signal",
+      "subject": "signal://group/trip-planning-synthetic",
+      "persons": [
+        "person-synthetic-a",
+        "person-synthetic-b"
+      ],
+      "since": "2026-11-01T00:00:00Z"
+    },
+    "destination": {
+      "project_id": "pj_travel_synthetic",
+      "chat_id": "cht_01jc7d3e5f7g9h1j3k5m7n9p1q"
+    },
+    "mode": "both",
+    "purpose": "Stream the synthetic trip-planning thread to the travel project so its agent can book the Lisbon trip"
+  }
+}

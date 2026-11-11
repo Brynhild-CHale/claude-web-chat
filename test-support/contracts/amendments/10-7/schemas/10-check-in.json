@@ -1,0 +1,551 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-check-in.json",
+  "title": "Check-in record (contract 10)",
+  "description": "A check-in: a standing duty the hub's scheduler evaluates for free and fires as one hub-queued message to Home's chat (contract 10, C-10.14c, amendment A-10.4; R37 H4 (a), H8 (a), H10 (b), H11 (a)). The root is the stored record as ListCheckIns and SetCheckIn answer it ($defs/record); $defs/record_input is the record less its hub-set fields, as SetCheckIn takes it (10-hub-request.json $defs/params_SetCheckIn). Every object is closed: the hub refuses an unknown key, a brakes field (min_interval_s, max_fires_per_day, active_after, active_until: none exists, R37 H10 (b)) or set_by in a body as bad_request with field, on create and edit alike. The schema checks shape; the hub checks that a zone names a zone of its tz database, that a cron expression means a schedule, that a dashboard exists, that a condition's trigger is stored as events_count on an edit, and the second confirm of a Home-authored record (C-10.14c). Times are RFC 3339 (a check-in is read in a zone), where older 10 results carry epoch ms. Retention: A-11.3's check-in row.",
+  "$ref": "#/$defs/record",
+  "$defs": {
+    "checkin_id": {
+      "type": "string",
+      "pattern": "^cki_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "A check-in record's id: the prefix cki_ under 03 section 2's grammar (lowercase Crockford, 26 characters), listed by A-03.7 among the prefixes other contracts mint. Minted by the hub."
+    },
+    "zone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(UTC|[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){1,2})$",
+      "description": "An IANA time zone name (America/New_York, Europe/Lisbon, UTC). The schema checks the shape; the hub checks that its tz database holds the zone and answers bad_request with field otherwise."
+    },
+    "cron_expr": {
+      "type": "string",
+      "maxLength": 120,
+      "pattern": "^[0-9A-Za-z*/,-]+( [0-9A-Za-z*/,-]+){4}$",
+      "description": "A five-field cron expression (minute, hour, day of month, month, day of week), fields separated by one space, for example '0 9 * * 1-5'. The schema checks five fields of cron characters; the hub checks the meaning (ranges, steps, names) and answers bad_request with field when it describes no schedule."
+    },
+    "duration": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^P(?!$)([0-9]+D)?(T(?=[0-9])([0-9]+H)?([0-9]+M)?([0-9]+S)?)?$",
+      "description": "An ISO 8601 duration of days, hours, minutes and seconds (PT15M, PT6H, P1D): a window back from the time of the read."
+    },
+    "trigger": {
+      "description": "Exactly one trigger (R37 H4 (a), H8 (a)): cron in a zone, a fixed interval, one instant, or a typed EventsDB count polled by the hub. 'CI fails or the deploy is late' is two records. The floor on every polled or repeated trigger is 300 s; no change-feed watcher exists (H8 (a)).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "expr",
+            "zone"
+          ],
+          "properties": {
+            "kind": {
+              "const": "cron"
+            },
+            "expr": {
+              "$ref": "#/$defs/cron_expr"
+            },
+            "zone": {
+              "$ref": "#/$defs/zone",
+              "description": "The zone the expression is evaluated in."
+            }
+          },
+          "description": "Fires at each time the expression names, in its zone."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "every_s"
+          ],
+          "properties": {
+            "kind": {
+              "const": "interval"
+            },
+            "every_s": {
+              "type": "integer",
+              "minimum": 300,
+              "description": "Seconds between fires, at least 300 (the hub floor, H8 (a))."
+            }
+          },
+          "description": "Fires every every_s seconds, measured from the record's last fire (from its creation before the first)."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "at"
+          ],
+          "properties": {
+            "kind": {
+              "const": "one_shot"
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The instant, RFC 3339."
+            }
+          },
+          "description": "Fires once at at; the fire disables the record in the mint's transaction."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "query",
+            "every_s"
+          ],
+          "properties": {
+            "kind": {
+              "const": "events_count"
+            },
+            "query": {
+              "allOf": [
+                {
+                  "$ref": "10-hub-request.json#/$defs/events_filter"
+                },
+                {
+                  "properties": {
+                    "since": {
+                      "$ref": "#/$defs/duration"
+                    }
+                  },
+                  "not": {
+                    "required": [
+                      "until"
+                    ]
+                  }
+                }
+              ],
+              "description": "ReadEvents' typed filter (10-hub-request.json $defs/events_filter) with since as a window back from each poll and no until: structured fields only, never a query language (R37 H2 (a), H8 (a))."
+            },
+            "every_s": {
+              "type": "integer",
+              "minimum": 300,
+              "description": "How often the hub polls the count, in seconds, at least 300 (H8 (a))."
+            }
+          },
+          "description": "The hub counts the events the query matches every every_s, through the same proxy function as ReadEvents with the own-event exclusion (C-10.23a), and the record's condition gates the fire."
+        }
+      ]
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "op",
+        "value"
+      ],
+      "properties": {
+        "field": {
+          "enum": [
+            "count"
+          ],
+          "description": "What the condition reads: the events_count trigger's count. A chat's state from the hub index joins this enum by amendment once the index exists (10 section 5)."
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "gt",
+            "ge",
+            "lt",
+            "le"
+          ],
+          "description": "The comparison."
+        },
+        "value": {
+          "type": "integer",
+          "description": "The integer the count is compared with."
+        }
+      },
+      "description": "A gate the hub evaluates before any message reaches Home ('tell me only if it fails' is a gate, not a prompt). Required with an events_count trigger, refused with any other (the record's allOf; on an edit the hub checks it against the stored trigger)."
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "home_page",
+            "dashboard",
+            "push",
+            "silence"
+          ],
+          "description": "Where Home puts what the fire produces: its own page, a dashboard pane, a push notification, or nowhere (silence: Home acts on its own surfaces only if the instruction says so)."
+        },
+        "dashboard_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The dashboard, for kind dashboard only, in 10-hub-request.json $defs/dashboard's dashboard_id form. The hub checks that it exists."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "dashboard"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "dashboard_id"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "dashboard_id"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "One destination per record."
+    },
+    "set_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "user",
+            "home"
+          ],
+          "description": "Who authored the record: the user (a signed-in session or the user's key) or Home (svc_home)."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_home)$",
+          "description": "The account: the user's usr_ id, or svc_home."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "home"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "svc_home"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "id": {
+                "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Stamped by the hub from the credential that created the record, never taken from a body (a body carrying it is bad_request). A fire's message is sent as this account with via scheduler (C-10.15)."
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[^\\u0000-\\u001f]*$",
+      "description": "The record's name on Today's Scheduled list, one line."
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3000,
+      "description": "The text Home receives, verbatim, at most 3000 characters (web-chat-dev.worktrees/ae-int lib/server/composer.js MESSAGE_MAX). The hub also refuses, as bad_request with field /record/instruction, an instruction whose composed section (C-10.14c: its heading line and count line beside it), with the line naming a hub_msg_id before it, would pass MESSAGE_MAX."
+    },
+    "autonomy": {
+      "enum": [
+        "notify",
+        "draft"
+      ],
+      "description": "notify: Home reports on its own surfaces; draft: any outward message Home writes for the check-in is held on Needs you under C-10.15's hold. 'Act' is the user's approval setting (C-10.23b), never the record."
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "trigger",
+        "instruction",
+        "destination",
+        "autonomy",
+        "zone",
+        "enabled",
+        "needs_confirm",
+        "set_by",
+        "created_at",
+        "updated_at",
+        "last_fired_at",
+        "fires",
+        "next_fire_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/checkin_id"
+        },
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "trigger": {
+          "$ref": "#/$defs/trigger"
+        },
+        "condition": {
+          "$ref": "#/$defs/condition"
+        },
+        "instruction": {
+          "$ref": "#/$defs/instruction"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "autonomy": {
+          "$ref": "#/$defs/autonomy"
+        },
+        "zone": {
+          "$ref": "#/$defs/zone",
+          "description": "The user's zone for this record: the dry run's instants and Today's forecast are written in it. Defaults from the user's setting when the create gives none."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the scheduler evaluates it. A user's record is enabled as created; a Home-authored record is created false and enabled only by the user's confirm (C-10.14c, R37 H11 (a)). Disabling keeps the record (there is no delete in round v1.5)."
+        },
+        "needs_confirm": {
+          "type": "boolean",
+          "description": "Hub-set: true for a Home-authored record until the user's SetCheckIn {checkin_id, record: {enabled: true}} (the Needs you proposal card, I3-17) clears it."
+        },
+        "set_by": {
+          "$ref": "#/$defs/set_by"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the hub stored it, RFC 3339."
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The last accepted SetCheckIn on it, RFC 3339."
+        },
+        "last_fired_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "The last fire attempt, RFC 3339; null until the first. The scheduler arms the trigger from created_at, persisted at creation, so nothing fires at save time."
+        },
+        "fires": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many fire attempts the record has spent."
+        },
+        "next_fire_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Hub-computed: the next fire or poll, RFC 3339; null while the record is disabled or spent."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "trigger": {
+                "properties": {
+                  "kind": {
+                    "const": "events_count"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "trigger"
+            ]
+          },
+          "then": {
+            "required": [
+              "condition"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "condition"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "set_by": {
+                "properties": {
+                  "kind": {
+                    "const": "user"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "set_by"
+            ]
+          },
+          "then": {
+            "properties": {
+              "needs_confirm": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "needs_confirm": {
+                "const": true
+              }
+            },
+            "required": [
+              "needs_confirm"
+            ]
+          },
+          "then": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            }
+          },
+          "description": "A record waiting for the user's confirm is disabled: a Home-authored create, or a confirmed record Home re-edited (R43; 10 C-10.14c as A-10.4 writes it)."
+        }
+      ],
+      "description": "A stored check-in (C-10.14c). No brakes fields and no hub-wide ceiling exist (R37 H10 (b)): a later field joins by amendment (C-10.29 additive)."
+    },
+    "record_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/label"
+        },
+        "trigger": {
+          "$ref": "#/$defs/trigger"
+        },
+        "condition": {
+          "$ref": "#/$defs/condition"
+        },
+        "instruction": {
+          "$ref": "#/$defs/instruction"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "autonomy": {
+          "$ref": "#/$defs/autonomy"
+        },
+        "zone": {
+          "$ref": "#/$defs/zone"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "The user's switch. From svc_home it answers forbidden with need user (C-10.14c); on a Home-authored record the user's true is the second confirm."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "trigger": {
+                "properties": {
+                  "kind": {
+                    "const": "events_count"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "trigger"
+            ]
+          },
+          "then": {
+            "required": [
+              "condition"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "trigger": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "cron",
+                      "interval",
+                      "one_shot"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "trigger"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "condition"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "The record less its hub-set fields (id, set_by, needs_confirm, created_at, updated_at, last_fired_at, fires, next_fire_at), as SetCheckIn takes it: a create gives label, trigger, instruction, destination and autonomy (10-hub-request.json $defs/params_SetCheckIn), an edit any of them, each replacing the stored field. A trigger given with a condition is checked here; a condition given alone is checked by the hub against the stored trigger, and an edit that gives a trigger other than events_count drops the stored condition."
+    }
+  }
+}

@@ -1,9 +1,9 @@
 {
-  "table_version": 1,
+  "table_version": 2,
   "derived_from": {
-    "web_chat": "0.9.0-alpha.2.1",
+    "web_chat": "0.9.0-alpha.6.1",
     "portal_protocol": 12,
-    "source": "web-chat-dev.worktrees/ae-int at 826442d6: lib/core/remote-policy.js RULES and ANSWER_RULES, lib/core/element-policy.js FLOOR_RULES, lib/server/ws.js connection handler"
+    "source": "web-chat-dev.worktrees/ae-int at 671527a3: lib/core/remote-policy.js RULES and ANSWER_RULES, lib/core/element-policy.js FLOOR_RULES, lib/server/ws.js connection handler"
   },
   "grammar": "remote-policy",
   "session": [
@@ -246,6 +246,13 @@
     },
     {
       "methods": "*",
+      "path": "/api/forms/*",
+      "level": "host_only",
+      "from_rule": "* /api/forms/*",
+      "note": "the form-shift counter, the maintainer's read; requireHost"
+    },
+    {
+      "methods": "*",
       "path": "/api/hooks/*",
       "level": "host_only",
       "from_rule": "* /api/hooks/*"
@@ -374,10 +381,28 @@
       "methods": [
         "GET"
       ],
+      "path": "/api/elements/anchor-stats",
+      "level": "host_only",
+      "from_rule": "GET /api/elements/*",
+      "note": "event-anchor counts, counts only; requireHost"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
       "path": "/api/elements/*",
       "level": "read",
       "from_rule": "GET /api/elements/*",
       "daemon_mirror": "read"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/elements/:id/picture",
+      "level": "host_only",
+      "from_rule": "POST|PATCH|DELETE /api/elements/*",
+      "note": "Claude's tools write an ink picture; requireHost"
     },
     {
       "methods": [

@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "type": "GrantEventStream",
+  "request_id": "rq_01JC8S3A5B",
+  "error": {
+    "code": "bad_request",
+    "message": "The destination chat is not in the destination project.",
+    "hint": "Pick a chat of that project from list_chats.",
+    "field": "/destination/chat_id"
+  }
+}

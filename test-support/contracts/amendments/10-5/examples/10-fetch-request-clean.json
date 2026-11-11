@@ -1,0 +1,37 @@
+{
+  "id": "fch_01jc5e9m2p4r6t8v0x2z4b6d8f",
+  "requested_by": "svc_home",
+  "kind": "search",
+  "host": "search.example",
+  "path": "/search",
+  "terms": [
+    {
+      "text": "flight to Lisbon",
+      "source_message": {
+        "at": "2026-11-08T11:12:40Z",
+        "chars": 96
+      }
+    },
+    {
+      "text": "second week of December",
+      "source_message": {
+        "at": "2026-11-08T11:14:02Z",
+        "chars": 58
+      }
+    }
+  ],
+  "max_results": 5,
+  "purpose": "Compare December flights to Lisbon for the trip the user is planning",
+  "canonical_url": "https://search.example/search?q=flight%20to%20Lisbon%20second%20week%20of%20December&n=5",
+  "canonical_hash": "1847f1e16806f72c381d4b5f5cc88677ee023682cc22f32bc6741cd67026bc00",
+  "taint_at_request": [],
+  "state": "executed",
+  "decision": "clean",
+  "decided_by": null,
+  "decided_at": "2026-11-08T11:20:03Z",
+  "grant_hash": "b898381c6c525874eb030c62b4fe8575b84b521473cb1164f82585b4b5445d2b",
+  "grant_used_at": "2026-11-08T11:20:03Z",
+  "bytes": 1842,
+  "created_at": "2026-11-08T11:20:03Z",
+  "expires_at": "2026-11-08T12:20:03Z"
+}

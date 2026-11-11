@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0a5",
+  "at": "2026-11-08T22:10:30.051Z",
+  "actor": {
+    "v": 1,
+    "user": "svc_home",
+    "machine": null,
+    "chat": null,
+    "session": "key_7x7r6m60y9fr256rb1n717yjk5",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "mcp"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "events.read",
+  "target": {
+    "type": "events"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "EventsDB query on source signal: 2 events",
+    "source": "template",
+    "template": "events.read-query",
+    "chars": 41,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

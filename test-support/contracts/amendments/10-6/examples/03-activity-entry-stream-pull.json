@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_7c5zmr2k9w4q8t1v6x3b0n5h3c",
+  "at": "2026-12-29T08:20:14.902Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+    "chat": null,
+    "session": "cxs_01jc7e4f6g8h0j2k4m6n8p0q2s",
+    "writer_class": null,
+    "verified": true,
+    "verified_by": "hub",
+    "via": "connector"
+  },
+  "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "chat": "cht_01jc7d3e5f7g9h1j3k5m7n9p1q",
+  "kind": "stream.pull",
+  "target": {
+    "type": "stream",
+    "id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Event stream pull served: 2 events, no more",
+    "source": "template",
+    "template": "stream.pull",
+    "chars": 43,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

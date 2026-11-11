@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "type": "DecideFetch",
+  "request_id": "rq_01JC5F7Q2V",
+  "result": {
+    "fetch_id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n",
+    "state": "executed",
+    "decision": "user"
+  }
+}

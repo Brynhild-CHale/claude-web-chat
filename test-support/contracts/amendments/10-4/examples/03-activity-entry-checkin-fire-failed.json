@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0a3",
+  "at": "2026-11-09T02:05:41.118Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "checkin.fire",
+  "target": {
+    "type": "checkin",
+    "id": "cki_01jc4m7t9w2q8r5v3x6z0b1n4q"
+  },
+  "outcome": "failed",
+  "summary": {
+    "text": "Check-in not fired: EventsDB source signal unavailable",
+    "source": "template",
+    "template": "checkin.fire-unavailable",
+    "chars": 54,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

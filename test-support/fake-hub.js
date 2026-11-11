@@ -32,7 +32,7 @@
 //
 // RECORD AND VALIDATION (C-12.21). Every frame the fake sends or receives, and
 // every pairing body, is validated through test-support/contracts-loader's
-// validator (the v1.4 lock, every locked amendment folder, in lock order) and
+// validator (the copied lock, every locked amendment folder, in lock order) and
 // appended to `fake.frames` ({dir, ch, kind, frame, bytes, at, link, ok}). A
 // failure goes to `fake.errors`, and fails the test: withFakeHub's t.after runs
 // `assertClean()`, which throws naming each failing frame's kind and the ajv

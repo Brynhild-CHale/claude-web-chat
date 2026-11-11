@@ -205,13 +205,14 @@ test('capture: capture_seq kept as a non-negative integer beside the row\'s fiel
 
 // ── the reconciliation records ─────────────────────────────────────────────
 
-test('a capture record keeps capture_id, seq, ts, profile, source, bytes_raw and a masked title; never url, distilled or raw_ref', () => {
+test('a capture record keeps seq, ts, source and capture_id only — the reconciled item\'s fields (A-11.5); never url, title, profile, distilled, raw_ref or bytes_raw', () => {
   const rec = deepFrozen({ id: 'cap-3', seq: 3, ts: 1762790400000, url: 'https://example.test/private',
     title: `${HOME}/notes/page`, profile: 'default', distilled: 'the page text', raw_ref: 'captures/cap-3.html',
     bytes_raw: 9001, source: 'extension', extra_field: 'x' });
   const out = projectAudit(rec, { record: 'capture', home: HOME });
-  assert.deepStrictEqual(out, { seq: 3, ts: 1762790400000, profile: 'default', source: 'extension', bytes_raw: 9001,
-    title: '~/notes/page', capture_id: 'cap-3' });
+  assert.deepStrictEqual(out, { seq: 3, ts: 1762790400000, source: 'extension', capture_id: 'cap-3' });
+  for (const k of ['profile', 'bytes_raw', 'title', 'url', 'distilled', 'raw_ref']) assert.ok(!(k in out), `no ${k}`);
+  assert.deepStrictEqual(AUDIT_RULES['capture-record'], { keep: ['source'], labels: [], derive: { capture_id: { from: 'id', take: 'field' } } });
   // The same object read as a ring entry has no row: kind-less, it keeps seq and ts only.
   assert.deepStrictEqual(projectAudit(rec, OPTS), { seq: 3, ts: 1762790400000 });
 });

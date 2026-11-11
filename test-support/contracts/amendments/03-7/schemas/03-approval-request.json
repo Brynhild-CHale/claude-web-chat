@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-approval-request.json",
+  "title": "Approve-request: the canonical request and its challenge row",
+  "description": "The approve-request ceremony's two records (contract 03, C-03.17e, amendment A-03.7; R36 H17 (c); docs/plan/design/home-agent.html section 6, the approval). $defs/canonical_request is the typed request a passkey ceremony approves, as the hub holds it pending: its canonical bytes are the UTF-8 of stableStringify (web-chat lib/core/stable-json, as 04 C-04.19 hashes the route table) of this object, and request_hash is their sha256. $defs/challenge_row is the held row a ceremony's start writes beside A-03.2's registration and sign-in rows (C-03.17b; A-11.2's passkey-challenge row, its description widened by A-11.3): the challenge stays 32 random bytes held as its sha256, and the row binds it to the user session that opened the card and to request_hash. Closed at every level. The schema checks the shapes, the closed type list and which id each type carries; the hub checks that params are the type's own (10's params_<Type>), that request_hash is the canonical bytes' sha256, that expires_at is at most 300 s after issued_at, and every refusal of C-03.17e.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/canonical_request"
+    },
+    {
+      "$ref": "#/$defs/challenge_row"
+    }
+  ],
+  "$defs": {
+    "canonical_request": {
+      "description": "A pending typed request whose effect needs the approve-request ceremony (C-03.17e). The list of types grows by amendment; a one-off FetchExternal is DecideFetch's signed-in click, never this ceremony (R36 H17 (c)).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "type",
+        "params",
+        "requested_by",
+        "issued_at"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "description": "The canonical form's version; a change of form is a new value by amendment."
+        },
+        "type": {
+          "enum": [
+            "SetFetchPolicy",
+            "SetAllowance",
+            "GrantEventStream"
+          ],
+          "description": "The typed request (10): a budget raise (SetFetchPolicy, A-10.5), a standing allowance (SetAllowance, A-10.5, tranche 5) or an event-stream grant's activation (GrantEventStream, A-10.6, tranche 5)."
+        },
+        "params": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "The call's params exactly as 10 defines them for the type ($defs/params_<Type> of 10-hub-request.json in force); open here, checked by the hub against 10's def."
+        },
+        "requested_by": {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_home)$",
+          "description": "The account whose call stored the pending request: a usr_ account, or svc_home for a GrantEventStream Home proposed (C-03.16)."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "The pending record's id when the request has one: fal_ for SetAllowance, esg_ for GrantEventStream. Absent for a SetFetchPolicy raise, whose identity is its hash: A-10.5 answers approval_id as request_hash and keeps the pending raise on the home-settings row."
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the hub stored the pending request, RFC 3339 UTC."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetFetchPolicy"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "request_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "SetAllowance"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "request_id"
+            ],
+            "properties": {
+              "request_id": {
+                "pattern": "^fal_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "GrantEventStream"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "request_id"
+            ],
+            "properties": {
+              "request_id": {
+                "pattern": "^esg_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "SetFetchPolicy",
+                  "SetAllowance"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "requested_by": {
+                "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          },
+          "description": "SetFetchPolicy and SetAllowance are the user's types (10 C-10.14d): their requester is a usr_ account, never svc_home."
+        }
+      ]
+    },
+    "challenge_row": {
+      "description": "The held row of one approve-request ceremony (C-03.17e): single use, at most 300 s, deleted at its one verification whatever the outcome; one live row per pending request, a new start replacing it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "challenge_hash",
+        "ceremony",
+        "rp_id",
+        "user_session",
+        "request_hash",
+        "request_type",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": {
+        "challenge_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the challenge, 32 bytes from a CSPRNG (C-03.5), 64 lowercase hex characters; the challenge itself is never stored."
+        },
+        "ceremony": {
+          "const": "approve-request",
+          "description": "The third ceremony kind beside a registration and a sign-in (C-03.17b as A-03.7 amends it)."
+        },
+        "rp_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$",
+          "description": "The environment's RP ID, the hub host (C-03.17b)."
+        },
+        "user_session": {
+          "type": "string",
+          "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The binding: the live user session that opened the card; the verification must present the same session."
+        },
+        "request_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the canonical request's bytes ($defs/canonical_request), 64 lowercase hex characters: what the ceremony approves and the hub executes once."
+        },
+        "request_id": {
+          "type": "string",
+          "description": "The pending record's id, as canonical_request.request_id: fal_ for SetAllowance, esg_ for GrantEventStream, absent for a SetFetchPolicy raise."
+        },
+        "request_type": {
+          "$ref": "#/$defs/canonical_request/properties/type"
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the ceremony was started, RFC 3339 UTC."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "At most 300 s after issued_at (C-03.17b; the hub checks)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "request_type": {
+                "const": "SetFetchPolicy"
+              }
+            },
+            "required": [
+              "request_type"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "request_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "request_type": {
+                "const": "SetAllowance"
+              }
+            },
+            "required": [
+              "request_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "request_id"
+            ],
+            "properties": {
+              "request_id": {
+                "pattern": "^fal_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "request_type": {
+                "const": "GrantEventStream"
+              }
+            },
+            "required": [
+              "request_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "request_id"
+            ],
+            "properties": {
+              "request_id": {
+                "pattern": "^esg_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

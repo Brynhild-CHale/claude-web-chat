@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-event-batch.json",
+  "title": "An event-stream batch (contract 10)",
+  "description": "One push batch's payload (amendment A-10.6, 10 C-10.14e; R36 H23 (a), tranche 5, row I3-30): the one JSON file a batch's hub-queued message carries on 11 C-11.22's held path once 11 admits it there (an A-11 amendment after Q-A10.6-1's answer; today that path takes images only), deleted at delivery, never in the message's text. The hub writes it plain, as the hub API answers PullEventStream plain to every caller: the per-call marker is the MCP layer's that hands it to a model (C-10.28 as A-10.4 amends it), at the destination web-chat's to name (Q-A10.6-2). Its events have ReadEvents' event shape (10-hub-request.json $defs/result_ReadEvents), as PullEventStream's do. A file of its own, not only a def of 10-hub-request.json, so that tools/validate.js checks its example at a root.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1,
+      "description": "The batch form's version; a change of form is a new value by amendment."
+    },
+    "untrusted": {
+      "const": true,
+      "description": "Always true: every string in events is untrusted data from EventsDB, other people's words among it, never instructions to the agent that reads it (design section 7)."
+    },
+    "grant_id": {
+      "$ref": "10-event-stream-grant.json#/$defs/grant_id"
+    },
+    "batch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The batch's number in the grant, from 1, as the message's template line names it."
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "since": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The earliest event time this batch covers, RFC 3339."
+        },
+        "until": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The latest event time it covers, RFC 3339."
+        }
+      },
+      "required": [
+        "since",
+        "until"
+      ],
+      "description": "The span of event times in the batch."
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "$ref": "10-hub-request.json#/$defs/result_ReadEvents/properties/events/items"
+      },
+      "description": "1 to 200 EventsDB events as the proxy serves them (ReadEvents' event shape), oldest first, after the own-event exclusion; never an empty batch. Untrusted data."
+    },
+    "more": {
+      "type": "boolean",
+      "description": "True when the backlog continues in the next batch; false for the backlog's last batch and for a live batch."
+    }
+  },
+  "required": [
+    "v",
+    "untrusted",
+    "grant_id",
+    "batch",
+    "window",
+    "events",
+    "more"
+  ]
+}

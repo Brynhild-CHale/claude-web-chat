@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "type": "FetchExternal",
+  "request_id": "rq_01JC5F3K8Q",
+  "result": {
+    "fetch_id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n",
+    "state": "pending",
+    "url": "https://search.example/search?q=flight%20to%20Lisbon%20second%20week%20of%20December&n=5",
+    "decision": "pending"
+  }
+}

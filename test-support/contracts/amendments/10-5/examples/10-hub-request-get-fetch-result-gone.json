@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "GetFetchResult",
+  "request_id": "rq_01JC5F9S4X",
+  "error": {
+    "code": "not_found",
+    "message": "No held result for this fetch_id.",
+    "hint": "A held result is read once and kept at most an hour; make a new request if it is still needed."
+  }
+}

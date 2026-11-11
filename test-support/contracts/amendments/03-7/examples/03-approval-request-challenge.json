@@ -1,0 +1,10 @@
+{
+  "challenge_hash": "7061aba401997d0012b8ae72143c0fca0eda71d108eaabc5474fa6ed02205b62",
+  "ceremony": "approve-request",
+  "rp_id": "hub.test",
+  "user_session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+  "request_hash": "9a198ecef5e6f8157af7fa19b649e52eb314a9246bb40708084685b3e8b58f22",
+  "request_type": "SetFetchPolicy",
+  "issued_at": "2026-11-08T20:31:40.204Z",
+  "expires_at": "2026-11-08T20:36:40.204Z"
+}

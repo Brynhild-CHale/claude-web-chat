@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "FetchExternal",
+  "request_id": "rq_01JC5F4M9R",
+  "error": {
+    "code": "refused",
+    "message": "FetchExternal refused (provenance): term 2 is not in the user's messages to Home.",
+    "hint": "Every term must be copied exactly from a message the user wrote to Home in the last 7 days. Ask the user, or use their words."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "FetchExternal",
+  "request_id": "rq_01JC5E9N3R",
+  "error": {
+    "code": "conflict",
+    "message": "This Idempotency-Key was used within the last 24 hours for a FetchExternal that returned its result inline, so the request was not made again and the result is not kept.",
+    "hint": "Make a new request with a new Idempotency-Key if the result is still needed; it counts against the day's budgets again."
+  }
+}

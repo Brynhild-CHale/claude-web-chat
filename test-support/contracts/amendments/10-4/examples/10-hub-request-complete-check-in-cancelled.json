@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "CompleteCheckIn",
+  "request_id": "rq_01JC4MFJ9K",
+  "error": {
+    "code": "conflict",
+    "message": "This check-in fire was cancelled: its message expired before it was delivered.",
+    "hint": "Nothing to close; a later answer does not reopen it. Tell the user if the check-in mattered."
+  }
+}

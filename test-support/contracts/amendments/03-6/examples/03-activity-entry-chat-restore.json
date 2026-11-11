@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_9a1b3c5d7e9f1g3h5j7k9m1n3w",
+  "at": "2026-11-10T21:42:19.560Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "chat": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0",
+  "kind": "chat.restore",
+  "target": {
+    "type": "chat",
+    "id": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Chat restored from the shell",
+    "source": "template",
+    "template": "chat.restore",
+    "chars": 28,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

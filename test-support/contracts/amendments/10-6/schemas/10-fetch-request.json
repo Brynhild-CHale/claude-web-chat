@@ -1,0 +1,428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-fetch-request.json",
+  "title": "Fetch request record (contract 10)",
+  "description": "A FetchExternal request as the hub stores it and draws the card from it (contract 10, C-10.14d, amendment A-10.5; R36 H16 (b), H17 (c), H19 (a); A-11.3's fetch-request row, 90 days). The root is the stored row ($defs/record). It holds the request's fields, copies of the user's words as terms with the time and length of the message each came from (never that message's text), Home's purpose, the canonical URL and its sha256, the session label at the request, the decision and the single-use grant's hash and use. Closed at every level. The schema checks shape and the state and decision pairs; the hub checks that the canonical URL and hash are the request's, that each term was in the corpus, and every time.",
+  "$ref": "#/$defs/record",
+  "$defs": {
+    "fetch_id": {
+      "type": "string",
+      "pattern": "^fch_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "A fetch request. Minted by the hub; its form is contract 03's (prefix fch_, A-03.7)."
+    },
+    "term": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "$ref": "10-hub-request.json#/$defs/params_FetchExternal/properties/terms/items"
+        },
+        "source_message": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the user wrote the message the term was found in (A-11.3's home-corpus row), RFC 3339."
+            },
+            "chars": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "That message's length in characters."
+            }
+          },
+          "required": [
+            "at",
+            "chars"
+          ],
+          "description": "The corpus hit the card shows the term beside: its time and length, never its text (the card reads the text from the home-corpus row while it lives). null only for a signed-in user's own test request, which has no corpus."
+        }
+      },
+      "required": [
+        "text",
+        "source_message"
+      ],
+      "description": "One term as stored: the user's words, copied, and where they came from."
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/fetch_id"
+        },
+        "requested_by": {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_home)$",
+          "description": "svc_home, or the signed-in user testing a host from Settings. Stamped from the credential."
+        },
+        "kind": {
+          "$ref": "10-hub-request.json#/$defs/params_FetchExternal/properties/kind"
+        },
+        "host": {
+          "$ref": "10-hub-request.json#/$defs/fetch_host/properties/host"
+        },
+        "path": {
+          "$ref": "10-hub-request.json#/$defs/params_FetchExternal/properties/path"
+        },
+        "terms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/term"
+          },
+          "description": "The request's terms, in order."
+        },
+        "max_results": {
+          "$ref": "10-hub-request.json#/$defs/params_FetchExternal/properties/max_results"
+        },
+        "purpose": {
+          "$ref": "10-hub-request.json#/$defs/params_FetchExternal/properties/purpose"
+        },
+        "canonical_url": {
+          "$ref": "10-hub-request.json#/$defs/result_FetchExternal/properties/url"
+        },
+        "canonical_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the canonical request (the fields above but purpose, in a stable key order), 64 lowercase hex characters: the bytes the card, the fetcher's grant and A-03.7's ceremony bind to."
+        },
+        "taint_at_request": {
+          "$ref": "10-hub-request.json#/$defs/result_GetHomeStatus/properties/session/properties/taint",
+          "description": "Home's session label when the request was made (R36 H19 (a)); empty for a clean session."
+        },
+        "state": {
+          "$ref": "10-hub-request.json#/$defs/result_FetchExternal/properties/state"
+        },
+        "decision": {
+          "$ref": "10-hub-request.json#/$defs/result_FetchExternal/properties/decision"
+        },
+        "decided_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The user who approved or dismissed it; null when the hub decided (clean, allowance, expired) or nothing is decided yet."
+        },
+        "decided_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When it was decided; null while pending."
+        },
+        "grant_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 of the single-use grant handed to the fetcher (32 bytes from a CSPRNG, 03 C-03.5); null until one is minted."
+        },
+        "grant_used_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the fetcher presented the grant, once; null until then."
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 262144,
+          "description": "The bytes the fetcher returned; null until it ran."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the hub stored the request."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a pending request expires: 1 hour after created_at."
+        }
+      },
+      "required": [
+        "id",
+        "requested_by",
+        "kind",
+        "host",
+        "path",
+        "terms",
+        "purpose",
+        "canonical_url",
+        "canonical_hash",
+        "taint_at_request",
+        "state",
+        "decision",
+        "decided_by",
+        "decided_at",
+        "grant_hash",
+        "grant_used_at",
+        "bytes",
+        "created_at",
+        "expires_at"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "requested_by": {
+                "const": "svc_home"
+              }
+            },
+            "required": [
+              "requested_by"
+            ]
+          },
+          "then": {
+            "properties": {
+              "terms": {
+                "items": {
+                  "properties": {
+                    "source_message": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "decision": {
+                "const": "user"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "url"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "max_results"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "pending"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "const": "pending"
+              },
+              "decided_by": {
+                "type": "null"
+              },
+              "decided_at": {
+                "type": "null"
+              },
+              "grant_hash": {
+                "type": "null"
+              },
+              "grant_used_at": {
+                "type": "null"
+              },
+              "bytes": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "executed"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "clean",
+                  "allowance",
+                  "user"
+                ]
+              },
+              "grant_hash": {
+                "type": "string"
+              },
+              "grant_used_at": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "expired"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "const": "expired"
+              },
+              "grant_hash": {
+                "type": "null"
+              },
+              "grant_used_at": {
+                "type": "null"
+              },
+              "bytes": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "refused"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "dismissed",
+                  "clean",
+                  "allowance",
+                  "user"
+                ]
+              },
+              "bytes": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "user",
+                  "dismissed"
+                ]
+              }
+            },
+            "required": [
+              "decision"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decided_by": {
+                "type": "string"
+              },
+              "decided_at": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "enum": [
+                  "clean",
+                  "allowance",
+                  "expired"
+                ]
+              }
+            },
+            "required": [
+              "decision"
+            ]
+          },
+          "then": {
+            "properties": {
+              "decided_by": {
+                "type": "null"
+              },
+              "decided_at": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "dismissed"
+              }
+            },
+            "required": [
+              "decision"
+            ]
+          },
+          "then": {
+            "properties": {
+              "grant_hash": {
+                "type": "null"
+              },
+              "grant_used_at": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "description": "The stored request. state and decision pair as result_FetchExternal's do, and refused also covers a run the fetcher refused after a clean, allowance or user decision (grant used, bytes null)."
+    }
+  }
+}

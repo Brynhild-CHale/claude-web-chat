@@ -394,15 +394,16 @@ test('C-06.27: every harness row, the extra list, the session start and a picker
     assert.strictEqual(e.chat_id, c.label);
   }
 
-  // A pending route the v1 wildcard admits (U744's list, I3 (a)) passes the
-  // gate and reaches the daemon, which refuses it 403 host-only.
+  // The ink picture's POST, which version 1's wildcard admitted to the daemon
+  // (refused there 403 host-only), is table_version 2's own host_only row
+  // (U793, A-04.2): the connector refuses it and the daemon never sees it.
   const r = await c.http({ method: 'POST', path: '/api/elements/e1/picture', decision: owner, headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.strictEqual(r.status, 403);
-  assert.strictEqual(relayed(c.d.seen).filter((e) => e.url === '/api/elements/e1/picture').length, 1, 'the daemon saw it');
+  assert.strictEqual(relayed(c.d.seen).filter((e) => e.url === '/api/elements/e1/picture').length, 0, 'the daemon never saw it');
   const last = c.denies[c.denies.length - 1];
-  assert.strictEqual(last.enforcer, 'daemon', 'the daemon\'s refusal is told as the daemon\'s');
-  assert.ok(['second-lock', 'daemon-rule'].includes(last.reason));
-  assert.strictEqual(last.rule, 'POST|PATCH|DELETE /api/elements/*');
+  assert.strictEqual(last.enforcer, 'connector');
+  assert.strictEqual(last.reason, 'host-only');
+  assert.strictEqual(last.rule, 'POST /api/elements/:id/picture');
   checkDeny(last);
 });
 
@@ -807,4 +808,76 @@ test('a relayed GET whose daemon holds its response head is dropped at the daemo
   await within(pending[1].closed, 1000, 'the daemon request dropped on the hub\'s abort');
   assert.ok(Date.now() - t1 < 1000);
   await waitUntil(() => c.relay.openCount === 0, { timeout: 2000, what: 'the streams released' });
+});
+
+// ── U793 (A-04.2): table_version 2's three host_only rows ────────────────
+
+// The three routes version 2 gives rows of their own: refused by the CONNECTOR
+// as host-only before any daemon is reached, whatever the decision holds
+// (version 1 admitted the anchor stats and the picture POST by its wildcard
+// rows, to be refused at the daemon, and denied the forms route by default).
+const V2_HOST_ONLY = [
+  ['GET', '/api/elements/anchor-stats', 'GET /api/elements/anchor-stats'],
+  ['POST', '/api/elements/e1/picture', 'POST /api/elements/:id/picture'],
+  ['GET', '/api/forms/shifts', '* /api/forms/*'],
+  ['POST', '/api/forms/shifts', '* /api/forms/*'],
+  ['DELETE', '/api/forms/anything', '* /api/forms/*'],
+];
+
+test('table_version 2: anchor-stats, the picture POST and every /api/forms/ request are refused host-only by the connector at every level, never reaching the daemon', async (t) => {
+  const c = await setup(t);
+  const decisions = [
+    c.decision({ daemon_level: 'basic' }),
+    c.decision({ daemon_level: 'read' }),
+    c.decision({ daemon_level: 'full' }),
+    c.decision({ daemon_level: 'full', specifics: { destructive: true, steer: true } }),
+  ];
+  let n = 0;
+  for (const decision of decisions) {
+    for (const [method, p, rule] of V2_HOST_ONLY) {
+      const opts = method === 'GET' ? {} : { headers: { 'content-type': 'application/json' }, body: '{}' };
+      const r = await c.http({ method, path: p, decision, ...opts });
+      const what = `${method} ${p} at ${decision.daemon_level}`;
+      assert.strictEqual(r.status, 403, what);
+      const body = json(r);
+      ajvSays(REFUSAL, body, `${what} refusal body`);
+      assert.deepStrictEqual([body.authority.reason, body.authority.rule, body.authority.need], ['host-only', rule, 'host_only'], what);
+      assert.strictEqual(body.authority.decision_id, decision.decision_id, what);
+      n += 1;
+      const deny = c.denies[c.denies.length - 1];
+      assert.deepStrictEqual([deny.enforcer, deny.reason, deny.rule, deny.path], ['connector', 'host-only', rule, p], what);
+      checkDeny(deny);
+    }
+  }
+  assert.strictEqual(c.denies.length, n, 'one deny per refusal');
+  assert.strictEqual(relayed(c.d.seen).length, 0, 'none of them reached the daemon');
+});
+
+test('table_version 2 widens nothing at the connector: the seven routes version 1\'s wildcard rows admitted still pass the gate to the daemon, at their wildcard row', async (t) => {
+  const c = await setup(t);
+  const owner = c.decision({ daemon_level: 'full' });
+  const v1 = connectedPolicy.compileTable(JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'test-support/contracts/examples/04-route-table.json'), 'utf8')));
+  const SEVEN = [
+    ['GET', '/api/elements/types/ink/draw.js'], ['GET', '/api/elements/types/ink/assets/a.svg'],
+    ['POST', '/api/elements/e1/glyph'], ['GET', '/api/elements/e1/picture'], ['POST', '/api/elements/undo'],
+    ['GET', '/app/strokes.js'], ['GET', '/app/element-assets.js'],
+  ];
+  for (const [method, p] of SEVEN) {
+    const v = connectedPolicy.classifySession(method, p);
+    const was = v1.classifySession(method, p);
+    assert.deepStrictEqual([v.allow, v.key, v.row.level], [was.allow, was.key, was.row.level], `${method} ${p}: version 1's outcome`);
+    const before = relayed(c.d.seen).length;
+    const opts = method === 'GET' ? {} : { headers: { 'content-type': 'application/json' }, body: '{}' };
+    await c.http({ method, path: p, decision: owner, ...opts });
+    assert.strictEqual(relayed(c.d.seen).length, before + 1, `${method} ${p} reached the daemon`);
+  }
+  assert.ok(!c.denies.some((e) => e.enforcer === 'connector'), 'the connector refused none of them');
+  // The three version 2 decides were the only routes version 1 let further.
+  for (const [method, p] of V2_HOST_ONLY.slice(0, 3)) {
+    const was = v1.classifySession(method, p);
+    const now = connectedPolicy.classifySession(method, p);
+    assert.strictEqual(now.allow, false, `${method} ${p}`);
+    assert.ok(was.allow || was.key === null, `${method} ${p}: version 1 ${was.key}`);
+  }
 });

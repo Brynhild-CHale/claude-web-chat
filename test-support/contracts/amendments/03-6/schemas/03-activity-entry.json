@@ -1,0 +1,1822 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/03-activity-entry.json",
+  "title": "Activity entry",
+  "description": "One action as the hub records it (contract 03, C-03.25 to C-03.29). This file is amendment A-03.6's replacement: amendment A-03.8's file (amendments/03-8/schemas/03-activity-entry.json) plus the kinds workspace.create, workspace.archive, project.create, project.archive and chat.restore (C-03.27e: one entry per CreateWorkspace, ArchiveWorkspace, CreateProject, ArchiveProject or RestoreChat call, 10 C-10.14) and the target types workspace and project, the ids wsp_ and prj_ of 03 section 2. A-03.8's file is amendment A-10.6's file (amendments/10-6/schemas/03-activity-entry.json) plus the kinds message.hold and message.take_back (C-03.27c) and the rules for the hub queue's entries (C-03.26): a hub-queued message.send names its hm_ id, carries no status and is left out of the relayed-kinds rule. A-10.6's file is amendment A-03.7's file (amendments/03-7/schemas/03-activity-entry.json) plus the kinds stream.propose, stream.grant, stream.revoke, stream.deliver and stream.pull (10 C-10.14e, tranche 5) and the target type stream. A-03.7's file is amendment A-10.5's file (amendments/10-5/schemas/03-activity-entry.json) plus the kinds auth.approve and auth.approve_refused, an approve-request ceremony's verification (C-03.17e, C-03.27b). A-10.5's file is amendment A-10.4's file (amendments/10-4/schemas/03-activity-entry.json) plus the kinds fetch.request, fetch.decide, fetch.execute, allowance.set and allowance.revoke (10 C-10.14d), the target types fetch and allowance, and home.settings' fields widened by hosts, fetch_per_day and fetch_bytes_per_day (SetFetchPolicy). A-10.4's file is amendment A-03.5's file (amendments/03-5/schemas/03-activity-entry.json, itself A-10.1's plus chat.update) plus the kinds checkin.set, checkin.fire, checkin.complete (10 C-10.14c), events.read (10 C-10.23a) and home.settings (10 C-10.23b), the target types checkin and events, and fields widened to ride chat.update, checkin.set and home.settings, each kind with its own closed list of field names, never a value (C-03.26). The relayed-request part generalises the portal's remote access log line {ts, email, instance, method, path, status} (web-chat-dev.worktrees/ae-int/lib/portal/access-log.js) with a principal in place of the email and hub ids in place of the instance id; targets keep ids only, as the control audit's auditTarget does (lib/server/control/index.js). No field holds body content, a secret or a query string; the optional summary is the one field that may hold words, under contract 11.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "id",
+    "at",
+    "actor",
+    "machine",
+    "chat",
+    "kind",
+    "target",
+    "outcome"
+  ],
+  "properties": {
+    "v": {
+      "description": "Entry format version.",
+      "const": 1
+    },
+    "id": {
+      "description": "The entry id, minted before a relayed request is forwarded so it can ride X-WC-Actor.",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "at": {
+      "description": "When the hub recorded the outcome, RFC 3339 UTC. Ordering across entries is contract 07's.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "description": "Who did it.",
+      "$ref": "https://web-chat-contracts/schemas/03-principal.json"
+    },
+    "machine": {
+      "description": "The machine the action touched (the chat's machine for a relayed request), or null for a hub-only action.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^mch_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "chat": {
+      "description": "The chat the action touched, or null.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+        }
+      ]
+    },
+    "kind": {
+      "description": "What happened. Relayed routes map to kinds by the table in C-03.27; the allowlist and role kinds user.allow, user.remove and user.role are C-03.27a's (amendment A-03.1); the passkey kinds passkey.add and passkey.remove are C-03.27b's (amendment A-03.2), and a passkey sign-in is auth.sign_in or auth.sign_in_refused with a credential target; attach.read is a served read of a chat's terminal attach details (10 C-10.14a, amendment A-10.1), the one recorded read beside relay.open and relay.close; the rest are hub and connector events. A closed list for round v1; a new kind is an amendment; chat.update is one SetChatScope call (10 C-10.14), the entry carrying the field names it set in fields (C-03.26, amendment A-03.5). A-10.4 adds checkin.set (one SetCheckIn call, fields the record's field names it set), checkin.fire (one per check-in per fire attempt), checkin.complete (one CompleteCheckIn close per check-in the fire carries), events.read (a served ReadEvents, the recorded read beside attach.read, C-03.25 as A-03.7 amends it) and home.settings (one SetHomeSettings call, fields the setting names it set) (10 C-10.14c, C-10.23a, C-10.23b). A-10.5 adds fetch.request (one FetchExternal call), fetch.decide (the decision on a stored request: the user's click, the auto-pass, a standing allowance or the expiry), fetch.execute (the data-free fetcher's run), allowance.set and allowance.revoke (one per standing allowance change, tranche 5) (10 C-10.14d). A-03.7 adds auth.approve and auth.approve_refused (an approve-request ceremony's verification, accepted or refused, its target the passkey; an accepted one's related names the entry of the effect it approved, written in the same transaction) (C-03.17e, C-03.27b); C-03.25 as A-03.7 amends it names events.read and A-10.6's stream.pull as recorded reads beside attach.read. A-10.6 adds stream.propose (one GrantEventStream call: a proposal Home or the user made), stream.grant (the activation, written in A-03.7's ceremony transaction, whose auth.approve names it in related), stream.revoke (the user's RevokeEventStream, or the hub's job when a proposal lapses or a grant expires), stream.deliver (one per push batch, a hub-queued message to the destination chat) and stream.pull (a served PullEventStream, the recorded read C-03.25 as A-03.7 amends it names) (10 C-10.14e, tranche 5). A-03.8 adds message.hold (one HoldMessage call on a hub_msg_id, or the hub's own hold of a DelegateMessage at enqueue, its held or released state told by the summary's template id) and message.take_back (one TakeBackMessage call on a hub_msg_id), and a hub-queued message (SendMessage, AskHome, DelegateMessage, a check-in's fire, a stream batch) reuses message.send with target {type: 'message', id: <hub_msg_id>} (C-03.26, C-03.27c). A-03.6 adds workspace.create, workspace.archive, project.create and project.archive (one CreateWorkspace, ArchiveWorkspace, CreateProject or ArchiveProject call, its target the workspace or the project; an archive that takes a project or a chat with it writes that object's own project.archive or chat.archive, whose related names the call's entry) and chat.restore (one RestoreChat call, its target the chat, the counterpart of chat.archive) (10 C-10.14, C-03.27e).",
+      "enum": [
+        "auth.sign_in",
+        "auth.sign_in_refused",
+        "auth.sign_out",
+        "auth.epoch_bump",
+        "session.revoke",
+        "session.expire",
+        "surface.enter",
+        "key.create",
+        "key.revoke",
+        "key.expire",
+        "machine.pair",
+        "machine.connect",
+        "machine.disconnect",
+        "machine.rotate_key",
+        "machine.revoke",
+        "machine.settings",
+        "chat.create",
+        "chat.start",
+        "chat.stop",
+        "chat.archive",
+        "chat.update",
+        "relay.open",
+        "relay.close",
+        "relay.refused",
+        "relay.write",
+        "message.send",
+        "message.release",
+        "queue.push",
+        "queue.edit",
+        "queue.remove",
+        "ask.decide",
+        "control.action",
+        "element.write",
+        "store.write",
+        "page.write",
+        "graph.write",
+        "settings.write",
+        "attachment.add",
+        "grant.set",
+        "grant.revoke",
+        "device.register",
+        "device.revoke",
+        "user.allow",
+        "user.remove",
+        "user.role",
+        "passkey.add",
+        "passkey.remove",
+        "attach.read",
+        "checkin.set",
+        "checkin.fire",
+        "checkin.complete",
+        "events.read",
+        "home.settings",
+        "fetch.request",
+        "fetch.decide",
+        "fetch.execute",
+        "allowance.set",
+        "allowance.revoke",
+        "auth.approve",
+        "auth.approve_refused",
+        "stream.propose",
+        "stream.grant",
+        "stream.revoke",
+        "stream.deliver",
+        "stream.pull",
+        "message.hold",
+        "message.take_back",
+        "workspace.create",
+        "workspace.archive",
+        "project.create",
+        "project.archive",
+        "chat.restore"
+      ]
+    },
+    "target": {
+      "description": "What the action was on. ids only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "description": "The kind of thing acted on.",
+          "enum": [
+            "route",
+            "relay",
+            "message",
+            "ask",
+            "control",
+            "element",
+            "chat",
+            "machine",
+            "credential",
+            "device",
+            "grant",
+            "user",
+            "checkin",
+            "events",
+            "fetch",
+            "allowance",
+            "stream",
+            "workspace",
+            "project"
+          ]
+        },
+        "id": {
+          "description": "Its id when it has one: a hub id (a hub-queued message's hm_ id, 07 C-07.25, A-03.8; a workspace's wsp_ id or a project's prj_ id, 03 section 2, A-03.6), a daemon id from the path (ask id, element id, queue item id), or a credential id (a passkey's pky_ id, never its WebAuthn credential id). Never a secret.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_:.@-]+$"
+        },
+        "action": {
+          "description": "For control.action: the action name as the daemon's control table names it (lib/server/control/index.js), or task-stop.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "method": {
+          "description": "For a relayed request: the HTTP method, or WS for an upgrade (as access-log.js writes it).",
+          "enum": [
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE",
+            "WS"
+          ]
+        },
+        "path": {
+          "description": "For a relayed request: the path without query or fragment, at most 512 characters (access-log.js).",
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^/[^?#]*$"
+        },
+        "origin": {
+          "description": "For a relayed request: which chat origin it arrived on.",
+          "enum": [
+            "session",
+            "answer"
+          ]
+        }
+      }
+    },
+    "fields": {
+      "description": "chat.update, checkin.set and home.settings only: the closed list of field names the call set, in the request's order, never a value (11 C-11.12). chat.update: scope (SetChatScope, A-03.5); checkin.set: the check-in record's label, trigger, condition, instruction, destination, autonomy, zone, enabled (10 C-10.14c, A-10.4); home.settings: delegation_needs_approval, paused (10 C-10.23b, A-10.4), and hosts, fetch_per_day, fetch_bytes_per_day (SetFetchPolicy, 10 C-10.14d, A-10.5). Each kind's rule narrows the list to its own names; a later field is added by amendment.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "scope",
+          "label",
+          "trigger",
+          "condition",
+          "instruction",
+          "destination",
+          "autonomy",
+          "zone",
+          "enabled",
+          "delegation_needs_approval",
+          "paused",
+          "hosts",
+          "fetch_per_day",
+          "fetch_bytes_per_day"
+        ]
+      }
+    },
+    "outcome": {
+      "description": "accepted, refused:<code> (the hub's or the daemon's refusal word, or the HTTP status), or failed (upstream error, timeout).",
+      "type": "string",
+      "pattern": "^(accepted|failed|refused:[a-z0-9_-]{1,40})$"
+    },
+    "status": {
+      "description": "For a relayed request: the HTTP status returned to the client (101 for an accepted upgrade). Absent for hub-only actions.",
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "related": {
+      "description": "Another entry this one belongs with: a relay.close names its relay.open, a message.release names the message.send that queued it, a revocation's cascade names the event that caused it, a message.hold or a message.take_back names the message.send of the message it acts on (A-03.8), a project.archive or a chat.archive that an archive of its workspace or project took names that call's entry (A-03.6).",
+      "type": "string",
+      "pattern": "^act_[0-9a-hjkmnp-tv-z]{26}$"
+    },
+    "close_code": {
+      "description": "For relay.close: the WebSocket close code sent to the viewer (4401, 4403, 4503 as in lib/portal/ws-relay.js, or a standard code).",
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 4999
+    },
+    "summary": {
+      "description": "At most one summary, the only field of an entry that may hold words; its sources, cap and redaction are contract 11's (C-11.12, C-11.13).",
+      "$ref": "https://web-chat-contracts/schemas/11-activity-summary.json"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "passkey.add",
+              "passkey.remove"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "credential",
+                "description": "A passkey kind's target is the passkey (C-03.27b)."
+              },
+              "id": {
+                "pattern": "^pky_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "passkey.remove"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "auth.sign_in",
+              "auth.sign_in_refused"
+            ]
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "credential"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "properties": {
+              "id": {
+                "description": "A sign-in whose target is a credential was a passkey assertion; the id is the passkey's (C-03.27b).",
+                "pattern": "^pky_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "attach.read"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "string",
+            "description": "The chat's machine (10 C-10.14a, A-10.1)."
+          },
+          "chat": {
+            "type": "string",
+            "description": "The chat whose attach details were read."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "chat",
+                "description": "An attach.read's target is the chat (10 C-10.14a)."
+              },
+              "id": {
+                "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "relay.open",
+              "relay.write",
+              "message.send",
+              "queue.push",
+              "queue.edit",
+              "queue.remove",
+              "ask.decide",
+              "control.action",
+              "element.write",
+              "store.write",
+              "page.write",
+              "graph.write",
+              "settings.write",
+              "attachment.add"
+            ]
+          }
+        },
+        "not": {
+          "properties": {
+            "kind": {
+              "const": "message.send"
+            },
+            "target": {
+              "properties": {
+                "id": {
+                  "pattern": "^hm_"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "target"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "machine": {
+            "type": "string"
+          },
+          "chat": {
+            "type": "string"
+          },
+          "target": {
+            "required": [
+              "type",
+              "method",
+              "path"
+            ]
+          }
+        }
+      },
+      "description": "A relayed request carries its status, its chat and machine, and its method and path (C-03.27); a message.send whose target id is an hm_ id is the hub's own record of a message it queued, not a relayed request, and takes the next rule instead (C-03.26 as A-03.8 amends it)."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "user.allow",
+              "user.remove",
+              "user.role"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "user",
+                "description": "An allowlist or role kind's target is the account the entry admits (C-03.27a)."
+              },
+              "id": {
+                "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "chat.update"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "fields"
+        ],
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "The chat whose fields were set (A-03.5)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "chat",
+                "description": "A chat.update's target is the chat (C-03.26, A-03.5)."
+              },
+              "id": {
+                "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          },
+          "fields": {
+            "items": {
+              "enum": [
+                "scope"
+              ]
+            },
+            "description": "A chat.update names chat fields only (A-03.5)."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "checkin.set",
+              "checkin.fire",
+              "checkin.complete"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "checkin",
+                "description": "A check-in kind's target is the record (10 C-10.14c, A-10.4)."
+              },
+              "id": {
+                "pattern": "^cki_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "checkin.set"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "items": {
+              "enum": [
+                "label",
+                "trigger",
+                "condition",
+                "instruction",
+                "destination",
+                "autonomy",
+                "zone",
+                "enabled"
+              ]
+            },
+            "description": "The record's top-level field names the SetCheckIn call set (A-10.4)."
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "events.read"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "not": {
+              "required": [
+                "id"
+              ]
+            },
+            "properties": {
+              "type": {
+                "const": "events",
+                "description": "An events.read's target is EventsDB, by type alone: it has no hub id (10 C-10.23a, A-10.4)."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "home.settings"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "fields"
+        ],
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "fields": {
+            "items": {
+              "enum": [
+                "delegation_needs_approval",
+                "paused",
+                "hosts",
+                "fetch_per_day",
+                "fetch_bytes_per_day"
+              ]
+            },
+            "description": "The Home setting names the SetHomeSettings call set (A-10.4), or the fetch policy names the SetFetchPolicy call set (A-10.5)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "user",
+                "description": "A home.settings target is Home's service user (10 C-10.23b, A-10.4)."
+              },
+              "id": {
+                "const": "svc_home"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "fetch.request",
+              "fetch.decide",
+              "fetch.execute"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "fetch",
+                "description": "A fetch kind's target is the stored request (10 C-10.14d, A-10.5)."
+              },
+              "id": {
+                "pattern": "^fch_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "fetch.decide",
+                  "fetch.execute"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "fetch.request"
+              },
+              "outcome": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "kind",
+              "outcome"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        },
+        "description": "A decision, a run, and an accepted request name the stored request; a request the hub refused at its gates stores no row and names none (A-10.5)."
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "allowance.set",
+              "allowance.revoke"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "allowance",
+                "description": "An allowance kind's target is the standing allowance (10 C-10.14d, A-10.5, tranche 5)."
+              },
+              "id": {
+                "pattern": "^fal_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "auth.approve",
+              "auth.approve_refused"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          },
+          "target": {
+            "properties": {
+              "type": {
+                "const": "credential",
+                "description": "An approve-request ceremony's target is the passkey the assertion names (C-03.17e, C-03.27b, A-03.7)."
+              },
+              "id": {
+                "pattern": "^pky_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "kind": {
+              "const": "auth.approve"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        "then": {
+          "required": [
+            "related"
+          ],
+          "properties": {
+            "target": {
+              "required": [
+                "type",
+                "id"
+              ]
+            }
+          }
+        },
+        "else": {
+          "not": {
+            "required": [
+              "related"
+            ]
+          }
+        },
+        "description": "An approve-request ceremony (A-03.7): hub-only, no status; an accepted one names the passkey and, in related, the entry of the effect it approved; a refused one names no effect, and names the passkey only when a record matched."
+      }
+    },
+    {
+      "description": "Kind and outcome are paired for the ceremony kinds (C-03.27b, A-03.7; Q-A03.7-3): auth.approve and auth.sign_in are accepted; auth.approve_refused carries one of C-03.17e's fourteen refusal words; auth.sign_in_refused carries refused:<word>, its words including base 03's identity-provider ones.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "auth.approve",
+                  "auth.sign_in"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "accepted"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "auth.approve_refused"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "pattern": "^refused:(challenge_unknown|challenge_expired|session_mismatch|passkey_unknown|passkey_revoked|origin|uv_missing|signature|passkey_user|passkey_backup|counter|request_gone|request_decided|request_changed)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "auth.sign_in_refused"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "pattern": "^refused:"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "stream.propose",
+              "stream.grant",
+              "stream.revoke",
+              "stream.deliver",
+              "stream.pull"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "target": {
+            "properties": {
+              "type": {
+                "const": "stream",
+                "description": "A stream kind's target is the event-stream grant (10 C-10.14e, A-10.6, tranche 5)."
+              },
+              "id": {
+                "pattern": "^esg_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            }
+          }
+        }
+      },
+      "description": "A stream kind is hub-only: no status; its target is the grant, esg_ (A-10.6)."
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "stream.grant",
+                  "stream.revoke",
+                  "stream.deliver",
+                  "stream.pull"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "stream.propose"
+              },
+              "outcome": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "kind",
+              "outcome"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ]
+          }
+        }
+      },
+      "description": "Every stream entry names its grant, except a proposal the hub refused at its gates, which stores no row and names none (A-10.6, as A-10.5's fetch.request)."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "stream.propose",
+              "stream.grant",
+              "stream.revoke"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "null"
+          },
+          "chat": {
+            "type": "null"
+          }
+        }
+      },
+      "description": "A proposal, an activation and a revocation touch the hub's record only: machine and chat null, so they ride A-07.1's hub stream (A-10.6)."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "stream.deliver",
+              "stream.pull"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "machine": {
+            "type": "string",
+            "description": "The destination chat's machine (10 C-10.14e, A-10.6)."
+          },
+          "chat": {
+            "type": "string",
+            "description": "The grant's destination chat: a batch is queued to it, a pull is served for it (10 C-10.14e, A-10.6)."
+          }
+        }
+      },
+      "description": "A batch and a pull name the destination chat and its machine, so activity.stream.deliver and activity.stream.pull ride that chat's stream (A-07.1 C-07.5a) (A-10.6)."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "stream.grant"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "accepted"
+          }
+        },
+        "not": {
+          "required": [
+            "related"
+          ]
+        }
+      },
+      "description": "An activation is written only in the ceremony's accepted transaction, and carries no related: the join runs one way, from the ceremony's auth.approve (C-03.26 as A-03.7 amends it) (A-10.6)."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "message.send"
+          },
+          "target": {
+            "properties": {
+              "id": {
+                "pattern": "^hm_"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "The destination chat of the hub-queued message (C-03.26, A-03.8); machine is its machine, or null while it has none."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "message",
+                "description": "A hub-queued message.send's target is the message the hub minted (07 C-07.25, A-03.8)."
+              },
+              "id": {
+                "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+              }
+            },
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "method"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "origin"
+                  ]
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "pattern": "^(accepted|refused:[a-z0-9_-]{1,40})$",
+            "description": "Completed when the message ends at the hub: accepted (07 C-07.27's ack accepted or duplicate), refused:<the daemon's word>, refused:taken_back, refused:forbidden (the hub's own refusal at a delivery or a replay) or refused:expired; never failed, since the row completes only on an ack, a take-back, the hub's own refusal at a delivery or an expiry (C-03.26 as A-03.8 amends it)."
+          }
+        }
+      },
+      "description": "A hub-queued message.send (C-03.26, C-03.27c, A-03.8): the hm_ id as target, the destination chat, no status, no method, path or origin, and an outcome the message's end at the hub gives."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "message.hold",
+              "message.take_back"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "related"
+        ],
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "The chat of the message held or taken back (C-03.27c, A-03.8)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "message",
+                "description": "A hold or a take-back on the hub names the message by its hub_msg_id (10 C-10.16's hub branch, A-03.8)."
+              },
+              "id": {
+                "pattern": "^hm_[0-9A-HJKMNP-TV-Z]{26}$"
+              }
+            },
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "method"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "origin"
+                  ]
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "pattern": "^(accepted|refused:(conflict|forbidden))$",
+            "description": "accepted (a no-op call included), refused:conflict (in_flight, on_daemon, done, or a second review), or refused:forbidden; bad_request and not_found are 04 C-04.27's log line only (R31 (2)) (C-03.27c, A-03.8)."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "message.hold"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "summary"
+              ],
+              "properties": {
+                "summary": {
+                  "required": [
+                    "template"
+                  ],
+                  "properties": {
+                    "source": {
+                      "const": "template"
+                    },
+                    "template": {
+                      "pattern": "^message\\.hold-(held|released|approval|taint)$",
+                      "description": "held true or false told by the template id (message.hold-held, message.hold-released), or the hub's hold at enqueue (message.hold-approval, message.hold-taint) (C-03.27c, A-03.8)."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "message.take_back"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "summary": {
+                  "required": [
+                    "template"
+                  ],
+                  "properties": {
+                    "source": {
+                      "const": "template"
+                    },
+                    "template": {
+                      "const": "message.take-back"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "description": "A hold or a take-back of a message on the hub (C-03.27c, A-03.8): one entry per call, the hm_ target, related naming the message's message.send, no status and no value; a hold's summary is a template whose id says what the call set."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "workspace.create",
+              "workspace.archive",
+              "project.create",
+              "project.archive"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "status"
+          ]
+        },
+        "properties": {
+          "machine": {
+            "type": "null",
+            "description": "A workspace or a project is a hub record on no machine (C-03.27e, A-03.6)."
+          },
+          "chat": {
+            "type": "null",
+            "description": "A workspace or a project kind names no chat; its event rides the hub stream (A-07.1 C-07.5a; C-03.27e, A-03.6)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "method"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "origin"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "workspace.create",
+                    "workspace.archive"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "target": {
+                  "properties": {
+                    "type": {
+                      "const": "workspace",
+                      "description": "A workspace kind's target is the workspace (C-03.27e, A-03.6)."
+                    },
+                    "id": {
+                      "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "project.create",
+                    "project.archive"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "target": {
+                  "properties": {
+                    "type": {
+                      "const": "project",
+                      "description": "A project kind's target is the project (C-03.27e, A-03.6)."
+                    },
+                    "id": {
+                      "pattern": "^prj_[0-9a-hjkmnp-tv-z]{26}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "workspace.create",
+                    "project.create"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "related"
+                ]
+              },
+              "properties": {
+                "outcome": {
+                  "const": "accepted",
+                  "description": "A create is recorded only when it commits, its target the id its transaction mints; a refused create mints no id and writes no entry (C-03.27e, A-03.6)."
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "workspace.archive",
+                    "project.archive"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "outcome": {
+                  "pattern": "^(accepted|refused:(conflict|forbidden))$",
+                  "description": "accepted (a call the hub answers ok, one entry per call); refused:conflict or refused:forbidden where the hub answers that word to a caller who may see the workspace or the project; every other refusal (unauthenticated, bad_request, not_found, forbidden to a caller who may not see it) is 04 C-04.27's log line only (R31 (2)) (C-03.27e, A-03.6)."
+                }
+              }
+            }
+          }
+        ]
+      },
+      "description": "A workspace or project kind (C-03.27e, A-03.6): one entry per call, the workspace or the project its target with its wsp_ or prj_ id, machine and chat null, no status, no method, path or origin, no value; a create is accepted only and carries no related; an archive is accepted, refused:conflict or refused:forbidden, and a project.archive that a workspace's archive took names that entry in related."
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "chat.restore"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "status"
+              ]
+            },
+            {
+              "required": [
+                "related"
+              ]
+            }
+          ]
+        },
+        "properties": {
+          "chat": {
+            "type": "string",
+            "description": "The chat restored (C-03.27e, A-03.6)."
+          },
+          "target": {
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "const": "chat",
+                "description": "A chat.restore's target is the chat, as chat.archive's is (C-03.27e, A-03.6)."
+              },
+              "id": {
+                "pattern": "^cht_[0-9a-hjkmnp-tv-z]{26}$"
+              }
+            },
+            "allOf": [
+              {
+                "not": {
+                  "required": [
+                    "method"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "path"
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "required": [
+                    "origin"
+                  ]
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "pattern": "^(accepted|refused:(conflict|forbidden))$",
+            "description": "accepted (a call the hub answers ok, one entry per call); refused:conflict or refused:forbidden where the hub answers that word to a caller who holds Read on the chat, as chat.update's refused:<code> is (A-03.5); every other refusal (unauthenticated, bad_request, not_found) is 04 C-04.27's log line only (R31 (2)) (C-03.27e, A-03.6)."
+          }
+        }
+      },
+      "description": "One RestoreChat call (C-03.27e, A-03.6): the chat its target and its chat, machine the chat's (null while it has none), no status, no related (a reader joins it to the archive by the chat), no method, path or origin, no value."
+    },
+    {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "workspace.create"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "summary": {
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "source": {
+                    "const": "template"
+                  },
+                  "template": {
+                    "pattern": "^workspace\\.create(-[a-z0-9]+)*$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "workspace.archive"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "summary": {
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "source": {
+                    "const": "template"
+                  },
+                  "template": {
+                    "pattern": "^workspace\\.archive(-[a-z0-9]+)*$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "project.create"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "summary": {
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "source": {
+                    "const": "template"
+                  },
+                  "template": {
+                    "pattern": "^project\\.create(-[a-z0-9]+)*$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "project.archive"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "summary": {
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "source": {
+                    "const": "template"
+                  },
+                  "template": {
+                    "pattern": "^project\\.archive(-[a-z0-9]+)*$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "chat.restore"
+              }
+            },
+            "required": [
+              "kind",
+              "summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "summary": {
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "source": {
+                    "const": "template"
+                  },
+                  "template": {
+                    "pattern": "^chat\\.restore(-[a-z0-9]+)*$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "The five kinds' optional summary is from the source template only, its id the kind, or the kind followed by a hyphen and a variant (project.archive-cascade for a project its workspace's archive took); its slots hold ids and counts, never a workspace's, project's or chat's name, the hub's check (C-03.27e, A-03.6; 11 C-11.12)."
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "kind": {
+              "enum": [
+                "chat.update",
+                "checkin.set",
+                "home.settings"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "fields"
+          ]
+        },
+        "description": "fields rides chat.update (A-03.5), checkin.set and home.settings (A-10.4) only."
+      }
+    }
+  ]
+}

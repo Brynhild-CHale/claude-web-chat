@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "type": "SetCheckIn",
+  "request_id": "rq_01JC4MAD4E",
+  "error": {
+    "code": "bad_request",
+    "message": "The check-in record has no field min_interval_s.",
+    "hint": "A check-in carries no brake fields; remove min_interval_s and send it again.",
+    "field": "/record/min_interval_s"
+  }
+}

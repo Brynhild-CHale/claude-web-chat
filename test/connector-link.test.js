@@ -913,3 +913,76 @@ test('machine.revoked: a hint holding a registered secret is never logged or emi
   assert.ok(a.logs.includes('link machine revoked by the hub'));
   assert.ok(!a.logs.join('\n').includes(secret), 'the secret in no log line');
 });
+
+// ── U793: the secret check reads the hint before the cut and across U+200C/U+200D ──
+
+async function revokedWith(t, hint, secret) {
+  const fake = await withFakeHub(t);
+  const a = openLink(t, fake);
+  const up = ready(a.link);
+  a.link.start();
+  await up;
+  if (secret) a.link.registerSecret(secret);
+  const revoked = once(a.link, 'revoked');
+  fake.revoke(hint);
+  const [ev] = await revoked;
+  return { ev, logs: a.logs };
+}
+
+test('machine.revoked: a secret straddling code point 300 gives hint null; so does one split by U+200D or U+200C; nothing of it is logged', async (t) => {
+  const { REVOKED_HINT_MAX } = require('../lib/connector/link');
+  const secret = 'relay-secret-0123456789abcdef';
+  // The cut falls inside the secret: only its leading part would be kept.
+  const lead = 'x'.repeat(REVOKED_HINT_MAX - 10);
+  const straddle = `${lead}${secret} and more`;
+  assert.ok(Array.from(straddle).length > REVOKED_HINT_MAX && lead.length + secret.length > REVOKED_HINT_MAX);
+  for (const hint of [
+    straddle,
+    `pair again; your token was ${secret.slice(0, 9)}‍${secret.slice(9)}`,
+    `pair again; your token was ${secret.slice(0, 5)}‌${secret.slice(5, 17)}‍${secret.slice(17)}`,
+    // Split by a joiner across the cut, after a line break the cleaning folds.
+    `${'y'.repeat(REVOKED_HINT_MAX - 6)}\n${secret.slice(0, 4)}‍${secret.slice(4)}`,
+  ]) {
+    const { ev, logs } = await revokedWith(t, hint, secret);
+    assert.deepStrictEqual(ev, { afterNotice: true, hint: null }, JSON.stringify(hint.slice(-60)));
+    assert.ok(logs.includes('link machine revoked by the hub'), 'the line goes out without the hint');
+    const all = logs.join('\n');
+    assert.ok(!all.includes(secret.slice(0, 9)), 'no part of the secret logged');
+    assert.ok(!all.includes(lead), 'the straddling hint is not logged cut either');
+  }
+});
+
+test('machine.revoked: a clean hint longer than the cut is still cut and shown, with a secret registered', async (t) => {
+  const { REVOKED_HINT_MAX } = require('../lib/connector/link');
+  const secret = 'relay-secret-0123456789abcdef';
+  const hint = `Disconnected in Settings ‍> Machines. ${'z'.repeat(REVOKED_HINT_MAX)}`;
+  const { ev, logs } = await revokedWith(t, hint, secret);
+  const kept = Array.from(hint).slice(0, REVOKED_HINT_MAX).join('').trim();
+  assert.strictEqual(Array.from(kept).length, REVOKED_HINT_MAX);
+  assert.deepStrictEqual(ev, { afterNotice: true, hint: kept });
+  assert.ok(kept.includes('‍'), 'U+200D is kept in the shown hint, as lib/core/text keeps it');
+  assert.ok(logs.includes(`link machine revoked by the hub; the hub says: ${kept}`));
+});
+
+// Each half of the check alone (U793's review): one hint only the cleaned text
+// before the cut gives away, one only the raw text does.
+test('machine.revoked: a secret only the cleaned text holds before the cut (split by a control the cleaning removes), and one only the raw hint holds (the cleaning folds its tab), both give hint null', async (t) => {
+  const { REVOKED_HINT_MAX } = require('../lib/connector/link');
+  const secret = 'relay-secret-0123456789abcdef';
+  // U+0007 inside the secret, the secret across the cut: the raw hint does not
+  // hold it, the cleaned text does, and the cut text would keep its first ten.
+  const lead = 'x'.repeat(REVOKED_HINT_MAX - 10);
+  const cleanedOnly = `${lead}${secret.slice(0, 12)}\u0007${secret.slice(12)} and more`;
+  assert.ok(!cleanedOnly.includes(secret));
+  const a = await revokedWith(t, cleanedOnly, secret);
+  assert.deepStrictEqual(a.ev, { afterNotice: true, hint: null });
+  assert.ok(!a.logs.join('\n').includes(lead), 'not logged cut either');
+  // A registered secret with a tab in it: the cleaning turns the tab into a
+  // space, so only the raw hint holds the secret as registered.
+  const tabbed = 'relay-secret\t0123456789abcdef';
+  const rawOnly = `pair again; your token was ${tabbed}`;
+  const b = await revokedWith(t, rawOnly, tabbed);
+  assert.deepStrictEqual(b.ev, { afterNotice: true, hint: null });
+  assert.ok(b.logs.includes('link machine revoked by the hub'));
+  assert.ok(!b.logs.join('\n').includes('0123456789abcdef'), 'no part of it logged');
+});

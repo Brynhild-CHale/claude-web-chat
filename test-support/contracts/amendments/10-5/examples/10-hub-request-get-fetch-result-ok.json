@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "type": "GetFetchResult",
+  "request_id": "rq_01JC5F8R3W",
+  "result": {
+    "fetch_id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n",
+    "state": "executed",
+    "url": "https://search.example/search?q=flight%20to%20Lisbon%20second%20week%20of%20December&n=5",
+    "decision": "user",
+    "result": {
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 2310,
+      "truncated": false,
+      "body": "Synthetic search results for: flight to Lisbon second week of December\n\n1. Example Air EX101, synthetic fare 87 units, departs 01:40, not a real offer\n2. Example Air EX102, synthetic fare 94 units, departs 02:40, not a real offer\n3. Example Air EX103, synthetic fare 101 units, departs 03:40, not a real offer\n4. Example Air EX104, synthetic fare 108 units, departs 04:40, not a real offer\n5. Example Air EX105, synthetic fare 115 units, departs 05:40, not a real offer\n6. Example Air EX106, synthetic fare 122 units, departs 06:40, not a real offer\n7. Example Air EX107, synthetic fare 129 units, departs 07:40, not a real offer\n8. Example Air EX108, synthetic fare 136 units, departs 08:40, not a real offer\n9. Example Air EX109, synthetic fare 143 units, departs 00:40, not a real offer\n10. Example Air EX110, synthetic fare 150 units, departs 01:40, not a real offer\n11. Example Air EX111, synthetic fare 157 units, departs 02:40, not a real offer\n12. Example Air EX112, synthetic fare 164 units, departs 03:40, not a real offer\n13. Example Air EX113, synthetic fare 171 units, departs 04:40, not a real offer\n14. Example Air EX114, synthetic fare 178 units, departs 05:40, not a real offer\n15. Example Air EX115, synthetic fare 185 units, departs 06:40, not a real offer\n16. Example Air EX116, synthetic fare 192 units, departs 07:40, not a real offer\n17. Example Air EX117, synthetic fare 199 units, departs 08:40, not a real offer\n18. Example Air EX118, synthetic fare 206 units, departs 00:40, not a real offer\n19. Example Air EX119, synthetic fare 213 units, departs 01:40, not a real offer\n20. Example Air EX120, synthetic fare 220 units, departs 02:40, not a real offer\n21. Example Air EX121, synthetic fare 227 units, departs 03:40, not a real offer\n22. Example Air EX122, synthetic fare 234 units, departs 04:40, not a real offer\n23. Example Air EX123, synthetic fare 241 units, departs 05:40, not a real offer\n24. Example Air EX124, synthetic fare 248 units, departs 06:40, not a real offer\n25. Example Air EX125, synthetic fare 255 units, departs 07:40, not a real offer\n26. Example Air EX126, synthetic fare 262 units, departs 08:40, not a real offer\n27. Example Air EX127, synthetic fare 269 units, departs 00:40, not a real offer\nEnd of synthetic results.                                     "
+    }
+  }
+}

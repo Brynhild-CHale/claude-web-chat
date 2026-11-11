@@ -364,3 +364,248 @@ Amendment-set hash (sha256 over the newline-joined `<sha256>  <path>` lines belo
 | `amendments/03-5/schemas/03-activity-entry.json` | 22e536848399825a0d50cb45bcfe3b739863cddaf46d940e1019d1b80097d27b |
 | `amendments/03-5/examples/03-activity-entry-chat-update-refused.json` | 880fa54cd47a2ce07e5d9e012538565597b8da4ace014d1ad3fe3282bf48a174 |
 | `amendments/03-5/examples/03-activity-entry-chat-update.json` | 61cd888a80c40f1f806b001fdf03032b880cbd4debb833b5359afd73bf3d4f79 |
+
+# LOCK · round v1.5 · 2026-11-10
+
+Locked by swc on 2026-11-10 under README rule 6a: the five amendments of the Home set that wc agreed in notes/2026-11-10-wc-35.md
+on its re-read by diff after swc applied wc-32's changes (notes/2026-11-10-swc-23.md): A-10.4 (check-ins as hub records with
+typed requests, `read_events` with every read recorded, the Home status read, the held DelegateMessage; agreed with one
+rule-2 minor), A-10.5 (FetchExternal and `fetch_external`, the budgets, the hub-drawn card, the allowance types named for
+tranche 5; Q-A10.5-8's lapse entry taken), A-03.7 (the approve-request ceremony C-03.17e, the recorded reads and the kinds'
+sentences; agreed with one rule-2 minor), A-10.6 (GrantEventStream and PullEventStream in the connector form, tranche 5) and
+A-11.3 (retention table version 6, nine rows for Home's records and C-11.9's one stated exception), each with its folder of
+full replacement files. The hub and web-chat load each folder's schemas over the v1 base and the round v1.1 to v1.4
+folders. Four of the five are one chain written file on file, and a loader takes the last: A-10.5's files supersede
+A-10.4's, A-03.7's files supersede A-10.5's, A-10.6's files supersede A-03.7's (so `10-hub-request.json`,
+`10-home-tools.json` and its example are read from 10-6, and `03-activity-entry.json` from 10-6, which is A-03.7's final
+plus that folder's hunks). Five schemas are new in this round, each named here by the amendment that brings it: A-10.4's
+`10-check-in.json` is a new schema; A-10.5's `10-fetch-request.json` is a new schema; A-03.7's `03-approval-request.json`
+is a new schema; A-10.6's `10-event-stream-grant.json` is a new schema; A-10.6's `10-event-batch.json` is a new schema
+(the later folders of the chain carry the earlier ones' new schemas byte for byte). A-11.3's `11-retention-table.json`
+example is the round's only 11 file and wins over round v1.1's as the later round; its schema is A-11.2's byte for byte.
+The round v1 and v1.1 to v1.4 locks above are unchanged. Still open: A-03.8 (the hub queue's entries, proposed, round v1.6
+by the user's ruling R47 of 2026-11-10, back to swc on three changes in notes/2026-11-10-wc-36.md; it is in this commit and not
+in this lock), A-03.6 (reserved for wc's sweep of kind-less mutations) and contract 08 (v2, agreed in wc-27 under README
+rule 5's R19 exception; it locks at v2). Code baseline: web-chat's `ae-int` 089783b9 as the texts cite it (3364c67e when wc
+re-read, every cited line the same; the public tag is still `ae-alpha.3` at 503b8f2f); the hub's `swc/int` 65d8600 for the
+cites of this round's changes and 5c2cb5c where the four earlier texts keep it.
+
+Validation at the lock: `node tools/validate.js` `examples ok=127 fail=0; schemas=46`; `node tools/validate-amendments.js` for the locked folders:
+`amendment 10-4: examples ok=154 fail=0; schemas=47`
+`amendment 10-5: examples ok=150 fail=0; schemas=48`
+`amendment 03-7: examples ok=133 fail=0; schemas=47`
+`amendment 10-6: examples ok=144 fail=0; schemas=50`
+`amendment 11-3: examples ok=127 fail=0; schemas=46`
+
+Amendment-set hash (sha256 over the newline-joined `<sha256>  <path>` lines below, in this order): `7326cad4f2a0d1a550e2fd68d6190a6687742d5082e94a72d21cb57e13249e05`
+
+| File | sha256 |
+|---|---|
+| `contracts/10-mcp-tool-surface.amendment-4.md` | 83d97888a34ee17e13c1ee6c848a625022e664fe442696ae15017dfe772cc8ec |
+| `amendments/10-4/schemas/03-activity-entry.json` | 7a3adafc0a7a2630448e87e83f1404fec05efb0892780e01463c35acae5a6ec7 |
+| `amendments/10-4/schemas/10-check-in.json` | 043f06db3cd839db3c983434c9a41517bd80e73c86ab5f15384377cfa8e3bcdd |
+| `amendments/10-4/schemas/10-home-tools.json` | b52f1babc1bfbb3f0fdf0123be7c1e0633bc1d57731265717866106cb6c789d2 |
+| `amendments/10-4/schemas/10-hub-request.json` | 71a820bffd0e3d98ad29d83c7ce273291e774403a24a5b13a0d46e73a6c4e36d |
+| `amendments/10-4/examples/03-activity-entry-checkin-complete-cancelled.json` | e9c5c53fc5df080c3a966cd1e5e59b60047333d6d34e3bb09b7fa6b108fd2848 |
+| `amendments/10-4/examples/03-activity-entry-checkin-complete.json` | b3442309a221f25e6eaebd8211a5f3914ebfccf869a9b779181d2edfe2e4193d |
+| `amendments/10-4/examples/03-activity-entry-checkin-fire-failed.json` | 187ccfb90d5e529934b323385e1276d2e7a26722998a2487d20e8396d43ee8a0 |
+| `amendments/10-4/examples/03-activity-entry-checkin-fire-rehand.json` | 0bbfa7b4142dc4e6af10c7d81783676992eb9475e66a4dd106e979b517d9b5ef |
+| `amendments/10-4/examples/03-activity-entry-checkin-fire.json` | 1b98624c4132d5b9c2c4734189a836f5271c520d5d325f56d4fae73c827b9603 |
+| `amendments/10-4/examples/03-activity-entry-checkin-set.json` | 9a19d6cfd88b1a440ce1fca037088d52dd30751eacd42bb0da134a409b7049e3 |
+| `amendments/10-4/examples/03-activity-entry-events-read.json` | 0b51d068ec3bae9d4e3c0add10b0bc5f7b81279ea28fa3c7b70661333bf1914a |
+| `amendments/10-4/examples/03-activity-entry-home-settings.json` | 14db124b84e7ab08be8392afe3c339a1c78d4b9fdad8d0807f3c9b39ea72603e |
+| `amendments/10-4/examples/10-check-in.json` | 88c62925963b1b05e859b6d1cb8a7684af13b8165e91ed272da916cd93609b33 |
+| `amendments/10-4/examples/10-home-tools.json` | cca801f9df39e4eabef931261c925ba444fef4255f948149de0d61c7e0d2668c |
+| `amendments/10-4/examples/10-hub-request-complete-check-in-cancelled.json` | 361958ea41ae6a19ed58ecc59a8193d76f4e09e482015c3f2d92ff5e91166e22 |
+| `amendments/10-4/examples/10-hub-request-complete-check-in-ok.json` | b8aec5b4a352294ae1f73688fbe6961f221661eadeb6b4a1b4a2b53c1287a125 |
+| `amendments/10-4/examples/10-hub-request-complete-check-in.json` | 02404b35539e109f5f6574d1f65c975371f036b5485a0f19790f7ea3a09830a2 |
+| `amendments/10-4/examples/10-hub-request-delegate-message-held.json` | 66f96b2cc70de9d0323b0f1318ad636533b0226a48b099f7c1c57e835fbc5b89 |
+| `amendments/10-4/examples/10-hub-request-get-home-status-ok.json` | 110fe713269b03e04e4480d6424cf67e5166863e0a2a59e2509332ea8a24a616 |
+| `amendments/10-4/examples/10-hub-request-list-check-ins-ok.json` | ef9686ba23d564833316ab1656f366dbe21e6803d7c17b67466a59182161ce87 |
+| `amendments/10-4/examples/10-hub-request-read-events-ok.json` | 7099c132b83b356258a9a72e4aa1d7cb914ae374f40ee685bdaa545410f464a7 |
+| `amendments/10-4/examples/10-hub-request-read-events-unavailable.json` | 6f16a8e9b3dfbdc264415b0df4bf118d113fcec9fbe77417b2a2b0a221644c98 |
+| `amendments/10-4/examples/10-hub-request-read-events.json` | b289245c56e635bc8186c9ec61eced19b9f55d89decac15706a7c855dbc169e4 |
+| `amendments/10-4/examples/10-hub-request-run-check-in-dry-ok.json` | 448caa01ad454b20b5eae054dd8f5c54148598de53e1f0b2573f15a0dc8dc40a |
+| `amendments/10-4/examples/10-hub-request-run-check-in-ok.json` | 033725aeea550f06cc0e66529af78b1b1160ccbbc8d29d869eafc734f6841c8e |
+| `amendments/10-4/examples/10-hub-request-set-check-in-events-count-ok.json` | cb00ec2064980839ce8b67c858c088f7ba7e196312b8d255f256e03d08aabd29 |
+| `amendments/10-4/examples/10-hub-request-set-check-in-events-count.json` | adb0bfc836229d550d7949e1b9d61077fec9f4d37de8d201114f3538638c6466 |
+| `amendments/10-4/examples/10-hub-request-set-check-in-home-proposed.json` | 3904082fd38166151cae51315ebf0e8d33c6856bd4d91daab3965ac71b0fdd21 |
+| `amendments/10-4/examples/10-hub-request-set-check-in-ok.json` | 5480da5540832af4df203cfd45a54e57f195055c1d8330be95b9c2c76f60b065 |
+| `amendments/10-4/examples/10-hub-request-set-check-in-unknown-key.json` | 51519d1a465fe777d1622a9a236f766b1a38c3ce503fae2c8ff5e1105df66385 |
+| `amendments/10-4/examples/10-hub-request-set-check-in.json` | 9cf307520d1f186fdd61159c6f880a16263f6334104fc44bd2b24c0f9cebae56 |
+| `amendments/10-4/examples/10-hub-request-set-home-settings.json` | d2424ad762d0afc25fae4e70a99e7aeefd53c9ad88982ad122598ad32d392700 |
+| `contracts/10-mcp-tool-surface.amendment-5.md` | ac73dc441375d9d9a592b4fba89d9bbc156f6a82e98b389dd8633212c7d426ef |
+| `amendments/10-5/schemas/03-activity-entry.json` | 1523da6d998d3105c6502d7bdf567c5201eed82f5b4dab767835be77705ccce7 |
+| `amendments/10-5/schemas/10-check-in.json` | 043f06db3cd839db3c983434c9a41517bd80e73c86ab5f15384377cfa8e3bcdd |
+| `amendments/10-5/schemas/10-fetch-request.json` | 784bff26dd509197a40b5b9a121ec05f62a82891e6d563abc43cce2412350030 |
+| `amendments/10-5/schemas/10-home-tools.json` | fe975dbcd05e7e7b5867ec45f8e22ec0c1e4cc35f4a7bcbf85b8b0f4bb250261 |
+| `amendments/10-5/schemas/10-hub-request.json` | ddc65cf348548fb735cba0253fbf8458228d32bbed33d20eefca4cea7f26d268 |
+| `amendments/10-5/examples/03-activity-entry-allowance-set.json` | a153d7bdc5560b95be04f735aecbba6df777c029718c019fbfe9844a397408bc |
+| `amendments/10-5/examples/03-activity-entry-fetch-decide-clean.json` | a9b5f468cab54aa716bbc6a6c520537a467dcaa39a0bb9cbcbf27979c3f3999c |
+| `amendments/10-5/examples/03-activity-entry-fetch-decide-user.json` | 1f01815b473da775ec85167406f3d446b1b0aa61cb04d1d6012aee96bfa86212 |
+| `amendments/10-5/examples/03-activity-entry-fetch-execute.json` | fdf795a28d0b8a60faded7897c9ca044b629078fe4b34d2c3435be4e98299a37 |
+| `amendments/10-5/examples/03-activity-entry-fetch-request-refused.json` | c7622e909ede64f5135ca1f79548349137a7f3766473c6b96b55d4db1c119d0d |
+| `amendments/10-5/examples/03-activity-entry-fetch-request.json` | 34713eec7771ee200f9e43b3e1e5530f7fcaaa763c28738a32c37c15f7d34bc3 |
+| `amendments/10-5/examples/03-activity-entry-home-settings-fetch.json` | 53256f9fc53824faeb7d57948d88f96caab61d6e71cc0f15805d6fcce1e123c3 |
+| `amendments/10-5/examples/10-fetch-request-clean.json` | 8c03b7b594577a40f32d6fb34cb9f6e98a560a63e5f751580ee0600aa2c2ada3 |
+| `amendments/10-5/examples/10-fetch-request.json` | 661b69049de9154850c3298234443fce966e661f57f138f9358fcaef43fde43c |
+| `amendments/10-5/examples/10-home-tools.json` | c5d871ab5fe7f6d2a510887c7c82800e12aaf50e13432c8a0ff0ae4c2240562d |
+| `amendments/10-5/examples/10-hub-request-decide-fetch-ok.json` | 04676b5b3a4fd54064495399cfccca3e0331ef0c8c295141843c8d27f2d8d2d9 |
+| `amendments/10-5/examples/10-hub-request-decide-fetch.json` | 4d8e2e139b8fdc3ee685ce8ae60431795a5e42f5d1a06df6789e29f0c45706a2 |
+| `amendments/10-5/examples/10-hub-request-fetch-external-budget.json` | 3465948a694b685feed6987eefb96e9207f846c9fbfc726dd2592b6cd5a14565 |
+| `amendments/10-5/examples/10-hub-request-fetch-external-carded-ok.json` | be30057c35a6abf6b53e1a532c813ca4f0c3fefb976caff63597df45b804a5fa |
+| `amendments/10-5/examples/10-hub-request-fetch-external-clean-ok.json` | 0cbff18e0e2f364472d214ec73992ebaf29d0a0005ce4d0ba6eb37beef3a5ebb |
+| `amendments/10-5/examples/10-hub-request-fetch-external-provenance.json` | ff6a78e9843a00b95f6d37906b3600d6b9cb9efe5d70c15e7077421c3c07ef3a |
+| `amendments/10-5/examples/10-hub-request-fetch-external-replay.json` | 800aaf95b4bd3cfcad53b5cee0696e7e68b7c033f2f244d3d623de798312924c |
+| `amendments/10-5/examples/10-hub-request-fetch-external.json` | e9a84069244fbb3f903d3e4104816c25011b92c186d290dbb7d32739d46ca2d3 |
+| `amendments/10-5/examples/10-hub-request-get-fetch-result-gone.json` | bb79fb3cc4bc2090f6c6412b86a5db62778856028b1b6526d0cb218867732c52 |
+| `amendments/10-5/examples/10-hub-request-get-fetch-result-ok.json` | 210a26a44d706477a0e1a550e9fabe14cfdd695874a6c8150b026d8994affd21 |
+| `amendments/10-5/examples/10-hub-request-get-home-status-fetch-ok.json` | 6e4ffd9d60bcd5e3e285ea17cf32fe5894fd9205e37ce31f2886df0654082ade |
+| `amendments/10-5/examples/10-hub-request-set-allowance-not-supported.json` | 31db5399a8571ef94a909f3f52e6281e6d27951a141f43617d41bc34da25dad5 |
+| `amendments/10-5/examples/10-hub-request-set-fetch-policy-pending.json` | f6689adc30bb4851c8a6816f02e5c26d661cf249dff9c9b5337ed1fa66e736a2 |
+| `amendments/10-5/examples/10-hub-request-set-fetch-policy.json` | b598bff167dfff38272150275498945c550b9bd8fce6aea6205c79055507ad72 |
+| `contracts/03-principal.amendment-7.md` | 8c5869e308296148f7be104f0444dca6ec1fae32321bf8d927fa4cce03b78fb8 |
+| `amendments/03-7/schemas/03-activity-entry.json` | 1b18b41691afd0e3c0b79333958db66f8a834cb778545bd9392a0f68565597b4 |
+| `amendments/03-7/schemas/03-approval-request.json` | 2b40c343148e40ea21f130f19717406bc49f59ee575692a9d336be56a1c82139 |
+| `amendments/03-7/examples/03-activity-entry-auth-approve-effect.json` | 3173a1fec34d286374835567b2ed204ee342ef57ccc06430bc816a66df54e441 |
+| `amendments/03-7/examples/03-activity-entry-auth-approve-refused.json` | f5c37aad500109dab8bc2701d73b1f11c255f9b097cd31ba78df8b98097eba69 |
+| `amendments/03-7/examples/03-activity-entry-auth-approve-stream.json` | cc4ee0d2bcf1bf637ae7c9d52b98b40240735c09880523b8f1a446ab600ec459 |
+| `amendments/03-7/examples/03-activity-entry-auth-approve.json` | 066ddef9e9d19fac331ba2f2d3b3a29b5cf3d5978d443bd18819ddb1caf67b26 |
+| `amendments/03-7/examples/03-approval-request-canonical.json` | 2e814247a777cfbd84962c6b1b53c89a2215d0a5a33b58927c881328df74a001 |
+| `amendments/03-7/examples/03-approval-request-challenge.json` | 797d77015f3e9fa8c993f254c0c3282a6decac1579364e26deb3a3079da594ec |
+| `contracts/10-mcp-tool-surface.amendment-6.md` | 248a0bc52e3f327a8ec72c4ee4127a812838f9b93e4c89138949f6cbf8900ddf |
+| `amendments/10-6/schemas/03-activity-entry.json` | 926ee456dbc322069fe17e11cf0a143e3b513af3759c727772cc66b902cc6fca |
+| `amendments/10-6/schemas/10-check-in.json` | 043f06db3cd839db3c983434c9a41517bd80e73c86ab5f15384377cfa8e3bcdd |
+| `amendments/10-6/schemas/10-event-batch.json` | b8bae854e06e9f98ee7bc1d5e67378a7a7e2954a42be859e0db205e288afd6ee |
+| `amendments/10-6/schemas/10-event-stream-grant.json` | 4df54b26c0e5e392f5f42bcb5f8c3a399288c5795afb3555ea580024940e15d5 |
+| `amendments/10-6/schemas/10-fetch-request.json` | 784bff26dd509197a40b5b9a121ec05f62a82891e6d563abc43cce2412350030 |
+| `amendments/10-6/schemas/10-home-tools.json` | 57dff7fcba6d85b77b87130fefa4fe1372bbf804aea07a1991e06afb0d5a10a2 |
+| `amendments/10-6/schemas/10-hub-request.json` | 6555743d79f01ac2bb820b3263480957d7d818137289a0d65620623692afef32 |
+| `amendments/10-6/examples/03-activity-entry-stream-deliver.json` | bccdbffb9e909506cce6aa825b0ccf5abf297c9dad53084af43ce763381d31b0 |
+| `amendments/10-6/examples/03-activity-entry-stream-grant.json` | d415dc73628ca220671f0ee7fe0cd51a820864da6e0439bb54cdaf727e0bfae1 |
+| `amendments/10-6/examples/03-activity-entry-stream-propose.json` | c4a2a2da242895fed54cfaafbe7ae3149fb2ffc7abdf4d838134b78cfb848b9a |
+| `amendments/10-6/examples/03-activity-entry-stream-pull.json` | f787e5859a8e522185fc15da00fd641c09e8588e2ad9967be61dcd6ba9fef453 |
+| `amendments/10-6/examples/03-activity-entry-stream-revoke-expired.json` | 87d1b07c157a55fe8017f508b752550fed45ee5ba07609938be3dd9f1e916f63 |
+| `amendments/10-6/examples/10-event-batch.json` | 6266bd20913aa69dde7a317a078d3db1c1bf61d2edd2a55a0517b36545f64dd8 |
+| `amendments/10-6/examples/10-event-stream-grant.json` | d73c27982322bc766ac7b217d5206a2b1a09166bac4fded9be79c546d52e8640 |
+| `amendments/10-6/examples/10-home-tools.json` | a4cd1a4b66656d8fff2d5d917adcd8714edd26e12c8249d1d2dad13b8789608a |
+| `amendments/10-6/examples/10-hub-request-grant-event-stream-bad-destination.json` | 9c9b38ad5ee2e2a64be76ca672ad01a365dfad9591d03a207c244569d0a6de27 |
+| `amendments/10-6/examples/10-hub-request-grant-event-stream-not-supported.json` | b9ec5fd27ece2d9135190e69fd51057d12c6a2e81cdf82b0b5f90b93c9cecaba |
+| `amendments/10-6/examples/10-hub-request-grant-event-stream-ok.json` | 426866ab0f36969aa0d0b62fdd0dbc5c6199bcca719c1c66cee3572df51d8cad |
+| `amendments/10-6/examples/10-hub-request-grant-event-stream.json` | a0da30c0919bbaa9e320068728b47af3afcd6e50fc2571d6155a8d46aa7579c9 |
+| `amendments/10-6/examples/10-hub-request-list-event-streams-ok.json` | c89a146595449fdb0573e444d4eb3646fd1d33a7d557b050bc588e6a5045618d |
+| `amendments/10-6/examples/10-hub-request-pull-event-stream-ok.json` | ee09bfae6741af754b054b5cc0d95bead8b5cd3b4f17bfd16b815a626b9b4bdf |
+| `amendments/10-6/examples/10-hub-request-pull-event-stream-push-only.json` | 1b9c962755b1cde4c16fd3097ba89f96cf88f6f58d37ec6936d9e5afa893cc05 |
+| `amendments/10-6/examples/10-hub-request-pull-event-stream.json` | 8439628a5726efc2ca26ff81f8a2acb004b7d1cd1e2d6ded73a904cad7fb5819 |
+| `amendments/10-6/examples/10-hub-request-revoke-event-stream-ok.json` | 85b689d8981dcdf987ad9cab9abbb984abc10f8361a200fa2e53c1da54c4bd00 |
+| `amendments/10-6/examples/10-hub-request-revoke-event-stream.json` | 22070b66cf78c623561cee3f09cb9c726b422544d3371a8262e9b725855046c0 |
+| `contracts/11-redaction-boundary.amendment-3.md` | d4c62a29478ee0861814e17988dfbe5348495c54dbbd5e5de17f1dc49e999c1f |
+| `amendments/11-3/schemas/11-retention-table.json` | 4a4cfb0c3d379802a14f4125e2e948b82007c11a60b50351422b004dd214276f |
+| `amendments/11-3/examples/11-retention-table.json` | 26bd53b2a0684085896323182d917cb7a4c9214dc0d83c3603e15a0804a8cb37 |
+
+# LOCK · round v1.6 · 2026-11-10
+
+Locked by swc on 2026-11-10 under README rule 6a: three amendments, each with its folder of full replacement files. A-03.8 (the
+hub queue's entries: a hub-queued message reuses `message.send` on its `hm_` id, written at the mint and completed when the
+message ends at the hub; `message.hold` and `message.take_back`; proposed by swc, agreed in notes/2026-11-10-wc-40.md after
+wc-36's three changes were applied in notes/2026-11-10-swc-27.md), A-03.6 (the kinds for the hub mutations that had none:
+`workspace.create`, `workspace.archive`, `project.create`, `project.archive` and `chat.restore`, new C-03.27e, the target
+types `workspace` and `project` and the prefixes `wsp` and `prj`; proposed by wc in notes/2026-11-10-wc-42.md, read whole and
+agreed by swc with four rule-2 minors in notes/2026-11-10-swc-33.md) and A-10.7 (C-10.14a's terminal command: the remote
+command travels as one local word, so the remote login shell sees the tmux target quoted; a login beginning with `-` is
+treated as null; proposed by swc, agreed in wc-40). The hub and web-chat load each folder's schemas over the v1 base and the
+round v1.1 to v1.5 folders. Two of the three replace `schemas/03-activity-entry.json`, the second written on the first, and
+a loader takes the later: A-03.6's files supersede A-03.8's (the validation lines and the rows below list 03-8 before 03-6
+for a loader that reads their order). A-10.7 replaces `10-hub-request.json` (on A-10.6's file) and two examples, and carries
+four schemas byte for byte so its folder validates over the base; every one of its paths was already in force from an
+earlier round, so it needs no statement here. The round v1 and v1.1 to v1.5 locks above are unchanged. Still open: A-06.4
+(wc's pair-only mode of `connect <hub-url>`, proposed, back to wc on one change in swc-33; it is in this commit and not in
+this lock), round v1.7 (the EventsDB feed: A-05.4, A-06.3, A-03.9, A-11.4, proposed, back to swc on wc-46's nine changes and
+waiting on the user's rulings; A-03.9's 03 file is rebuilt on A-03.6's with that pass) and contract 08 (v2). Code baseline:
+web-chat's `ae/int` 671527a3 (the accepted connector build, cut as the interim 0.9.0-alpha.6.1; the public tag is still
+`ae-alpha.3` at 503b8f2f); the hub's `swc/int` 65d8600 where A-03.8 pins its cites and 86785c3 for A-10.7's and A-03.6's.
+
+Validation at the lock: `node tools/validate.js` `examples ok=127 fail=0; schemas=46`; `node tools/validate-amendments.js` for the locked folders:
+`amendment 03-8: examples ok=134 fail=0; schemas=46`
+`amendment 03-6: examples ok=135 fail=0; schemas=46`
+`amendment 10-7: examples ok=129 fail=0; schemas=50`
+
+Amendment-set hash (sha256 over the newline-joined `<sha256>  <path>` lines below, in this order): `c3d2d4ae8d7bae64e2373f2a0be6f526146567983efc455dcccd3778889ec9e5`
+
+| File | sha256 |
+|---|---|
+| `contracts/03-principal.amendment-8.md` | 1c97689d28881aaf41d691f3d35b1b6109a464c949590ec698e97f27b3d33ddf |
+| `amendments/03-8/schemas/03-activity-entry.json` | e7f50c406d6e6280cc9c12d87256bf1a51f859b33f4a88d835783ea78ab08356 |
+| `amendments/03-8/examples/03-activity-entry-message-hold-conflict.json` | 7ae4049e15182f4a12656265a60a674e9c63dc5b3e4ba34654dacdfa42780291 |
+| `amendments/03-8/examples/03-activity-entry-message-hold-policy.json` | df98f2ac9449a3366e28bfb2045c27e64b84217430b6d503b9fc2945ba46bb68 |
+| `amendments/03-8/examples/03-activity-entry-message-hold-release.json` | 9110fdf5adecd81049ad3c630de5e41fbf8dd8081076766cd4e9bc42543fbdf9 |
+| `amendments/03-8/examples/03-activity-entry-message-hub-queued-expired.json` | 0c3ba2343d5680fa28b9f7b6f152d2c775eb14596718c73b29ab4d32bd2227a9 |
+| `amendments/03-8/examples/03-activity-entry-message-hub-queued-fire.json` | d390de7af5365bb60cf0fdcbdb4954d2dfdb20082ba59a055d7efa5bac8b666d |
+| `amendments/03-8/examples/03-activity-entry-message-hub-queued.json` | ed2727b345e89a60fb0d489ce798c3bdba4a1dce1eeb291c18853480e3792492 |
+| `amendments/03-8/examples/03-activity-entry-message-take-back.json` | cc352984406eef1d2d4b094534ddbd8007be155e3a77bff48842387282c20380 |
+| `contracts/03-principal.amendment-6.md` | 879bb2fd7256476cb47a6a8aad22300c3309f4aa5dfa3181471670906cb3b07d |
+| `amendments/03-6/schemas/03-activity-entry.json` | c30d6ec52756f7b56e0d9342e250dded154b6b28f30b03d11b16eb4594084785 |
+| `amendments/03-6/examples/03-activity-entry-chat-archive-cascade.json` | 4861ccec98279fa2116aae1e75c6a15472bcc49c906105799a4b50ebe87995ab |
+| `amendments/03-6/examples/03-activity-entry-chat-restore-refused.json` | aaf0fd473d79b5cafeeed049900fae6cd0eb43edc1a970f7ad694f5a30679db8 |
+| `amendments/03-6/examples/03-activity-entry-chat-restore.json` | dcb6bc792e953e40964c57e6ccf0c8cfe20c5aebfc9a8e0890e60ffca0f8d362 |
+| `amendments/03-6/examples/03-activity-entry-project-archive-cascade.json` | 7556e50b76bf895f80d535a536aefd8b8a4709be876824e221cf7aa0e2d288ae |
+| `amendments/03-6/examples/03-activity-entry-project-create.json` | d8f1b376364c76a6da8a8aeac2a38607e24c900a5d335721f4ee4198fc93264d |
+| `amendments/03-6/examples/03-activity-entry-workspace-archive-refused.json` | 5bbff62438acbb9dd0c73358c25f641f941399e6cf01a255145ec55fe68c5221 |
+| `amendments/03-6/examples/03-activity-entry-workspace-archive.json` | a9149b11fd44dcb5b037a04878028d8a01cb194e9f6e3fc7a85f1eb3de5bbae0 |
+| `amendments/03-6/examples/03-activity-entry-workspace-create.json` | 7823fd5adae68061f740eef76e923279d5e369d999ea4004add7a94d50ef3b30 |
+| `contracts/10-mcp-tool-surface.amendment-7.md` | 80a996cbc981939a44944c4f5e7246f62efe29ff04297ea09ff090e13b8ba462 |
+| `amendments/10-7/schemas/05-hub-request.json` | d11f534cf3fec7956e3c5b2b7f5be7e04bee0d3b36b2d8c40fbc3bae200bfb8a |
+| `amendments/10-7/schemas/10-check-in.json` | 043f06db3cd839db3c983434c9a41517bd80e73c86ab5f15384377cfa8e3bcdd |
+| `amendments/10-7/schemas/10-event-batch.json` | b8bae854e06e9f98ee7bc1d5e67378a7a7e2954a42be859e0db205e288afd6ee |
+| `amendments/10-7/schemas/10-event-stream-grant.json` | 4df54b26c0e5e392f5f42bcb5f8c3a399288c5795afb3555ea580024940e15d5 |
+| `amendments/10-7/schemas/10-hub-request.json` | b8b6feabf3956e0c4ee88f8f0b406551e2f9a26e0c75ff01ec381a3dd03a09f7 |
+| `amendments/10-7/examples/05-hub-request.response.json` | d791323f6d29ca211d7d7d066a64d7d9c19ce31955b590e84a89d45442201e5c |
+| `amendments/10-7/examples/10-hub-request-get-chat-attach-ok.json` | d0fac3e438de60c12526f3dc4359d7e0c672592b5157a1d1244ec2608cf1776c |
+
+# LOCK · round v1.6.1 · 2026-11-11
+
+Locked by swc on 2026-11-11 under README rule 6a: six amendments, three with a folder of full replacement files and three of
+text alone. They settle the readings web-chat's connector build made of the locked texts (wc-43, wc-44, wc-45) and add
+the pair-only mode. A-04.2 (the connected route table's `table_version` 2: three `host_only` rows for routes added since
+the table was cut, the other seven left to their wildcard rows at the level the daemon checks, the hub matching rows by
+the table's grammar only and logging a `hello`'s table skew without refusing the link; proposed by swc, agreed in
+notes/2026-11-11-wc-55.md on the user's word that no route level moves; the canonical table's sha256 is
+`f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028`), A-05.5 (how a close with 1005, 1006 or a code `ws`
+will not send crosses the link, and the ws form of the connector's 404; text alone), A-06.4 (wc's pair-only mode of
+`connect <hub-url>`: steps (1) and (2), then stop, with no unit written or started, and the loopback hub origin in the
+record; proposed by wc, revised in notes/2026-11-11-wc-50.md, agreed by swc in notes/2026-11-11-swc-35.md), A-06.5 (five
+readings settled in 06's text: the rotate request file, a re-pair over a paired record, `stop_mode` for a removed chat, a
+connected daemon without the record variable, `x-wc-grants` always present), A-07.2 (no element records on `events.batch`
+in v1, the element read and `element_reset` reserved, a reset under the held boot unknown; text alone) and A-11.5
+(C-11.18's capture counter crosses as `capture_seq`, and a capture reconciliation record keeps the fields of the
+reconciled item; text alone); the four of swc's that are not named above were agreed in notes/2026-11-11-wc-49.md. The hub
+and web-chat load each folder's schemas over the v1 base and the round v1.1 to v1.6 folders. No two folders of this round
+replace the same path: A-04.2 replaces the example `04-route-table.json`, A-06.4 replaces `06-connector-state.json` (on
+the base file; no earlier amendment replaced it) and adds one example, and A-06.5 replaces `06-relay-headers.json` (on
+A-06.2's file, round v1.2); each of those paths was last in force from the base or an earlier round, so this round's file
+is the one a loader takes and no statement is needed here. The round v1 and v1.1 to v1.6 locks above are unchanged. Still open: round v1.7 (the EventsDB feed: A-05.4, A-06.3,
+A-03.9, A-11.4, proposed, back with swc on wc-46's nine changes, the user's rulings given today as R48; its files are
+rebuilt on this round's where they share a path) and round v1.8 (A-05.6, the `authority.ack` frame, proposed, with wc for
+a read of its diff; it is in this commit and not in this lock), and contract 08 (v2). Code baseline: web-chat's `ae/int`
+cd26e81e (cut as the interim 0.9.0-alpha.6.3; the public tag is still `ae-alpha.3` at 503b8f2f); the hub's `swc/int`
+050581f.
+
+Validation at the lock: `node tools/validate.js` `examples ok=127 fail=0; schemas=46`; `node tools/validate-amendments.js` for the locked folders:
+`amendment 04-2: examples ok=127 fail=0; schemas=46`
+`amendment 06-4: examples ok=128 fail=0; schemas=46`
+`amendment 06-5: examples ok=127 fail=0; schemas=46`
+
+Amendment-set hash (sha256 over the newline-joined `<sha256>  <path>` lines below, in this order): `16b0bd8d9d77430277842eb2413a6e66376d57abf48771708c7bc83cbf69c85e`
+
+| File | sha256 |
+|---|---|
+| `contracts/04-authority.amendment-2.md` | bafda35aa9bb1f79949bd6318459f46b498ce52be85184c4032c4913d4f26300 |
+| `amendments/04-2/examples/04-route-table.json` | b3a248ec54d1e3f12385d8548f9330c6752de18f387856378e3c87b81021fcad |
+| `contracts/05-hub-connector-protocol.amendment-5.md` | cde9434f6f92156767ea4845cbbd9829b624ef96186a0ad446a42b21608b35d5 |
+| `contracts/06-connector-and-embedded-mode.amendment-4.md` | 43647caf21b2c0a84a93d294906b7b333399dd65b59ede8540b71c5f38d42aa1 |
+| `amendments/06-4/schemas/06-connector-state.json` | bec6eb564fab021a865c6e77bcc9ebf978335b8dae05b1f313acd1a9c099ad97 |
+| `amendments/06-4/examples/06-connector-state-loopback.json` | 0cc281414e255484a807163189238b67f6b80d72f5e04e56c5e074769c0a66fb |
+| `contracts/06-connector-and-embedded-mode.amendment-5.md` | 20fafc4be772685bb7c8d731f3d0ff1c8d7611b7de7f66f59c647fd28e126dde |
+| `amendments/06-5/schemas/06-relay-headers.json` | 864dbb1dab8f383cd75791d674359c46da00a0a508df744f031b508528dfc623 |
+| `contracts/07-ordering-and-catch-up.amendment-2.md` | c27aab6a0ff085fbabbc92fc009c3c4a811955e5a5008e876d788024ced59db8 |
+| `contracts/11-redaction-boundary.amendment-5.md` | b85b30ef3d3c77c964583305ebd9f254e5fc760991a33198be988a67ad8f68b5 |

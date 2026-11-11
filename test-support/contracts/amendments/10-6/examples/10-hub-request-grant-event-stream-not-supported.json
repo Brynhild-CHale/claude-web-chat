@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "GrantEventStream",
+  "request_id": "rq_01JC8S3C7D",
+  "error": {
+    "code": "not_supported",
+    "message": "This hub does not answer GrantEventStream yet.",
+    "hint": "GetApiInfo lists the types this hub answers."
+  }
+}

@@ -1,23 +1,24 @@
-// The connected route table (tranche 6 U744; contract 04 C-04.13, C-04.14,
-// C-04.19; lib/core/connected-policy.js over lib/core/connected-routes.json):
-//   * the shipped table is the locked example byte for byte, valid against the
-//     locked schema, and compiles to 116 session, 41 answer and 7 ws_inbound
-//     rows; TABLE_VERSION is 1 and TABLE_SHA256 the sha256 of
-//     stableStringify(table) (crypto, never stableHash) — the value the locked
-//     policy-decision example names its table by;
+// The connected route table (tranche 6 U744, U793; contract 04 C-04.13,
+// C-04.14, C-04.19, A-04.2; lib/core/connected-policy.js over
+// lib/core/connected-routes.json):
+//   * the shipped table is the locked A-04.2 example (table_version 2) byte for
+//     byte, valid against the locked schema, and compiles to 119 session, 41
+//     answer and 7 ws_inbound rows; TABLE_VERSION is 2 and TABLE_SHA256 the
+//     sha256 of stableStringify(table) (crypto, never stableHash), f822fdb2…f028;
+//     the locked policy-decision example names version 1's table by the same
+//     computation over the base example;
 //   * the mapping: host_only and retired rows deny (allow false, reason
 //     refused); a refuse_query row refuses its query however qs spells it; a
 //     row's level, requires and daemon_mirror reach the compiled row and never
 //     become remote-policy's `mirror` or `destructive`; first match wins and a
 //     malformed path is refused;
 //   * a sample of rows answering at their level, GET / at read;
-//   * a pending route — one the code grew after the table's derivation
-//     (test/remote-policy.test.js's pending list) — with no row (GET
-//     /api/forms/shifts) falls to the default deny at the connector; one a v1
-//     wildcard row admits (POST /api/elements/:id/picture under POST|PATCH|
-//     DELETE /api/elements/*, I3 (a)) is let through by the connector; the
-//     daemon refuses a remote request for either 403 host only by its own gate
-//     (the daemon never reads this table, C-04.21);
+//   * the three routes version 2 gives host_only rows (`* /api/forms/*`, GET
+//     /api/elements/anchor-stats, POST /api/elements/:id/picture) are refused
+//     at the connector; the seven routes grown since version 1 that its
+//     wildcard rows admit stay admitted at the wildcard's level (draw.js at
+//     read); the daemon still refuses a remote request for the host-only ones
+//     403 by its own gate (the daemon never reads this table, C-04.21);
 //   * wsInboundLevel: the seven types at their levels, null for anything else.
 // The ratchet that holds the table to the code (C-04.19's checks, the pending
 // list) is the appended block of test/remote-policy.test.js.
@@ -41,21 +42,23 @@ const client = require('../lib/client');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SHIPPED = path.join(REPO_ROOT, 'lib/core/connected-routes.json');
-const LOCKED = path.join(REPO_ROOT, 'test-support/contracts/examples/04-route-table.json');
+const LOCKED = path.join(REPO_ROOT, 'test-support/contracts/amendments/04-2/examples/04-route-table.json');
+// Version 1: the base example, which the locked policy-decision example names.
+const V1 = path.join(REPO_ROOT, 'test-support/contracts/examples/04-route-table.json');
 
 test('the shipped table: the locked example byte for byte, valid against the locked schema', () => {
   assert.equal(policy.TABLE_FILE, SHIPPED);
-  assert.ok(fs.readFileSync(SHIPPED).equals(fs.readFileSync(LOCKED)), 'lib/core/connected-routes.json is U734\'s copy at cad3e8e');
-  const v = createValidator({ folders: [] }).validateExample('04-route-table', JSON.parse(fs.readFileSync(SHIPPED, 'utf8')));
+  assert.ok(fs.readFileSync(SHIPPED).equals(fs.readFileSync(LOCKED)), 'lib/core/connected-routes.json is A-04.2\'s example at contracts-v1.6.1');
+  const v = createValidator({ folders: ['04-2'] }).validateExample('04-route-table', JSON.parse(fs.readFileSync(SHIPPED, 'utf8')));
   assert.equal(v.ok, true, JSON.stringify(v.errors));
 });
 
-test('compile: 116 session, 41 answer, 7 ws_inbound rows; TABLE_VERSION 1; the table frozen all the way down', () => {
-  assert.equal(TABLE_VERSION, 1);
-  assert.equal(SESSION_ROWS.length, 116);
+test('compile: 119 session, 41 answer, 7 ws_inbound rows; TABLE_VERSION 2; the table frozen all the way down', () => {
+  assert.equal(TABLE_VERSION, 2);
+  assert.equal(SESSION_ROWS.length, 119);
   assert.equal(ANSWER_ROWS.length, 41);
   assert.equal(TABLE.ws_inbound.length, 7);
-  assert.equal(TABLE.session.length, 116);
+  assert.equal(TABLE.session.length, 119);
   assert.equal(TABLE.answer.length, 41);
   for (const v of [TABLE, TABLE.session, TABLE.session[0], TABLE.session[0].methods, TABLE.ws_inbound[0],
     SESSION_ROWS, SESSION_ROWS[0], SESSION_ROWS[0].methods, ANSWER_ROWS[0].requires]) {
@@ -66,14 +69,22 @@ test('compile: 116 session, 41 answer, 7 ws_inbound rows; TABLE_VERSION 1; the t
   for (const rows of [SESSION_ROWS, ANSWER_ROWS]) assert.equal(new Set(rows.map(keyOf)).size, rows.length);
 });
 
-test('TABLE_SHA256: crypto sha256 over the UTF-8 of stableStringify(table), never stableHash — the locked decision example\'s table', () => {
-  const want = crypto.createHash('sha256').update(Buffer.from(stableStringify(JSON.parse(fs.readFileSync(SHIPPED, 'utf8'))), 'utf8')).digest('hex');
+test('TABLE_SHA256: crypto sha256 over the UTF-8 of stableStringify(table), never stableHash — A-04.2\'s f822fdb2…f028; the locked decision example names version 1 the same way', () => {
+  const canonical = (file) => crypto.createHash('sha256').update(Buffer.from(stableStringify(JSON.parse(fs.readFileSync(file, 'utf8'))), 'utf8')).digest('hex');
+  const want = canonical(SHIPPED);
   assert.equal(TABLE_SHA256, want);
-  assert.match(TABLE_SHA256, /^[0-9a-f]{64}$/);
+  assert.equal(TABLE_SHA256, 'f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028', 'LOCK.md v1.6.1\'s canonical sha256 of table_version 2');
   assert.notEqual(TABLE_SHA256, stableHash(TABLE), 'not the sha1 form');
   assert.equal(tableSha256(TABLE), TABLE_SHA256);
-  const decision = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'test-support/contracts/examples/04-policy-decision.json'), 'utf8'));
-  assert.deepStrictEqual(decision.table, { version: TABLE_VERSION, sha256: TABLE_SHA256 }, 'the hub names this copy by both');
+  // The locked decision example (base, and A-04.1's local-port one) names
+  // version 1's table, computed the same way over the base example.
+  const v1 = compileTable(JSON.parse(fs.readFileSync(V1, 'utf8')));
+  assert.equal(v1.TABLE_SHA256, canonical(V1));
+  for (const rel of ['examples/04-policy-decision.json', 'amendments/04-1/examples/04-policy-decision-local-port.json']) {
+    const decision = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'test-support/contracts', rel), 'utf8'));
+    assert.deepStrictEqual(decision.table, { version: v1.TABLE_VERSION, sha256: v1.TABLE_SHA256 }, `${rel} names version 1 by both`);
+  }
+  assert.notEqual(v1.TABLE_SHA256, TABLE_SHA256);
   // Key order and whitespace are not the identity; a value is.
   const reordered = JSON.parse(JSON.stringify({ ws_inbound: TABLE.ws_inbound, answer: TABLE.answer, session: TABLE.session,
     grammar: TABLE.grammar, derived_from: TABLE.derived_from, table_version: TABLE.table_version }));
@@ -197,16 +208,24 @@ test('verdicts: first match wins, default deny, malformed refused, the two origi
   assert.equal(classifySession('HEAD', '/api/graph').allow, true);
 });
 
-test('pending routes: one with no v1 row (GET /api/forms/shifts) falls to the default deny at the connector; one a v1 wildcard admits (POST /api/elements/:id/picture) passes it; the daemon refuses both 403 host only', async (t) => {
-  const v = classifySession('GET', '/api/forms/shifts');
-  assert.deepStrictEqual([v.allow, v.key, v.reason, v.row], [false, null, 'unknown', null], 'the runtime is C-04.13\'s default deny, whatever the test\'s pending list says');
-  // A pending route a v1 wildcard row admits (I3 (a), hand fold 3): the
-  // connector lets it through at the wildcard's level. The ink picture's POST
-  // (U564) is host only at the daemon; the type's draw.js (U511), also
-  // pending, is served at the daemon's own read level (element-files.js), so
-  // it shows only the connector's half.
-  const pic = classifySession('POST', '/api/elements/e1/picture');
-  assert.deepStrictEqual([pic.allow, pic.key, pic.row.level], [true, 'POST|PATCH|DELETE /api/elements/*', 'write_page']);
+test('version 2\'s host_only rows: GET /api/forms/shifts, GET /api/elements/anchor-stats and POST /api/elements/:id/picture are refused at the connector (version 1 denied the first by default and admitted the other two by a wildcard); draw.js stays admitted at read; the daemon still refuses the three 403 host only', async (t) => {
+  for (const [m, u, key] of [
+    ['GET', '/api/forms/shifts', '* /api/forms/*'],
+    ['DELETE', '/api/forms/x', '* /api/forms/*'],
+    ['GET', '/api/elements/anchor-stats', 'GET /api/elements/anchor-stats'],
+    ['POST', '/api/elements/e1/picture', 'POST /api/elements/:id/picture'],
+  ]) {
+    const v = classifySession(m, u);
+    assert.deepStrictEqual([v.allow, v.key, v.reason, v.row.level], [false, key, 'refused', 'host_only'], `${m} ${u}`);
+  }
+  // Under version 1 (the base example) they were a default deny and two wildcard admits.
+  const v1 = compileTable(JSON.parse(fs.readFileSync(V1, 'utf8')));
+  const forms1 = v1.classifySession('GET', '/api/forms/shifts');
+  assert.deepStrictEqual([forms1.allow, forms1.key, forms1.reason], [false, null, 'unknown']);
+  assert.equal(v1.classifySession('POST', '/api/elements/e1/picture').key, 'POST|PATCH|DELETE /api/elements/*');
+  assert.equal(v1.classifySession('GET', '/api/elements/anchor-stats').key, 'GET /api/elements/*');
+  // The seven others grown since version 1 stay under its wildcard rows (draw.js
+  // is served at the daemon's own read level, element-files.js).
   const draw = classifySession('GET', '/api/elements/types/ink/draw.js');
   assert.deepStrictEqual([draw.allow, draw.key, draw.row.level], [true, 'GET /api/elements/*', 'read']);
   // The daemon never reads the connected table (C-04.21): its own gate.
@@ -220,6 +239,8 @@ test('pending routes: one with no v1 row (GET /api/forms/shifts) falls to the de
   assert.match(String(remotePic.body.hint), /host|terminal|machine/i, JSON.stringify(remotePic.body));
   const hostPic = await client.request(d.port, 'POST', '/api/elements/e1/picture', {});
   assert.notEqual(hostPic.status, 403, 'the host passes the daemon\'s own gate: ' + JSON.stringify(hostPic.body));
+  const remoteStats = await client.request(d.port, 'GET', '/api/elements/anchor-stats', null, { headers: { 'X-WC-Remote': '1' } });
+  assert.equal(remoteStats.status, 403, JSON.stringify(remoteStats.body));
 });
 
 test('wsInboundLevel: the seven types at their levels; null for any other type (the connector drops it)', () => {
@@ -232,14 +253,14 @@ test('wsInboundLevel: the seven types at their levels; null for any other type (
   }
 });
 
-test('compileTable: a fixture compiles through the same code (the seam U744b\'s table_version 2 rides)', () => {
+test('compileTable: a fixture compiles through the same code (the seam a later table version rides)', () => {
   const fixture = JSON.parse(JSON.stringify(TABLE));
-  fixture.table_version = 2;
-  fixture.session.unshift({ methods: ['GET'], path: '/api/forms/shifts', level: 'host_only', from_rule: '* /api/forms/*' });
+  fixture.table_version = 3;
+  fixture.session.unshift({ methods: ['GET'], path: '/api/forms/shifts', level: 'read', from_rule: '* /api/forms/*' });
   const c = compileTable(fixture);
-  assert.equal(c.TABLE_VERSION, 2);
+  assert.equal(c.TABLE_VERSION, 3);
   assert.notEqual(c.TABLE_SHA256, TABLE_SHA256);
   const v = c.classifySession('GET', '/api/forms/shifts');
-  assert.deepStrictEqual([v.allow, v.key, v.reason, v.row.level], [false, 'GET /api/forms/shifts', 'refused', 'host_only']);
-  assert.equal(classifySession('GET', '/api/forms/shifts').key, null, 'the shipped table is untouched');
+  assert.deepStrictEqual([v.allow, v.key, v.row.level], [true, 'GET /api/forms/shifts', 'read']);
+  assert.equal(classifySession('GET', '/api/forms/shifts').key, '* /api/forms/*', 'the shipped table is untouched');
 });

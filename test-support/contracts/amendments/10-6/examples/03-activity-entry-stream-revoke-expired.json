@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_7c5zmr2k9w4q8t1v6x3b0n5h3d",
+  "at": "2026-12-28T09:00:00.210Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "stream.revoke",
+  "target": {
+    "type": "stream",
+    "id": "esg_01jc8s2t4v6x8z0b2d4f6h8k3q"
+  },
+  "outcome": "refused:expired",
+  "summary": {
+    "text": "Event stream proposal lapsed after 24 hours without approval",
+    "source": "template",
+    "template": "stream.revoke-lapsed",
+    "chars": 60,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

@@ -447,10 +447,14 @@ test('--json: the pairing event line and the bound event line; human prose goes 
 
 // The closing sentence as A-06.4's C-06.5 words it: it names the foreground
 // `connect run` and `connect <hub-url>` without the flag; a plain-http
-// loopback record names `connect run --insecure-loopback` only.
+// loopback record names `connect run --insecure-loopback` only. On a record
+// whose `service` an earlier run set (U793), it says that service was left as
+// it is and names `connect status`, never a foreground `connect run`.
 const PAIR_ONLY_HTTPS = (origin) => 'Paired; no service installed: run `claude-web-chat connect run` to run the connector in the foreground, '
   + `or \`claude-web-chat connect ${origin}\` to install the start-at-login service later.`;
 const PAIR_ONLY_LOOPBACK = 'Paired; no service installed: run `claude-web-chat connect run --insecure-loopback` to run the connector in the foreground.';
+const PAIR_ONLY_KEPT = 'Paired; this run installed and changed no service: the start-at-login service installed earlier was left as it is '
+  + '(run `claude-web-chat connect status` to see it).';
 
 // The record's `service` as it was, and every service-manager trace: no
 // unit, no log, no call.
@@ -509,7 +513,7 @@ test('--pair-only on a record already paired, no --re-pair: no pairing, only the
   const code = await main(['https://hub.example.com', '--pair-only'], { ...s.deps, pair: stubPair(s) });
   assert.equal(code, 0, s.err.join('\n'));
   assert.deepEqual(s.pairs, [], 'no pairing');
-  assert.deepEqual(s.out, [PAIR_ONLY_HTTPS('https://hub.example.com')], 'only the closing sentence');
+  assert.deepEqual(s.out, [PAIR_ONLY_KEPT], 'only the closing sentence, saying the earlier service was left as it is');
   assert.deepEqual(s.calls, [], 'no service manager call');
   assert.equal(fs.readFileSync(plist, 'utf8'), 'running unit', 'the unit untouched');
   assert.ok(fs.readFileSync(userPaths().connectorRecord(HUB)).equals(recBefore), 'the record byte-identical');
@@ -557,7 +561,46 @@ test('--pair-only --re-pair over a record whose unit is running: pairs once, rep
   assert.deepEqual(s.calls, [], 'nothing restarted');
   assert.deepEqual(readRec().service, service, 'the service as it was');
   assert.match(s.out[0], /^bound mch_/);
-  assert.equal(s.out[1], PAIR_ONLY_HTTPS('https://hub.example.com'));
+  assert.equal(s.out[1], PAIR_ONLY_KEPT, 'the service the record names was left as it is');
+});
+
+test('--pair-only on a paired record whose service is set (https and loopback): the sentence says this run changed no service, names connect status, and never advises a foreground connect run; the --json event is unchanged (U793)', async (t) => {
+  for (const [origin, argv] of [
+    ['https://hub.example.com', ['https://hub.example.com', '--pair-only']],
+    ['http://127.0.0.1:8477', ['http://127.0.0.1:8477', '--insecure-loopback', '--pair-only']],
+  ]) {
+    const s = sandbox(t);
+    seedPaired({ origin });
+    const service = { kind: 'launchd', label: LABEL, unit_path: conn.unitPaths().launchd, path_env: '/usr/bin:/bin', installed_at: 1 };
+    conn.updateRecord(HUB, (r) => ({ ...r, service }));
+    const recBefore = fs.readFileSync(userPaths().connectorRecord(HUB));
+    assert.equal(await main(argv, { ...s.deps, pair: stubPair(s, { origin }) }), 0, s.err.join('\n'));
+    assert.deepEqual(s.pairs, [], origin);
+    assert.deepEqual(s.out, [PAIR_ONLY_KEPT], origin);
+    assert.match(s.out[0], /installed earlier was left as it is/);
+    assert.match(s.out[0], /`claude-web-chat connect status`/);
+    assert.doesNotMatch(s.out[0], /connect run|no service installed|install the start-at-login service later/, `${origin}: no second connector advised`);
+    assert.deepEqual(s.calls, [], 'no service manager call');
+    assert.ok(fs.readFileSync(userPaths().connectorRecord(HUB)).equals(recBefore), 'the record byte-identical');
+    // --json: the closing event is A-06.4's, whatever the record's service.
+    const j = sandbox(t);
+    seedPaired({ origin });
+    conn.updateRecord(HUB, (r) => ({ ...r, service }));
+    assert.equal(await main([...argv, '--json'], { ...j.deps, pair: stubPair(j, { origin }) }), 0, j.err.join('\n'));
+    assert.equal(j.out.length, 1);
+    assert.deepEqual(JSON.parse(j.out[0]), { event: 'service', kind: null, pair_only: true, hub_id: HUB, machine_id: `mch_${'0'.repeat(26)}` });
+  }
+  // Without a service the sentence advises as before: https and loopback.
+  for (const [origin, argv, want] of [
+    ['https://hub.example.com', ['https://hub.example.com', '--pair-only'], PAIR_ONLY_HTTPS('https://hub.example.com')],
+    ['http://127.0.0.1:8477', ['http://127.0.0.1:8477', '--insecure-loopback', '--pair-only'], PAIR_ONLY_LOOPBACK],
+  ]) {
+    const s = sandbox(t);
+    seedPaired({ origin });
+    assert.equal(readRec().service, undefined);
+    assert.equal(await main(argv, { ...s.deps, pair: stubPair(s, { origin }) }), 0, s.err.join('\n'));
+    assert.deepEqual(s.out, [want], origin);
+  }
 });
 
 test('--pair-only --insecure-loopback with the fake: the pairing line, bound, then the sentence naming `connect run --insecure-loopback` only', async (t) => {

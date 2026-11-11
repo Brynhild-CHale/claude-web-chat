@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "type": "GetHomeStatus",
+  "request_id": "rq_01JC4MJN2P",
+  "result": {
+    "session": {
+      "started_at": "2026-11-08T11:00:04.311Z",
+      "restarts_today": 1,
+      "taint": [
+        "events"
+      ]
+    },
+    "settings": {
+      "delegation_needs_approval": true,
+      "paused": false
+    },
+    "checkins": {
+      "enabled": 2,
+      "open_fires": 1
+    },
+    "metering": {
+      "turns_today": 7,
+      "metered": 5,
+      "unmetered": 2,
+      "cost_usd_today": null
+    },
+    "held_messages": 1
+  }
+}

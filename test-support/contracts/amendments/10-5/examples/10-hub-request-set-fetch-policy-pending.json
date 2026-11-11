@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "type": "SetFetchPolicy",
+  "request_id": "rq_01JC5FAT5Y",
+  "result": {
+    "state": "pending",
+    "approval_id": "9a198ecef5e6f8157af7fa19b649e52eb314a9246bb40708084685b3e8b58f22",
+    "policy": {
+      "hosts": [
+        {
+          "host": "search.example",
+          "prefixes": [
+            "/search"
+          ],
+          "kinds": [
+            "search"
+          ]
+        },
+        {
+          "host": "docs.example",
+          "prefixes": [
+            "/guide/",
+            "/api/"
+          ],
+          "kinds": [
+            "url"
+          ]
+        }
+      ],
+      "fetch_per_day": 40,
+      "fetch_bytes_per_day": 8388608
+    }
+  }
+}
