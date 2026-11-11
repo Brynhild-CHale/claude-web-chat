@@ -963,6 +963,73 @@ test('(19) an acknowledged Push streams to the connector contiguous: missing 0, 
   }
 });
 
+// ── (20) a capture and the acknowledged Push that carries it ───────────────
+// U750b (C-EX6-23-wake-ack-seq, its second half): the daemon's wake policy
+// folds a capture into the queue inside the capture's own fan-out, and the
+// live stream used to serve that queue item before the capture, so the
+// connector reported a break (a batch contiguous: false) where nothing was
+// lost. Live delivery is now in ring order. The shape the gate's F8 step used:
+// a capture, then a Push carrying it, acknowledged by the channel bridge in
+// process (its notify a stub, never Claude Code), as (19) drives it. Placed
+// before (13), which stops the daemon.
+
+test('(20) a capture and the acknowledged Push that carries it stream to the connector contiguous: missing 0, duplicate 0, no source.gap', async () => {
+  const { startChannelBridge } = require('../lib/channel/bridge');
+  const port = W.spaceDaemon.port;
+  const boot = (await client.request(port, 'GET', '/api/health', null, {})).headers['x-wc-boot'];
+  const since = await latestSeq(port);
+  const cap = await host(port, 'POST', '/api/capture', { url: 'https://example.test/u750b', title: 'U750b', html: '<p>captured for a Push</p>', kind: 'selection' });
+  assert.equal(cap.status, 200, masked(cap.body));
+  await waitUntil(async () => (json(await host(port, 'GET', '/api/queue')).items || []).some((i) => i.kind === 'capture'),
+    { timeout: 10000, what: 'the capture queued' });
+  const bridgeClient = {
+    get: (p) => client.get(p, { port, noSpawn: true }),
+    post: (p, b) => client.post(p, b, { port, noSpawn: true }),
+  };
+  const bridge = startChannelBridge({ notify: async () => {}, client: bridgeClient, root: W.spaceRoot });
+  let push;
+  try {
+    await waitUntil(async () => json(await host(port, 'GET', '/api/queue/policy')).channel_connected === true,
+      { timeout: 10000, what: 'the channel live' });
+    push = json(await host(port, 'POST', '/api/queue/push', {}));
+    assert.equal(push.mode, 'wake', 'a live channel: a live wake');
+    await waitUntil(async () => (await ringSince(port, since)).some((e) => e.kind === 'wake-ack' && e.wake_seq === push.seq),
+      { timeout: 10000, what: 'the push acknowledged' });
+  } finally {
+    bridge.stop();
+  }
+  // The wake took the turn lock; the woken turn's Stop ends it, as in (19).
+  assert.equal((await host(port, 'POST', '/api/turn-end', { author: 'claude', summary: 'u750b' })).status, 200);
+  await waitUntil(async () => !json(await host(port, 'GET', '/api/graph')).lock, { timeout: 10000, what: 'the wake turn ended' });
+  await host(port, 'POST', '/api/store', { patch: { u750b_after_ack: 1 } });
+  const last = await latestSeq(port);
+  const want = Array.from({ length: last - since }, (_, i) => since + 1 + i);
+  const ring = await ringSince(port, since);
+  const shape = ring.map((e) => `${e.seq}:${e.kind}`).join(',');
+  assert.deepEqual(ring.map((e) => e.seq), want, 'the daemon\'s ring: every position once');
+  const capAt = ring.findIndex((e) => e.kind === 'capture');
+  assert.ok(capAt >= 0 && ring[capAt + 1].kind === 'queue' && ring[capAt + 1].op === 'add', `the capture, then its queue item: ${shape}`);
+  const wake = ring.find((e) => e.kind === 'wake' && e.seq === push.seq);
+  assert.ok(wake && wake.batch.some((i) => i.kind === 'capture' && i.capture_id === ring[capAt].capture_id), `the Push carried the capture: ${shape}`);
+
+  const mine = () => framesIn('events.batch').map((f) => f.frame.batch)
+    .filter((b) => b.chat_id === W.space && b.boot === boot && b.entries.some((e) => e.seq > since));
+  await waitUntil(() => mine().some((b) => b.entries.some((e) => e.seq === last)), { timeout: 15000, what: 'the batch carrying the ring\'s last entry' });
+  const batches = mine();
+  const seqs = batches.flatMap((b) => b.entries.map((e) => e.seq)).filter((s) => s > since);
+  assert.equal(seqs.length - new Set(seqs).size, 0, `duplicate 0 (${seqs.join(',')})`);
+  assert.deepEqual(want.filter((s) => !seqs.includes(s)), [], 'missing 0');
+  assert.deepEqual(seqs, want, 'in ring order, each position once');
+  for (const b of batches) {
+    assert.equal(b.contiguous, true, `batch ${b.batch_id} contiguous: no source.gap (${shape})`);
+    assert.ok(!('gap' in b) && !b.reinit, `batch ${b.batch_id} carries no gap`);
+  }
+  const hubEntries = batches.flatMap((b) => b.entries).filter((e) => e.seq > since);
+  assert.equal(hubEntries.filter((e) => e.kind === 'capture').length, 1, 'the capture once');
+  const ack = ring.find((e) => e.kind === 'wake-ack' && e.wake_seq === push.seq);
+  assert.equal(hubEntries.filter((e) => e.kind === 'wake-ack' && e.seq === ack.seq).length, 1, 'its wake-ack once');
+});
+
 // ── (13) disconnect ─────────────────────────────────────────────────────────
 
 test('(13) connect disconnect with the composed connector running: machine.leave then connector.release-all over the local socket (handled once in process, no frame for it); every started_by connector daemon stopped; no key, no unit file, the record revoked, the roots kept', async () => {
