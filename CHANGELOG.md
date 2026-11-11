@@ -413,9 +413,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   this machine to a hub*), and `claude-web-chat status` carries one
   `Connector:` line. A chat's session starts with `connect attach
   <chat-label>` at the machine; connector mode, the tmux launcher, is not in
-  this build. A hub viewer reaches a route only through the connected route
-  table, and a route added since its table_version 1 waits in the pending
-  list, refused for a hub viewer, until its row is agreed.
+  this build. `connect <hub-url> --pair-only` pairs and stops there: no unit,
+  no service, and one closing line naming `connect run` (with `--json`, one
+  `service` event with `pair_only` true). `--insecure-loopback` admits a
+  plain-http hub on 127.0.0.1 or localhost only. When the hub revokes this
+  machine with a message, `connect run` prints it once as `connect run: the
+  hub says: <message>` (the service writes it to the connector's log), and
+  `connect status` adds a `revoked:` line saying where to find it and how to
+  pair again. A hub viewer reaches a route only through the connected route
+  table. Of the ten routes added since its table_version 1, nine fall under
+  one of its wildcard rows and reach the daemon, whose own checks decide them
+  (two of the nine are host only there), and one, `GET /api/forms/shifts`, no
+  row covers, so a hub viewer is refused it.
 - **`GET /api/elements/anchor-stats`, host only.** The local browsers'
   event-anchor counts, from local sockets only.
 - **A new mount id a page record cannot hold is refused.** `render` and
@@ -513,6 +522,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   refused 400 `anchor-kind-undeclared`, as a create already was; an arrow
   between two panes is listed under either pane (`GET /api/elements?mount=`,
   a pane's preview, an export's hidden-pane test).
+- **An ask names the tool's class, never its name.** An ask's `tool_kind` is
+  now the tool's class (`Bash`, `Edit`, `MCP` and the rest), or `Tool` for a
+  tool the table does not know, for every reader; `tool_name` still carries
+  the name at `read` and above. The connector sends the hub the class as a
+  lower-case word (`elicitation` for an MCP server's form), and a chat's
+  current step as one too (`bash`, `mcp`, `tool`, `reply`, `compacting`).
 
 ### Fixed
 
@@ -545,6 +560,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `ids` meta keeps whole queue ids and ends with `+N` when the rest do not fit.
 - **A capture pane's preview, replay and export draw the mode you toggled.**
   They drew its default mode.
+- **Two starts of one project's server at once start one.** `open` and
+  `start --daemon` now take the project's spawn lock, like the MCP client's
+  auto-start, the portal's start and the connector, so a second
+  caller adopts the server the first one started instead of starting another
+  beside it (`open` then says `adopted the web-chat server another caller
+  started`).
 - **A node's third and later branches get labels of their own.** Every child
   after the second was labelled `L.0`, so a node with three branches had two
   of them under one label and a reference to it opened the first; the third

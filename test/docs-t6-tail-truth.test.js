@@ -11,7 +11,10 @@
 // REQ@csp-alpha8 (A9, a); ROUTES@table-version (B3, a) — the pending list;
 // S4's two widenings (U742@reports-remote-relayed (b) at full;
 // U725@tool-names-scope (b)); PAGE@hygiene-rules-text (a); hand fold 12's C8
-// (the spawn lock, the ring's resend rule).
+// (the spawn lock, the ring's resend rule). U792 (hand fold 15, form 4): the
+// corrective wave's words (--pair-only, the loopback hosts, the revoked hint,
+// the spawn lock's callers, the tool class) and ROUTES@as-built (a), D1: the
+// pending routes as the build serves them, version 2 not yet copied.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -217,12 +220,49 @@ test('the walk seam\'s reserved ports and its one reader are what the docs say',
   assert.ok(read('docs/extending.md').includes('a set walk never lands on 5170, 5171 or 5173–5272'));
 });
 
-test('the pending list the docs name is test/remote-policy.test.js\'s CONNECTED_PENDING, and anchor-stats waits in it', () => {
+// ROUTES@as-built (a), form 4 D1 (U792): until table_version 2 is agreed and
+// copied (a later unit), the build serves the pending routes as version 1's
+// rows decide: nine fall under a wildcard row and reach the daemon, whose own
+// gate decides each; one no row covers is refused.
+function pendingEntries() {
   const src = read('test/remote-policy.test.js');
-  assert.match(src, /const CONNECTED_PENDING = Object\.freeze\(\[/);
-  assert.match(src, /route: 'GET \/api\/elements\/anchor-stats'/);
-  assert.ok(read('docs/extending.md').includes('in the pending list (CONNECTED_PENDING in test/remote-policy.test.js), and a hub viewer is refused one until its row is agreed in table_version 2'));
-  assert.ok(flat(unreleased()).includes('a route added since its table_version 1 waits in the pending list, refused for a hub viewer, until its row is agreed'));
+  const at = src.indexOf('const CONNECTED_PENDING = Object.freeze([');
+  assert.ok(at >= 0, 'remote-policy.test.js declares CONNECTED_PENDING');
+  const body = src.slice(at, src.indexOf('\n]);', at));
+  return [...body.matchAll(/Object\.freeze\(\{ (route|rule): '([^']+)'[^\n]*?(?:admitted_by: '([^']+)' )?\}\)/g)]
+    .map((m) => ({ [m[1]]: m[2], admitted_by: m[3] || null }));
+}
+
+test('the pending routes are served as version 1\'s rows decide: nine reach the daemon, GET /api/forms/shifts is refused (D1 a)', () => {
+  const connected = require('../lib/core/connected-policy');
+  assert.equal(connected.TABLE_VERSION, 1, 'the shipped table is still version 1; reword these docs when version 2 lands');
+  const routes = pendingEntries().filter((e) => e.route);
+  assert.equal(routes.length, 10, 'ten routes added since table_version 1');
+  assert.ok(pendingEntries().some((e) => e.rule === '* /api/forms/*'), 'and the forms RULES key');
+  const sample = (p) => p.replace(/:[a-z]+/g, 'x1').replace(/\*/g, 'a.png');
+  const admitted = routes.filter((e) => e.admitted_by);
+  assert.equal(admitted.length, 9, 'nine fall under a version 1 wildcard row');
+  for (const e of admitted) {
+    const [m, p] = e.route.split(' ');
+    const c = connected.classifySession(m, sample(p));
+    assert.equal(c.allow, true, `${e.route} is admitted`);
+    assert.equal(c.key, e.admitted_by, `${e.route} under ${e.admitted_by}`);
+  }
+  const refused = routes.filter((e) => !e.admitted_by).map((e) => e.route);
+  assert.deepEqual(refused, ['GET /api/forms/shifts']);
+  assert.equal(connected.classifySession('GET', '/api/forms/shifts').allow, false, 'no row covers it: the default deny');
+  assert.equal(connected.classifyAnswerRoute('GET', '/api/forms/shifts').allow, false);
+  // The daemon decides the nine; two are host only there.
+  assert.ok(read('lib/server/routes/elements.js').includes('app.get(\'/api/elements/anchor-stats\', audience.requireHost(),'));
+  assert.ok(read('lib/server/routes/element-picture.js').includes('app.post(\'/api/elements/:id/picture\', audience.requireHost(),'));
+  assert.ok(flat(read('docs/extending.md')).includes('in the pending list (CONNECTED_PENDING in test/remote-policy.test.js) until their rows are agreed in table_version 2. Until then the build serves them as version 1\'s rows decide: nine of the ten fall under a version 1 wildcard row (each entry\'s admitted_by) and reach the daemon at that row\'s level, where the daemon\'s own gate decides each (POST /api/elements/:id/picture and GET /api/elements/anchor-stats are host only there); GET /api/forms/shifts no row covers, so a hub viewer is refused it'));
+  assert.ok(read('CLAUDE.md').includes('the routes added since table_version 1 sit in the pending list until table_version 2 is agreed, and until then nine of the ten reach the daemon under a version 1 wildcard row, the daemon deciding, while GET /api/forms/shifts is refused'));
+  const notes = flat(unreleased());
+  assert.ok(notes.includes('Of the ten routes added since its table_version 1, nine fall under one of its wildcard rows and reach the daemon, whose own checks decide them (two of the nine are host only there), and one, `GET /api/forms/shifts`, no row covers, so a hub viewer is refused it.'));
+  for (const doc of [flat(read('docs/extending.md')), flat(read('CLAUDE.md')), notes]) {
+    assert.doesNotMatch(doc, /refused one until its row is agreed|refused for a hub viewer, until its row is agreed/, 'the old wording is gone');
+    assert.doesNotMatch(doc, /table_version 2 (?:ships|is shipped|is in this build)/, 'version 2 is not described as shipped');
+  }
 });
 
 test('the spawn lock and the ring\'s resend rule are the code\'s (hand fold 12 C8)', () => {
@@ -285,7 +325,97 @@ test('the guide says manual mode, the managed-install rule, the exit after bound
   assert.match(read('lib/connector/run.js'), /the connector reaches it only with --insecure-loopback/);
   assert.equal(require('../lib/connector/install').WAIT_MS, 15000);
   assert.ok(sec.includes('waits up to 15 seconds'));
-  assert.doesNotMatch(sec, /--manual|pair-only|A-06\.4/, 'no pair-only mode is promised');
+  assert.doesNotMatch(sec, /--manual|A-06\.4/, 'no other mode is promised');
+});
+
+// ── the corrective wave's words (U792: U726b, U718c, U729b, U723e) ─────────
+
+test('--pair-only: the usage, the help row, the closing line and event, as install.js builds them (U726b, C-06.5)', () => {
+  const inst = require('../lib/connector/install');
+  assert.ok(inst.USAGE.endsWith(' [--pair-only]'));
+  assert.equal(inst.parseArgs(['https://hub.example', '--pair-only']).pairOnly, true);
+  const src = read('lib/connector/install.js');
+  assert.ok(src.includes('Paired; no service installed: run `claude-web-chat connect run` to run the connector in the foreground, '));
+  assert.ok(src.includes('+ `or \\`claude-web-chat connect ${origin}\\` to install the start-at-login service later.`;'), 'and connect <hub-url> without the flag');
+  assert.ok(src.includes('Paired; no service installed: run `claude-web-chat connect run --insecure-loopback` to run the connector in the foreground.'));
+  assert.match(src, /event: 'service',\s*kind: null,\s*pair_only: true,/);
+  assert.match(src, /if \(parsed\.pairOnly\) \{\s*pairOnlyClose\(read\.value, io\);\s*return EXIT\.OK;\s*\}\s*\/\/ \(3\) the unit/, 'it stops before step (3)');
+  const sec = flat(section('docs/guide.md', '## Connect this machine to a hub'));
+  assert.ok(sec.includes('`claude-web-chat connect <hub-url> --pair-only` pairs this machine and stops there. It writes no unit, starts no service and waits for nothing.'));
+  assert.ok(sec.includes('With `--json` that line is one `service` event with `kind` null and `pair_only` true.'));
+  assert.ok(sec.includes('With `--pair-only` too, the closing line names only that command.'));
+  const help = read('lib/cli/index.js');
+  assert.ok(help.slice(help.indexOf('function showHelp()')).includes('(--pair-only: pair, install no service, then use connect run)'));
+  assert.ok(flat(unreleased()).includes('`connect <hub-url> --pair-only` pairs and stops there: no unit, no service, and one closing line naming `connect run`'));
+});
+
+test('--insecure-loopback admits 127.0.0.1 or localhost only, and no doc names ::1 for it (U726b, F3 a)', () => {
+  for (const h of ['http://127.0.0.1:8477', 'http://localhost:8477']) assert.equal(setup.hubOrigin(h, { insecureLoopback: true }), h);
+  assert.throws(() => setup.hubOrigin('http://[::1]:8477', { insecureLoopback: true }), (e) => e.code === 'EHUBORIGIN');
+  assert.ok(read('lib/connector/install.js').includes('loopback (127.0.0.1 or localhost) only'));
+  const sec = flat(section('docs/guide.md', '## Connect this machine to a hub'));
+  assert.ok(sec.includes('admits a plain-http hub on this machine\'s loopback (127.0.0.1 or localhost), for development only, and refuses any other host, an IPv6 address among them.'));
+  assert.doesNotMatch(sec, /::1/);
+  assert.ok(flat(unreleased()).includes('`--insecure-loopback` admits a plain-http hub on 127.0.0.1 or localhost only.'));
+  for (const rel of ['CLAUDE.md', 'docs/extending.md', 'docs/platform-support.md', ...RULES]) {
+    assert.doesNotMatch(flat(read(rel)), /insecure-loopback[^.]*::1/, `${rel} names ::1 for the loopback flag`);
+  }
+});
+
+test('the hub\'s revoked hint: `connect run` prints it once, `connect status` says where it is (U726b, F1 a)', () => {
+  const run = read('lib/connector/run.js');
+  assert.ok(run.includes('d.out(`connect run: the hub says: ${clean(hint)}`);'));
+  assert.match(run, /if \(hint && !hintSaid\) \{\s*hintSaid = true;/, 'once');
+  assert.match(read('lib/connector/link.js'), /holdsSecret/, 'a hint holding a known secret is withheld');
+  const cli = read('lib/connector/cli.js');
+  assert.ok(cli.includes('return `  revoked: ${at}; the hub\'s message, if it sent one, is in the connector\'s log (${userPaths().connectorLog}, `'));
+  assert.ok(cli.includes('or the terminal of a foreground \\`connect run\\`); pair again with'));
+  const sec = flat(section('docs/guide.md', '## Connect this machine to a hub'));
+  assert.ok(sec.includes('When the hub revokes this machine with a message for you, `connect run` prints it once as `connect run: the hub says: <message>` (the start-at-login service writes it to the connector\'s log), then releases its holds and stops. A message holding a secret this machine knows is not shown.'));
+  assert.ok(sec.includes('For a revoked pairing it adds one `revoked:` line: when the hub revoked it, where the hub\'s message is (the connector\'s log, or the terminal of a foreground `connect run`), and the command that pairs again.'));
+  assert.ok(flat(unreleased()).includes('`connect run` prints it once as `connect run: the hub says: <message>`'));
+});
+
+test('`open` and `start --daemon` start through the root\'s spawn lock, and the docs name every caller (U718c, D3 a)', () => {
+  const start = read('lib/cli/commands/start.js');
+  const fn = start.slice(start.indexOf('async function startThroughLock('));
+  assert.ok(fn.slice(0, fn.indexOf('\n}\n')).includes('await spawnDaemon(root, {'), 'startThroughLock is spawnDaemon');
+  assert.match(start, /await startThroughLock\(root, \{/, 'start --daemon uses it');
+  const open = read('lib/cli/commands/open.js');
+  assert.ok(open.includes('const { startThroughLock } = require(\'./start\');') && /await startThroughLock\(root, \{/.test(open), 'open uses it');
+  assert.match(read('lib/client/index.js'), /daemon\.spawnDaemon\(r\)/);
+  assert.match(read('lib/portal/start.js'), /require\('\.\.\/util\/daemon'\)\.spawnDaemon\(/);
+  assert.match(read('lib/connector/supervisor.js'), /d\.spawnDaemon\(root, \{/);
+  assert.ok(read('docs/extending.md').includes('(the MCP client\'s auto-start, the portal\'s start, the connector\'s supervisor, and `open` and `start --daemon` through `lib/cli/commands/start` `startThroughLock`)'));
+  assert.ok(read('docs/extending.md').includes('`spawnDaemon` waits through it, and so do `open` and `start --daemon`, which start through `spawnDaemon`'));
+  assert.ok(read('CLAUDE.md').includes('(spawn it once, or adopt the one that won: the MCP client\'s auto-start, the portal\'s start, the connector\'s supervisor, `open` and `start --daemon`)'));
+  assert.ok(open.includes('adopted the web-chat server another caller started at'));
+  assert.ok(flat(unreleased()).includes('**Two starts of one project\'s server at once start one.** `open` and `start --daemon` now take the project\'s spawn lock'));
+});
+
+test('an ask\'s tool_kind is the tool\'s class at the daemon, and a step crosses as a word (U729b, F1 a)', () => {
+  const { toolClass, TOOL_KINDS } = require('../lib/core/tool-input');
+  assert.equal(toolClass('Bash'), 'Bash');
+  assert.equal(toolClass('LSP'), 'Tool', 'a tool the table does not know is Tool');
+  assert.ok(TOOL_KINDS.includes('Edit') && TOOL_KINDS.includes('MCP') && TOOL_KINDS.includes('Tool'));
+  assert.ok(read('lib/server/domain/asks.js').includes('tool_kind: toolClass(name),'));
+  const { cutAsk } = require('../lib/connector/signals');
+  const ask = (tool_kind) => cutAsk({ id: 'a1', kind: 'permission', state: 'pending', answerable: true, version: 1, created_at: 1, tool_kind }).tool_kind;
+  assert.equal(ask('Bash'), 'bash');
+  assert.equal(ask('LSP'), 'tool');
+  assert.equal(ask('elicitation'), 'elicitation');
+  const sig = read('lib/connector/signals.js');
+  assert.ok(sig.includes('const STEP_WORDS = new Set([\'reply\', \'compacting\']);') && sig.includes('out.step_kind = stepWord(row.step_kind);'));
+  const notes = flat(unreleased());
+  assert.ok(notes.includes('**An ask names the tool\'s class, never its name.** An ask\'s `tool_kind` is now the tool\'s class (`Bash`, `Edit`, `MCP` and the rest), or `Tool` for a tool the table does not know, for every reader'));
+  assert.ok(notes.includes('(`elicitation` for an MCP server\'s form), and a chat\'s current step as one too (`bash`, `mcp`, `tool`, `reply`, `compacting`).'));
+});
+
+test('a reconciled capture record is sent once: the notes describe no connector resend, so U723e needs no line there (U723e, D5 a)', () => {
+  const ring = read('lib/connector/ring.js');
+  assert.match(ring, /function queueReconciled\(/, 'the one rule\'s home');
+  const notes = flat(unreleased());
+  assert.doesNotMatch(notes, /reconciled|after a reconnect|resent after/i, 'if the notes ever describe the connector\'s resend, say a reconciled capture record is sent once');
 });
 
 // ── platform-support ───────────────────────────────────────────────────────
