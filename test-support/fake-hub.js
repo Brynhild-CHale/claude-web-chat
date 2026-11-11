@@ -771,7 +771,14 @@ function createFakeHub(opts = {}) {
     const b = f.batch || {};
     const prev = sourceCursor(b.chat_id);
     const seqs = (b.entries || []).map((e) => e.seq);
-    const caps = (b.reconciled || []).map((r) => r.seq);
+    // capture_seq is the highest capture counter ingested, whichever way it
+    // came (07-cursor; the real hub's plan() raises it from a stream capture
+    // entry's counter too — its capture_seq when it carries one, else its
+    // served seq — beside the reconciled records; PQ-6A4-2, U723e).
+    const counterOf = (e) => (Number.isInteger(e.capture_seq) ? e.capture_seq : e.seq);
+    const caps = (b.entries || []).filter((e) => e && e.kind === 'capture').map(counterOf)
+      .concat((b.reconciled || []).map((r) => r.seq))
+      .filter((n) => Number.isInteger(n));
     // C-07.12a: the counters outlive a boot change; a new boot's batch carrying
     // reinit (the surface re-initialised) sets both to 0, and element_reset on
     // a new boot's batch sets element_seq alone to 0 — as the real hub's

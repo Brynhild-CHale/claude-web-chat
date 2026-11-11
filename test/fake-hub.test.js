@@ -805,3 +805,23 @@ test('the cursor: reinit or element_reset on a batch of the boot the cursor alre
   }
   assert.deepStrictEqual(fake.takeErrors(), []);
 });
+
+// The real hub's plan() raises capture_seq from a stream capture entry's
+// counter (its capture_seq when it carries one, else its served seq), not only
+// from reconciled records: 07-cursor's "highest capture counter ingested"
+// (PQ-6A4-2, U723e).
+test('the cursor: a stream capture entry\'s counter raises capture_seq, as a reconciled record\'s does', async (t) => {
+  const { fake, key, machine } = await paired(t);
+  const chat = fake.mintLabel();
+  fake.assign({ chat }, { cursor: COUNTED(chat) });
+  const c = await connect(fake, machine, key);
+  await c.next('chat.assign');
+  const batch = {
+    type: 'events.batch', batch_id: `b_${'0'.repeat(25)}1`, chat_id: chat, ring: 'main', boot: 'boot-a', since: 40, contiguous: true,
+    entries: [{ seq: 41, ts: 1793181402551, kind: 'graph' }, { seq: 42, ts: 1793181402552, kind: 'capture', capture_id: 'cap7', capture_seq: 7 }],
+  };
+  c.send({ ch: 'events', kind: 'events.batch', batch });
+  const { cursor } = (await c.next('events.ack')).ack;
+  assert.deepStrictEqual([cursor.boot, cursor.seq, cursor.capture_seq, cursor.element_seq], ['boot-a', 42, 7, 30], 'the entry\'s capture_seq 7, not its ring position 42');
+  assert.deepStrictEqual(fake.takeErrors(), []);
+});
