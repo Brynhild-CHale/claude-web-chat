@@ -421,10 +421,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   hub says: <message>` (the service writes it to the connector's log), and
   `connect status` adds a `revoked:` line saying where to find it and how to
   pair again. A hub viewer reaches a route only through the connected route
-  table. Of the ten routes added since its table_version 1, nine fall under
-  one of its wildcard rows and reach the daemon, whose own checks decide them
-  (two of the nine are host only there), and one, `GET /api/forms/shifts`, no
-  row covers, so a hub viewer is refused it.
+  table, and this build ships its table_version 2. Its three host-only rows,
+  `GET /api/elements/anchor-stats`, `POST /api/elements/:id/picture` and
+  every request under `/api/forms/`, are refused by the connector before any
+  daemon is reached; the other seven routes added since table_version 1 fall
+  under version 1's wildcard rows and reach the daemon at the level it checks.
 - **`GET /api/elements/anchor-stats`, host only.** The local browsers'
   event-anchor counts, from local sockets only.
 - **A new mount id a page record cannot hold is refused.** `render` and

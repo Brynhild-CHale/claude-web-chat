@@ -220,48 +220,51 @@ test('the walk seam\'s reserved ports and its one reader are what the docs say',
   assert.ok(read('docs/extending.md').includes('a set walk never lands on 5170, 5171 or 5173–5272'));
 });
 
-// ROUTES@as-built (a), form 4 D1 (U792): until table_version 2 is agreed and
-// copied (a later unit), the build serves the pending routes as version 1's
-// rows decide: nine fall under a wildcard row and reach the daemon, whose own
-// gate decides each; one no row covers is refused.
-function pendingEntries() {
+// ROUTES@as-built (a), form 4 D1 (U792), moved by U793: the build ships
+// table_version 2 (A-04.2). Its three host_only rows are refused by the
+// connector; the other seven routes added since version 1 fall under its
+// wildcard rows and reach the daemon at the level the daemon checks; the
+// pending list is empty, and the ratchet holds it empty.
+function pendingBody() {
   const src = read('test/remote-policy.test.js');
   const at = src.indexOf('const CONNECTED_PENDING = Object.freeze([');
   assert.ok(at >= 0, 'remote-policy.test.js declares CONNECTED_PENDING');
-  const body = src.slice(at, src.indexOf('\n]);', at));
-  return [...body.matchAll(/Object\.freeze\(\{ (route|rule): '([^']+)'[^\n]*?(?:admitted_by: '([^']+)' )?\}\)/g)]
-    .map((m) => ({ [m[1]]: m[2], admitted_by: m[3] || null }));
+  return src.slice(at, src.indexOf(']);', at) + 3);
 }
 
-test('the pending routes are served as version 1\'s rows decide: nine reach the daemon, GET /api/forms/shifts is refused (D1 a)', () => {
+test('the routes added since table_version 1 are served as version 2 decides: three refused host only by the connector, seven admitted by a version 1 wildcard row; the pending list is empty (D1 a, A-04.2)', () => {
   const connected = require('../lib/core/connected-policy');
-  assert.equal(connected.TABLE_VERSION, 1, 'the shipped table is still version 1; reword these docs when version 2 lands');
-  const routes = pendingEntries().filter((e) => e.route);
-  assert.equal(routes.length, 10, 'ten routes added since table_version 1');
-  assert.ok(pendingEntries().some((e) => e.rule === '* /api/forms/*'), 'and the forms RULES key');
-  const sample = (p) => p.replace(/:[a-z]+/g, 'x1').replace(/\*/g, 'a.png');
-  const admitted = routes.filter((e) => e.admitted_by);
-  assert.equal(admitted.length, 9, 'nine fall under a version 1 wildcard row');
-  for (const e of admitted) {
-    const [m, p] = e.route.split(' ');
-    const c = connected.classifySession(m, sample(p));
-    assert.equal(c.allow, true, `${e.route} is admitted`);
-    assert.equal(c.key, e.admitted_by, `${e.route} under ${e.admitted_by}`);
+  assert.equal(connected.TABLE_VERSION, 2, 'the shipped table is version 2');
+  assert.equal(connected.TABLE_SHA256, 'f822fdb2a1392bfc1fa0c86b53fef32b15f4905b58eadec7e4b17917e7e8f028');
+  assert.equal(pendingBody(), 'const CONNECTED_PENDING = Object.freeze([]);', 'the pending list is empty');
+  for (const [m, u, key] of [
+    ['GET', '/api/forms/shifts', '* /api/forms/*'],
+    ['GET', '/api/elements/anchor-stats', 'GET /api/elements/anchor-stats'],
+    ['POST', '/api/elements/x1/picture', 'POST /api/elements/:id/picture'],
+  ]) {
+    const c = connected.classifySession(m, u);
+    assert.deepEqual([c.allow, c.key, c.row.level], [false, key, 'host_only'], `${m} ${u}`);
   }
-  const refused = routes.filter((e) => !e.admitted_by).map((e) => e.route);
-  assert.deepEqual(refused, ['GET /api/forms/shifts']);
-  assert.equal(connected.classifySession('GET', '/api/forms/shifts').allow, false, 'no row covers it: the default deny');
-  assert.equal(connected.classifyAnswerRoute('GET', '/api/forms/shifts').allow, false);
-  // The daemon decides the nine; two are host only there.
+  const seven = [
+    ['GET /api/elements/types/x1/draw.js', 'GET /api/elements/*'], ['GET /api/elements/types/x1/assets/a.png', 'GET /api/elements/*'],
+    ['POST /api/elements/x1/glyph', 'POST|PATCH|DELETE /api/elements/*'], ['GET /api/elements/x1/picture', 'GET /api/elements/*'],
+    ['POST /api/elements/undo', 'POST|PATCH|DELETE /api/elements/*'], ['GET /app/strokes.js', 'GET /app/*'], ['GET /app/element-assets.js', 'GET /app/*'],
+  ];
+  for (const [route, row] of seven) {
+    const [m, p] = route.split(' ');
+    const c = connected.classifySession(m, p);
+    assert.deepEqual([c.allow, c.key], [true, row], route);
+  }
+  // The daemon's own gate still holds the three host only.
   assert.ok(read('lib/server/routes/elements.js').includes('app.get(\'/api/elements/anchor-stats\', audience.requireHost(),'));
   assert.ok(read('lib/server/routes/element-picture.js').includes('app.post(\'/api/elements/:id/picture\', audience.requireHost(),'));
-  assert.ok(flat(read('docs/extending.md')).includes('in the pending list (CONNECTED_PENDING in test/remote-policy.test.js) until their rows are agreed in table_version 2. Until then the build serves them as version 1\'s rows decide: nine of the ten fall under a version 1 wildcard row (each entry\'s admitted_by) and reach the daemon at that row\'s level, where the daemon\'s own gate decides each (POST /api/elements/:id/picture and GET /api/elements/anchor-stats are host only there); GET /api/forms/shifts no row covers, so a hub viewer is refused it'));
-  assert.ok(read('CLAUDE.md').includes('the routes added since table_version 1 sit in the pending list until table_version 2 is agreed, and until then nine of the ten reach the daemon under a version 1 wildcard row, the daemon deciding, while GET /api/forms/shifts is refused'));
+  assert.ok(flat(read('docs/extending.md')).includes('the shipped table is table_version 2 (A-04.2): its three host_only rows (every forms route, GET /api/elements/anchor-stats, POST /api/elements/:id/picture) are refused by the connector before any daemon is reached, and the other seven routes added since table_version 1 are admitted by version 1\'s wildcard rows at the level the daemon checks, its own gate deciding each. The pending list (CONNECTED_PENDING in test/remote-policy.test.js) is empty, and the ratchet holds it empty against the route set pinned at version 2, so a route added later fails until a table version names or admits it'));
+  assert.ok(read('CLAUDE.md').includes('the shipped table is table_version 2, whose three host_only rows (every forms route, GET /api/elements/anchor-stats, POST /api/elements/:id/picture) the connector refuses, while the other seven routes added since version 1 reach the daemon under a version 1 wildcard row, the daemon deciding; the pending list is empty and the ratchet holds it empty'));
   const notes = flat(unreleased());
-  assert.ok(notes.includes('Of the ten routes added since its table_version 1, nine fall under one of its wildcard rows and reach the daemon, whose own checks decide them (two of the nine are host only there), and one, `GET /api/forms/shifts`, no row covers, so a hub viewer is refused it.'));
+  assert.ok(notes.includes('A hub viewer reaches a route only through the connected route table, and this build ships its table_version 2. Its three host-only rows, `GET /api/elements/anchor-stats`, `POST /api/elements/:id/picture` and every request under `/api/forms/`, are refused by the connector before any daemon is reached; the other seven routes added since table_version 1 fall under version 1\'s wildcard rows and reach the daemon at the level it checks.'));
   for (const doc of [flat(read('docs/extending.md')), flat(read('CLAUDE.md')), notes]) {
     assert.doesNotMatch(doc, /refused one until its row is agreed|refused for a hub viewer, until its row is agreed/, 'the old wording is gone');
-    assert.doesNotMatch(doc, /table_version 2 (?:ships|is shipped|is in this build)/, 'version 2 is not described as shipped');
+    assert.doesNotMatch(doc, /until (?:their rows are agreed in )?table_version 2(?: is agreed)?|nine of the ten|nine fall under/, 'version 1\'s pending wording is gone');
   }
 });
 
