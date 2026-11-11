@@ -638,3 +638,22 @@ test('the leave was sent, then release-all answers ok:false or throws: the outpu
     assert.match(r.out, /stopped \d+ daemons? on owned roots/, `${failure}: the release was not done, so the direct path ran`);
   }
 });
+
+// ── the rotate request (hand fold 9 C4) ────────────────────────────────────
+
+test('a disconnect removes a pending rotate request (<hub-id>.rotate.json) with the key, for both reasons', async (t) => {
+  for (const reason of ['disconnect', 'revoked']) {
+    await t.test(reason, async (st) => {
+      const m = pairedMachine(st);
+      const s = stubs(m);
+      assert.ok(setup.requestRotate(HUB), 'a rotate request is written');
+      const file = setup.rotateRequestFile(HUB);
+      assert.ok(fs.existsSync(file), 'the rotate request is on disk');
+      const r = await setup.disconnectLocal({ hubId: HUB, reason, deps: s.deps });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(fs.existsSync(file), false, 'the rotate request went with the key');
+      assert.equal(setup.readRotateRequest(HUB), null);
+      assert.equal(fs.existsSync(m.keyFile), false);
+    });
+  }
+});
