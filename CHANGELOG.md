@@ -415,7 +415,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   <chat-label>` at the machine; connector mode, the tmux launcher, is not in
   this build. `connect <hub-url> --pair-only` pairs and stops there: no unit,
   no service, and one closing line naming `connect run` (with `--json`, one
-  `service` event with `pair_only` true). `--insecure-loopback` admits a
+  `service` event with `pair_only` true); when an earlier run installed the
+  service, the line says it was left as it is and names `connect status`
+  instead. `--insecure-loopback` admits a
   plain-http hub on 127.0.0.1 or localhost only. When the hub revokes this
   machine with a message, `connect run` prints it once as `connect run: the
   hub says: <message>` (the service writes it to the connector's log), and

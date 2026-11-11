@@ -341,6 +341,13 @@ test('--pair-only: the usage, the help row, the closing line and event, as insta
   assert.ok(src.includes('Paired; no service installed: run `claude-web-chat connect run` to run the connector in the foreground, '));
   assert.ok(src.includes('+ `or \\`claude-web-chat connect ${origin}\\` to install the start-at-login service later.`;'), 'and connect <hub-url> without the flag');
   assert.ok(src.includes('Paired; no service installed: run `claude-web-chat connect run --insecure-loopback` to run the connector in the foreground.'));
+  // A record whose service an earlier run set: the service left as it is, connect status, no foreground connect run (U793).
+  const kept = 'Paired; this run installed and changed no service: the start-at-login service installed earlier was left as it is '
+    + '(run `claude-web-chat connect status` to see it).';
+  assert.ok(src.includes("'Paired; this run installed and changed no service: the start-at-login service installed earlier was left as it is '"));
+  assert.ok(src.includes("+ '(run `claude-web-chat connect status` to see it).';"));
+  assert.match(src, /if \(record\.service\) \{\s*return 'Paired; this run installed and changed no service/, 'the service case comes first');
+  assert.doesNotMatch(kept, /connect run/);
   assert.match(src, /event: 'service',\s*kind: null,\s*pair_only: true,/);
   assert.match(src, /if \(parsed\.pairOnly\) \{\s*pairOnlyClose\(read\.value, io\);\s*return EXIT\.OK;\s*\}\s*\/\/ \(3\) the unit/, 'it stops before step (3)');
   const sec = flat(section('docs/guide.md', '## Connect this machine to a hub'));
@@ -353,6 +360,8 @@ test('--pair-only: the usage, the help row, the closing line and event, as insta
   const help = read('lib/cli/index.js');
   assert.ok(help.slice(help.indexOf('function showHelp()')).includes('(--pair-only: pair, install no service, then use connect run)'));
   assert.ok(flat(unreleased()).includes('`connect <hub-url> --pair-only` pairs and stops there: no unit, no service, and one closing line naming `connect run`'));
+  assert.ok(flat(unreleased()).includes('when an earlier run installed the service, the line says it was left as it is and names `connect status` instead.'));
+  assert.ok(sec.includes('When an earlier `connect <hub-url>` installed the start-at-login service, the line says instead that this run installed and changed no service and the one installed earlier was left as it is, and names `claude-web-chat connect status`: that service already runs the connector, so it never suggests a second one with `connect run`.'));
 });
 
 test('--insecure-loopback admits 127.0.0.1 or localhost only, and no doc names ::1 for it (U726b, F3 a)', () => {
