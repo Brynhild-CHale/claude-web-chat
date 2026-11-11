@@ -595,6 +595,9 @@ test('--pair-only keeps step (1)\'s refusals: an unmanaged install and a missing
 
 test('the usage line names --pair-only', async (t) => {
   assert.match(install.USAGE, /\[--pair-only\]/);
+  // `connect help` prints the table's row: it lists the same flags.
+  assert.equal(cli.ROWS.find((r) => r.name === 'pair').usage, install.USAGE, '`connect help`\'s row is the usage line');
+  assert.match(cli.usageText(), /\[--pair-only\]/);
   const s = sandbox(t);
   assert.equal(await main(['https://hub.example.com', '--bogus'], s.deps), 2);
   assert.match(s.err.join('\n'), /usage: claude-web-chat connect <hub-url> .*\[--pair-only\]/);

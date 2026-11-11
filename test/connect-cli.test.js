@@ -396,6 +396,16 @@ test('`connect status` on a revoked record adds one line from the record alone: 
   // A paired record prints no such line.
   conn.writeRecord(pairedRecord());
   assert.doesNotMatch((await run(t, ['connect', 'status'])).out, /^ {2}revoked: /m);
+  // Nor does a record that was never paired, or one still pairing.
+  for (const credential of [
+    { state: 'unpaired' },
+    { state: 'pending', algorithm: 'ed25519', public_key: 'A'.repeat(43), fingerprint: `SHA256:${'A'.repeat(43)}` },
+  ]) {
+    conn.writeRecord({ ...pairedRecord({ service: false }), credential });
+    const other = await run(t, ['connect', 'status']);
+    assert.match(other.out, new RegExp(`^ {2}credential: ${credential.state}`, 'm'), other.out + other.err);
+    assert.doesNotMatch(other.out, /^ {2}revoked: /m, credential.state);
+  }
 });
 
 test('`connect status` on a revoked plain-http loopback record names --insecure-loopback; no revoked_at says so', async (t) => {
