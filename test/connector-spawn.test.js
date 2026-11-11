@@ -19,7 +19,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { Writable } = require('stream');
 
-const { spawnDaemon, spawnDetached } = require('../lib/util/daemon');
+const daemonUtil = require('../lib/util/daemon');
+const { spawnDaemon, spawnDetached } = daemonUtil;
 const { createSupervisor, STARTED_BY } = require('../lib/connector/supervisor');
 const { START_EVERY_MS, START_WAIT_MS } = require('../lib/relay');
 const { instanceId } = require('../lib/util/registry');
@@ -217,17 +218,24 @@ test('our daemon replaced by another pid (a restart without fd 3) is demoted to 
 
 // ── the supervisor's other paths (no child at all) ─────────────────────────
 
-function fakeRig({ live = null, spawnAnswer = null, answers = true, now = () => 0 } = {}) {
-  const calls = { spawn: [], answersFor: [], minted: [], lines: [] };
+// The world is consistent (U718b): once spawnDaemon has handed back a record,
+// daemonFor answers that record (spawnDaemon verified it through daemonFor),
+// unless the case says what daemonFor answers (`live`).
+function fakeRig({ live = null, spawnAnswer = null, answers = true, now = () => 0, ...extra } = {}) {
+  const calls = { spawn: [], answersFor: [], minted: [], lines: [], spawned: null };
   const sup = createSupervisor({
     recordPath: '/tmp/wc-connector-spawn-record/hub-one.json',
     log: (l) => calls.lines.push(l),
     deps: {
-      daemonFor: async () => (typeof live === 'function' ? live() : live),
+      daemonFor: async () => (typeof live === 'function' ? live() : (live || calls.spawned)),
       spawnDaemon: async (root, opts) => {
         calls.spawn.push({ root, maxMs: opts.maxMs, envKeys: Object.keys(opts.env || {}) });
-        return typeof spawnAnswer === 'function' ? spawnAnswer() : spawnAnswer;
+        const rec = await (typeof spawnAnswer === 'function' ? spawnAnswer() : spawnAnswer);
+        calls.spawned = rec ? { ...rec } : null;
+        if (calls.spawned) delete calls.spawned.child_pid;
+        return rec;
       },
+      ...extra,
       answersFor: async (rec, id, opts) => { calls.answersFor.push({ rec, id, opts }); return answers; },
       randomBytes: (n) => { const b = crypto.randomBytes(n); calls.minted.push(b.toString('hex')); return b; },
       now,
@@ -316,6 +324,138 @@ test('a spawn that throws is failed, and a record with no child_pid is other', a
   const answer = await noChild.sup.ensureRunning({ id: CHAT, root: '/tmp/wc-chat-root' });
   assert.equal(answer.started_by, 'other');
   assert.equal(noChild.sup.relayCredential(CHAT), null);
+});
+
+// ── the survivor (U718b): never a record whose pid is not daemonFor's ──────
+
+test('a supervisor whose recorded pid stepped aside adopts the survivor: other, no credential, nothing spawned again', async () => {
+  const { sup, calls } = fakeRig({
+    spawnAnswer: { pid: 501, port: FAKE_PORT, url: 'x', source: 'portfile', child_pid: 501 },
+    // The first check after the spawn: the root's daemon is another one.
+    live: () => (calls.spawn.length ? { pid: 777, port: FAKE_PORT + 1, url: 'y', source: 'portfile' } : null),
+  });
+  const answer = await sup.ensureRunning({ id: CHAT, root: '/tmp/wc-chat-root' });
+  assert.deepEqual(answer, { state: 'running', port: FAKE_PORT + 1, pid: 777, started_by: 'other' });
+  assert.equal(calls.spawn.length, 1, 'adopted, not spawned again');
+  assert.equal(sup.startedBy(CHAT), 'other');
+  assert.equal(sup.relayCredential(CHAT), null, 'the secret handed to the child that stepped aside is dropped');
+  // Identity confirmed for the spawned record and again for the survivor.
+  assert.deepEqual(calls.answersFor.map((c) => c.rec.pid), [501, 777]);
+  assert.ok(calls.lines.some((l) => /pid 501 stepped aside for pid 777/.test(l)), calls.lines.join('\n'));
+  for (const line of calls.lines) noHex64In(line, 'a supervisor log line');
+});
+
+test('the handed pid gone and no daemon up: the supervisor spawns once more through spawnDaemon, and only once', async () => {
+  let n = 0;
+  const pids = [601, 602];
+  const recs = [];
+  const { sup, calls } = fakeRig({
+    spawnAnswer: () => { const pid = pids[n++]; const r = { pid, port: FAKE_PORT, url: 'x', source: 'portfile', child_pid: pid }; recs.push(r); return r; },
+    // 601 is gone the moment it is handed back; 602 is the root's daemon.
+    live: () => (n >= 2 ? { pid: 602, port: FAKE_PORT, url: 'x', source: 'portfile' } : null),
+    isPidAlive: (pid) => pid === 602,
+  });
+  const answer = await sup.ensureRunning({ id: CHAT, root: '/tmp/wc-chat-root' });
+  assert.equal(calls.spawn.length, 2);
+  assert.deepEqual(answer, { state: 'running', port: FAKE_PORT, pid: 602, started_by: 'connector' });
+  assert.equal(calls.minted.length, 2, 'a fresh secret for the second spawn');
+  assert.ok(sup.relayCredential(CHAT) === calls.minted[1], 'the credential is the second child\'s secret');
+  assert.ok(calls.lines.some((l) => /pid 601 is gone and none is up; spawning again/.test(l)));
+
+  // Never more than once more: a world where nothing stays up is daemon-timeout.
+  let m = 0;
+  const never = fakeRig({
+    spawnAnswer: () => { m++; return { pid: 700 + m, port: FAKE_PORT, url: 'x', source: 'portfile', child_pid: 700 + m }; },
+    live: () => null,
+    isPidAlive: () => false,
+  });
+  assert.deepEqual(await never.sup.ensureRunning({ id: CHAT, root: '/tmp/wc-chat-root' }), { state: 'failed', reason: 'daemon-timeout' });
+  assert.equal(never.calls.spawn.length, 2, 'two attempts in all, never a third');
+  assert.equal(never.sup.relayCredential(CHAT), null);
+});
+
+test('the handed pid alive but not answering for a moment is waited for, and kept: no second spawn', async () => {
+  const waits = [];
+  const { sup, calls } = fakeRig({
+    spawnAnswer: { pid: 801, port: FAKE_PORT, url: 'x', source: 'portfile', child_pid: 801 },
+    live: () => null,
+    isPidAlive: (pid) => pid === 801,
+    waitForDaemon: async (root, opts) => { waits.push(opts.maxMs); return { pid: 801, port: FAKE_PORT, url: 'x', source: 'registry' }; },
+  });
+  const answer = await sup.ensureRunning({ id: CHAT, root: '/tmp/wc-chat-root' });
+  assert.deepEqual(answer, { state: 'running', port: FAKE_PORT, pid: 801, started_by: 'connector' });
+  assert.deepEqual(waits, [START_WAIT_MS]);
+  assert.equal(calls.spawn.length, 1);
+});
+
+// A stub daemon that STAYS UP (until killed or 30 s): it announces itself in
+// `<dir>/up-<pid>` once "booted". The world's daemonFor answers the FIRST
+// child that announced and is still alive, as daemonFor answers the one
+// daemon that bound.
+const LIVE_STUB = `
+const fs = require('fs');
+const dir = process.argv[2];
+setTimeout(() => {
+  fs.writeFileSync(dir + '/up-' + process.pid + '.tmp', '1');
+  fs.renameSync(dir + '/up-' + process.pid + '.tmp', dir + '/up-' + process.pid);
+}, 150);
+setTimeout(() => process.exit(0), 30000);
+`;
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+test('two supervisors and one plain spawnDaemon race one root: one child, one connector with its live pid, the rest adopt it', async (t) => {
+  withTempHome(t); // the spawn lock's user tier
+  const dir = scratch(t);
+  const stub = path.join(dir, 'live-stub.js');
+  fs.writeFileSync(stub, LIVE_STUB);
+  const root = path.join(dir, 'root');
+  fs.mkdirSync(root);
+  const children = [];
+  t.after(() => { for (const c of children) { try { c.kill('SIGKILL'); } catch {} } });
+  const seam = (r, opts = {}) => {
+    const c = spawnDetached({ bin: stub, args: [dir], log: path.join(dir, 'stub.log'), env: opts.env, extraFds: opts.extraFds });
+    children.push(c);
+    return c;
+  };
+  const daemonFor = async () => {
+    const c = children.find((x) => alive(x.pid) && fs.existsSync(path.join(dir, `up-${x.pid}`)));
+    return c ? { pid: c.pid, port: FAKE_PORT, url: 'x', source: 'portfile' } : null;
+  };
+  const mk = () => createSupervisor({
+    recordPath: path.join(dir, 'connector', 'hub-one.json'),
+    deps: {
+      daemonFor,
+      answersFor: async () => true,
+      spawnDaemon: (r, opts) => spawnDaemon(r, { ...opts, spawn: seam, daemonFor }),
+      env: { ...process.env },
+    },
+  });
+  const supA = mk();
+  const supB = mk();
+  const ids = ['01jbzam3n5p7q9r1s3t5v7w9xa', '01jbzam3n5p7q9r1s3t5v7w9xb'];
+  // The supervisors first (each awaits its adopt check), the plain call a tick later.
+  const a = supA.ensureRunning({ id: ids[0], root });
+  const b = supB.ensureRunning({ id: ids[1], root });
+  await new Promise((r) => setImmediate(r));
+  const c = spawnDaemon(root, { maxMs: 8000, spawn: seam, daemonFor });
+  const [ra, rb, rc] = await Promise.all([a, b, c]);
+
+  assert.equal(children.length, 1, `one child started, not ${children.length}`);
+  const pid = children[0].pid;
+  assert.equal(ra.state, 'running');
+  assert.equal(rb.state, 'running');
+  assert.deepEqual([ra.pid, rb.pid, rc && rc.pid], [pid, pid, pid], 'every caller handed the one child');
+  const by = [supA.startedBy(ids[0]), supB.startedBy(ids[1])].sort();
+  assert.deepEqual(by, ['connector', 'other'], 'one supervisor spawned it; the other adopted');
+  const owner = supA.startedBy(ids[0]) === 'connector' ? [supA, ids[0], supB, ids[1]] : [supB, ids[1], supA, ids[0]];
+  assert.ok(owner[0].relayCredential(owner[1]) != null, 'the spawner holds the credential');
+  assert.equal(owner[2].relayCredential(owner[3]), null, 'the adopter holds none');
+  assert.ok(!('child_pid' in rc), 'the plain call adopted: no child_pid');
+  assert.ok(alive(pid), 'the handed pid is alive');
+  assert.equal(fs.existsSync(daemonUtil.spawnLockFor(root)), false, 'the spawn lock is released');
 });
 
 test('createSupervisor: the record path is absolute, from recordPath or the hub id; install puts one supervisor on the context', (t) => {
@@ -490,4 +630,132 @@ test('supervisor.js takes START_* from lib/relay and never requires lib/portal, 
   const daemonSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'util', 'daemon.js'), 'utf8');
   assert.equal((daemonSrc.match(/openSync\(/g) || []).length, 1, 'one append-mode open, as before');
   assert.ok(!/WEB_CHAT_PORT\b/.test(daemonSrc));
+});
+
+// ── one real race: five first spawns of `claude-web-chat start` ────────────
+//
+// The gate's race (6A, GT-23) in the suite's terms: two plain spawnDaemon
+// calls, lib/client's auto-spawn and two supervisors, all at once, for one
+// fresh root, each spawn a real detached `start` (spawnDaemonProcess, counted
+// at spawnDaemon's seam) on the walk seam WEB_CHAT_FIRST_PORT in the test band
+// 6420–6439 (never 5170, 5171 or 5173–5272; the band is probed by binding),
+// in a sandbox HOME, with the capture hub's port held by a stand-in that
+// answers as a current hub (so a daemon's ensureHub starts nothing). Sampled
+// at 0, 2 and 7 s (past the instance guard's 5 s check): exactly one live
+// daemon for the root on the band, and the pid every caller was handed alive
+// and still daemonFor's.
+
+const net = require('net');
+const http = require('http');
+const client = require('../lib/client');
+const registry = require('../lib/util/registry');
+const { LISTEN_HOST } = require('../lib/core/cors');
+const { PROTOCOL_VERSION } = require('../lib/core/versions');
+
+const BAND = [6420, 6439];
+const reserved = (p) => p === 5170 || p === 5171 || (p >= 5173 && p <= 5272);
+
+function bindable(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.listen(port, LISTEN_HOST, () => s.close(() => resolve(true)));
+  });
+}
+
+async function standInHub(t) {
+  const srv = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true, role: 'hub', version: PROTOCOL_VERSION, pid: process.pid }));
+  });
+  await new Promise((r) => srv.listen(0, LISTEN_HOST, r));
+  t.after(() => new Promise((r) => { srv.closeAllConnections?.(); srv.close(() => r()); }));
+  const port = srv.address().port;
+  assert.ok(!reserved(port));
+  return port;
+}
+
+async function bandLive(root) {
+  const inst = registry.instanceId(root);
+  const found = [];
+  for (let p = BAND[0]; p <= BAND[1]; p++) {
+    let r = null;
+    try { r = await client.request(p, 'GET', '/api/health', null, { timeout: 1500 }); } catch { r = null; }
+    let b = r && r.status === 200 ? r.body : null;
+    if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
+    if (b && b.instance === inst && Number.isInteger(b.pid)) found.push({ port: p, pid: b.pid });
+  }
+  return found;
+}
+
+test('five real concurrent first spawns for one root leave one live daemon at 0, 2 and 7 s, and every caller holds its live pid', { timeout: 60000 }, async (t) => {
+  withTempHome(t);
+  let first = null;
+  for (let p = BAND[0]; p <= BAND[1] - 5 && first == null; p++) {
+    let all = true;
+    for (let i = 0; i < 5; i++) if (!(await bindable(p + i))) { all = false; break; }
+    if (all) first = p;
+  }
+  if (first == null) { t.skip('no run of free ports in the test band'); return; }
+  const hubPort = await standInHub(t);
+
+  const saved = {};
+  for (const k of ['WEB_CHAT_FIRST_PORT', 'WEB_CHAT_HUB_PORT', 'WEB_CHAT_PORT', 'WEB_CHAT_SUPERVISED']) saved[k] = process.env[k];
+  process.env.WEB_CHAT_FIRST_PORT = String(first);
+  process.env.WEB_CHAT_HUB_PORT = String(hubPort);
+  delete process.env.WEB_CHAT_PORT;
+  delete process.env.WEB_CHAT_SUPERVISED;
+  const original = daemonUtil.spawnDaemon;
+  const children = [];
+  const counted = (r, opts = {}) => original(r, {
+    ...opts,
+    spawn: (root2, o) => { const c = daemonUtil.spawnDaemonProcess(root2, o); children.push(c.pid); return c; },
+  });
+  // lib/client reads daemon.spawnDaemon at call time: its auto-spawn is counted too.
+  daemonUtil.spawnDaemon = counted;
+  t.after(async () => {
+    daemonUtil.spawnDaemon = original;
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    for (const pid of children) { try { process.kill(pid, 'SIGTERM'); } catch {} }
+    await waitUntil(() => children.every((pid) => !alive(pid)), { timeout: 10000, what: 'the spawned daemons to stop' }).catch(() => {
+      for (const pid of children) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    });
+  });
+
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-race-')));
+  fs.mkdirSync(path.join(root, '.web-chat'));
+  t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+
+  const mk = () => createSupervisor({ recordPath: path.join(root, '..', `wc-race-rec-${process.pid}.json`), deps: { spawnDaemon: counted, env: { ...process.env } } });
+  const supA = mk();
+  const supB = mk();
+  const rs = await Promise.allSettled([
+    daemonUtil.spawnDaemon(root),
+    daemonUtil.spawnDaemon(root),
+    client.get('/api/health', { root, spawn: true }).then((h) => ({ pid: h && h.pid })),
+    supA.ensureRunning({ id: '01jbzam3n5p7q9r1s3t5v7w9xc', root }),
+    supB.ensureRunning({ id: '01jbzam3n5p7q9r1s3t5v7w9xd', root }),
+  ]);
+  const why = JSON.stringify(rs.map((r) => (r.status === 'fulfilled' ? { pid: r.value && r.value.pid, port: r.value && r.value.port, by: r.value && r.value.started_by } : String(r.reason && r.reason.message))));
+  assert.ok(rs.every((r) => r.status === 'fulfilled' && r.value && Number.isInteger(r.value.pid)), why);
+  const handed = new Set(rs.map((r) => r.value.pid));
+  assert.equal(handed.size, 1, `one pid handed to every caller: ${why}`);
+  const [pid] = [...handed];
+  assert.equal(children.length, 1, `one child started, not ${children.length}`);
+  assert.equal(pid, children[0], 'the handed pid is the one child');
+  for (const r of rs.slice(0, 2).concat(rs.slice(3))) {
+    if (r.value.port != null) assert.ok(r.value.port >= BAND[0] && r.value.port <= BAND[1] && !reserved(r.value.port), `port ${r.value.port} in the band`);
+  }
+  assert.deepEqual([supA.startedBy('01jbzam3n5p7q9r1s3t5v7w9xc'), supB.startedBy('01jbzam3n5p7q9r1s3t5v7w9xd')].filter((x) => x === 'connector').length <= 1, true);
+
+  let last = 0;
+  for (const at of [0, 2000, 7000]) {
+    if (at > last) await new Promise((r) => setTimeout(r, at - last));
+    last = at;
+    const live = await bandLive(root);
+    assert.deepEqual(live.map((x) => x.pid), [pid], `at ${at} ms: one live daemon for the root on the band (${JSON.stringify(live)})`);
+    assert.ok(alive(pid), `at ${at} ms: the handed pid is alive`);
+    const d = await registry.daemonFor(root);
+    assert.equal(d && d.pid, pid, `at ${at} ms: the handed pid is still the root's daemon`);
+  }
 });
