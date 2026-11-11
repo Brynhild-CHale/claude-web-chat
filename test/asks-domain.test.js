@@ -1028,3 +1028,20 @@ test('the chrome\'s normalizers (public/app/chat-state.js) read every frame and 
     for (const row of r.asks.list({ level })) assert.ok(state.normalizeAsk(row, { level }), `a ${level} row`);
   }
 });
+
+// ── tool_kind is the tool's class, never its name (U729b; form 4 F1) ────────
+
+test("an ask's tool_kind is the tool's class: a tool the table does not know is 'Tool', never its own name; a table tool and an MCP tool keep their class", async (t) => {
+  const r = rig(t);
+  const unknown = await r.asks.create(body({ name: 'LSP', input: { operation: 'hover' }, session: 'sess-u' }));
+  const known = await r.asks.create(body({ name: 'Edit', input: { file_path: '/p/a.js', old_string: 'a', new_string: 'b' }, session: 'sess-k' }));
+  const mcp = await r.asks.create(body({ name: 'mcp__github__create_issue', input: { title: 't' }, session: 'sess-m' }));
+  const kinds = (rows) => Object.fromEntries(rows.map((x) => [x.id, x.tool_kind]));
+  const want = { [unknown.id]: 'Tool', [known.id]: 'Edit', [mcp.id]: 'MCP' };
+  assert.deepEqual(kinds(r.asks.list({ level: 'local' })), want);
+  assert.deepEqual(kinds(r.asks.list({ level: 'basic' })), want, 'the basic view shows the class');
+  for (const f of r.askFrames()) assert.equal(f.ask.tool_kind, want[f.ask.id], 'and so does every frame');
+  const wire = JSON.stringify([r.asks.list({ level: 'basic' }), r.askFrames().map((f) => f.ask.tool_kind)]);
+  assert.ok(!wire.includes('LSP'), "an unknown tool's name never rides tool_kind");
+  assert.equal(r.asks.publicView(unknown.id).tool_name, 'LSP', 'tool_name (read and above) keeps the name');
+});
