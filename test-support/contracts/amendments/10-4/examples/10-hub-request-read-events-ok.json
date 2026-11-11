@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "type": "ReadEvents",
+  "request_id": "rq_01JC4MGK0M",
+  "result": {
+    "mode": "query",
+    "events": [
+      {
+        "id": "evt-synthetic-0002",
+        "at": "2026-11-08T19:41:09Z",
+        "source": "signal",
+        "kind": "message",
+        "subject": "signal://group/trip-planning-synthetic",
+        "persons": [
+          "person-synthetic-b"
+        ],
+        "text": "Synthetic: the flight to Lisbon moved to 09:40, gate unknown"
+      },
+      {
+        "id": "evt-synthetic-0001",
+        "at": "2026-11-08T18:02:55Z",
+        "source": "signal",
+        "kind": "message",
+        "subject": "signal://group/trip-planning-synthetic",
+        "persons": [
+          "person-synthetic-a"
+        ],
+        "text": "Synthetic: who is bringing the travel adapter"
+      }
+    ],
+    "count": null,
+    "next_cursor": "c2lnbmFsLXN5bnRoZXRpYy0wMDAx",
+    "unavailable": false
+  }
+}

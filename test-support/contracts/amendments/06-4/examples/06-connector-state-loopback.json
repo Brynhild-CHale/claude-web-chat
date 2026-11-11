@@ -1,0 +1,31 @@
+{
+  "v": 1,
+  "hub": {
+    "id": "local-hub",
+    "origin": "http://127.0.0.1:8477"
+  },
+  "machine": {
+    "id": "mch_2ctjg92nmq8rrxr6hvfkvgkn0t",
+    "name": "hub-machine"
+  },
+  "credential": {
+    "state": "paired",
+    "algorithm": "ed25519",
+    "key_file": "/home/connector/.web-chat/connector/local-hub.key",
+    "key_id": "mky_v6men077h4s9p7hvxfv5etvn01",
+    "public_key": "u3m0Z1n8bS6kQx4yVt2Lr9pWc5hJd7aGf0eNi3oKsYw",
+    "fingerprint": "SHA256:2ajqgOeJMpseO+v2V2t1AFIewl46CYiSZ6HzUasBleQ",
+    "paired_at": 1794384000000
+  },
+  "workdir": "/home/connector/web-chat-hub/local-hub",
+  "ceiling": "full",
+  "settings": {
+    "agents_at_once": 0,
+    "accept_new_chats": false,
+    "let_home_start_agents": false,
+    "paused": false,
+    "rev": 0
+  },
+  "folders": [],
+  "chats": []
+}

@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "type": "PullEventStream",
+  "request_id": "rq_01JC8S6J3K",
+  "result": {
+    "grant_id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m",
+    "events": [
+      {
+        "id": "evt-synthetic-0141",
+        "at": "2026-12-29T08:14:22Z",
+        "source": "signal",
+        "kind": "message",
+        "subject": "signal://group/trip-planning-synthetic",
+        "persons": [
+          "person-synthetic-a"
+        ],
+        "text": "Synthetic: the hotel near the river is fine for the second week of December"
+      },
+      {
+        "id": "evt-synthetic-0142",
+        "at": "2026-12-29T08:16:50Z",
+        "source": "signal",
+        "kind": "message",
+        "subject": "signal://group/trip-planning-synthetic",
+        "persons": [
+          "person-synthetic-b"
+        ],
+        "text": "Synthetic: keep the flight to Lisbon under the budget we said"
+      }
+    ],
+    "next": "c2lnbmFsLXN5bnRoZXRpYy0wMTQy",
+    "more": false
+  }
+}

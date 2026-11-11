@@ -1,7 +1,7 @@
 {
-  "commit": "cad3e8e72a0cf9462bc655ad86f0b8186b11bd29",
-  "tag": "contracts-v1.4",
-  "lock_md_sha256": "f93182ab024999d2ae316426d9c1e0c7163bb5e2dfbd7271ede386a9a56fdcfc",
+  "commit": "2c881a5ff02cba135c8c52445a043aaebf8fae0a",
+  "tag": "contracts-v1.6.1",
+  "lock_md_sha256": "ee063a8e9dc15f0657e358f862d8abf2ee1be28c1e2ffc75efe1c741fc0776e4",
   "unlocked_present": [
     {
       "path": "examples/08-answer-message-done.json",

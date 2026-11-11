@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "type": "RunCheckIn",
+  "request_id": "rq_01JC4MCF6G",
+  "result": {
+    "dry_run": true,
+    "forecast": {
+      "next_fires": [
+        "2026-11-08T16:35:41-05:00",
+        "2026-11-08T16:50:41-05:00",
+        "2026-11-08T17:05:41-05:00",
+        "2026-11-08T17:20:41-05:00",
+        "2026-11-08T17:35:41-05:00"
+      ],
+      "match_count": 3,
+      "unavailable": false,
+      "instruction_resolved": "## Check-in cki_01jc4m7t9w2q8r5v3x6z0b1n4q: Trip group, new messages (synthetic)\nSummarise what is new in the synthetic trip-planning group about the flight to Lisbon, on my Home page\nEvents matched in the last 15 minutes: 3 (condition count gt 0: passed)"
+    }
+  }
+}

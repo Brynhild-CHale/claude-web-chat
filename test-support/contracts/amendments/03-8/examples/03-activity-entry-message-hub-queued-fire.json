@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_8m2q4s6v8x0z2b4d6f8h0k2n4q",
+  "at": "2026-11-09T14:00:01.207Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "scheduler"
+  },
+  "machine": "mch_01jc4h0v9m1q3s5w7y9a1c3e5g",
+  "chat": "cht_01jc4h0m3c4a7t9b2d5f8g1k3n",
+  "kind": "message.send",
+  "target": {
+    "type": "message",
+    "id": "hm_01JC4N2Q8R5V3X6Z0B1N4P7T9W"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Check-in fire queued for home on hub-vm: 2 sections, 1180 chars",
+    "source": "template",
+    "template": "queue.queued-fire",
+    "chars": 63,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

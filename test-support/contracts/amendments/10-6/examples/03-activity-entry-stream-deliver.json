@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_7c5zmr2k9w4q8t1v6x3b0n5h3b",
+  "at": "2026-12-28T10:25:03.118Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "scheduler"
+  },
+  "machine": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+  "chat": "cht_01jc7d3e5f7g9h1j3k5m7n9p1q",
+  "kind": "stream.deliver",
+  "target": {
+    "type": "stream",
+    "id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Event stream batch 2 queued in hm_01JC8T2V4X6Z8B0D2F4H6K8M0P: 2 events",
+    "source": "template",
+    "template": "stream.deliver-batch",
+    "chars": 70,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

@@ -1,0 +1,1372 @@
+{
+  "table_version": 2,
+  "derived_from": {
+    "web_chat": "0.9.0-alpha.6.1",
+    "portal_protocol": 12,
+    "source": "web-chat-dev.worktrees/ae-int at 671527a3: lib/core/remote-policy.js RULES and ANSWER_RULES, lib/core/element-policy.js FLOOR_RULES, lib/server/ws.js connection handler"
+  },
+  "grammar": "remote-policy",
+  "session": [
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/",
+      "level": "read",
+      "from_rule": "GET /"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/index.html",
+      "level": "read",
+      "from_rule": "GET /index.html"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/app.css",
+      "level": "read",
+      "from_rule": "GET /app.css"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/page.css",
+      "level": "read",
+      "from_rule": "GET /page.css"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/mount-runtime.js",
+      "level": "read",
+      "from_rule": "GET /mount-runtime.js"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/app/*",
+      "level": "read",
+      "from_rule": "GET /app/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/fonts/*",
+      "level": "read",
+      "from_rule": "GET /fonts/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/brand/*",
+      "level": "read",
+      "from_rule": "GET /brand/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/favicon.png",
+      "level": "read",
+      "from_rule": "GET /favicon.png"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/favicon-dark.png",
+      "level": "read",
+      "from_rule": "GET /favicon-dark.png"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/apple-touch-icon.png",
+      "level": "read",
+      "from_rule": "GET /apple-touch-icon.png"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/ws",
+      "level": "read",
+      "from_rule": "GET /ws",
+      "note": "the upgrade; what the socket may send is ws_inbound, what it receives is the daemon's projection at the stamped level. Not status: SURFACE_FRAMES reach every level whole"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/graph",
+      "level": "read",
+      "from_rule": "GET /api/graph"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/graph/node/:id",
+      "level": "read",
+      "from_rule": "GET /api/graph/node/:id"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/graph/changes",
+      "level": "read",
+      "from_rule": "GET /api/graph/changes"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/graph/diff",
+      "level": "read",
+      "from_rule": "GET /api/graph/diff"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/preview/node/:id",
+      "level": "read",
+      "from_rule": "GET /preview/node/:id"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/preview/pane/:node/:mount",
+      "level": "read",
+      "from_rule": "GET /preview/pane/:node/:mount"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/graph/active",
+      "level": "write_page",
+      "from_rule": "POST /api/graph/active"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/graph/bookmark",
+      "level": "write_page",
+      "from_rule": "POST /api/graph/bookmark"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/graph/new",
+      "level": "write_page",
+      "from_rule": "POST /api/graph/new",
+      "requires": [
+        "destructive"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/graph/wipe",
+      "level": "write_page",
+      "from_rule": "POST /api/graph/wipe",
+      "requires": [
+        "destructive"
+      ]
+    },
+    {
+      "methods": "*",
+      "path": "/api/turn-begin",
+      "level": "host_only",
+      "from_rule": "* /api/turn-begin"
+    },
+    {
+      "methods": "*",
+      "path": "/api/turn-end",
+      "level": "host_only",
+      "from_rule": "* /api/turn-end"
+    },
+    {
+      "methods": "*",
+      "path": "/api/commit",
+      "level": "host_only",
+      "from_rule": "* /api/commit"
+    },
+    {
+      "methods": "*",
+      "path": "/api/unlock",
+      "level": "host_only",
+      "from_rule": "* /api/unlock"
+    },
+    {
+      "methods": "*",
+      "path": "/api/wait",
+      "level": "host_only",
+      "from_rule": "* /api/wait"
+    },
+    {
+      "methods": "*",
+      "path": "/api/render",
+      "level": "host_only",
+      "from_rule": "* /api/render"
+    },
+    {
+      "methods": "*",
+      "path": "/api/markdown",
+      "level": "host_only",
+      "from_rule": "* /api/markdown"
+    },
+    {
+      "methods": "*",
+      "path": "/api/channel/*",
+      "level": "host_only",
+      "from_rule": "* /api/channel/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/events/*",
+      "level": "host_only",
+      "from_rule": "* /api/events/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/forms/*",
+      "level": "host_only",
+      "from_rule": "* /api/forms/*",
+      "note": "the form-shift counter, the maintainer's read; requireHost"
+    },
+    {
+      "methods": "*",
+      "path": "/api/hooks/*",
+      "level": "host_only",
+      "from_rule": "* /api/hooks/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/writers/*",
+      "level": "host_only",
+      "from_rule": "* /api/writers/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/marks",
+      "level": "host_only",
+      "from_rule": "* /api/marks"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/store",
+      "level": "read",
+      "from_rule": "GET|POST /api/store"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/store",
+      "level": "write_page",
+      "from_rule": "GET|POST /api/store",
+      "note": "a store key may be a service's control key (file-editor editor_ctl), so this reaches host code: C-04.16"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mounts",
+      "level": "read",
+      "from_rule": "GET /api/mounts"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mounts/:id/history",
+      "level": "read",
+      "from_rule": "GET /api/mounts/:id/history"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/mounts/:id/restore",
+      "level": "write_page",
+      "from_rule": "POST /api/mounts/:id/restore",
+      "note": "a pane version put back; not a file restore"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/clear",
+      "level": "write_page",
+      "from_rule": "POST /api/clear",
+      "note": "body-level: a clear with no id is refused by the route under X-WC-Remote (lib/server/routes/render.js)"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/page/reset-layout",
+      "level": "write_page",
+      "from_rule": "POST /api/page/reset-layout"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/page/run",
+      "level": "write_page",
+      "from_rule": "POST /api/page/run"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/page/move",
+      "level": "write_page",
+      "from_rule": "POST /api/page/move"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/pane/spawn",
+      "level": "write_page",
+      "from_rule": "POST /api/pane/spawn",
+      "note": "body-level: an html spawn is refused by the route under X-WC-Remote (lib/server/routes/spawn.js)"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/pane/close",
+      "level": "write_page",
+      "from_rule": "POST /api/pane/close"
+    },
+    {
+      "methods": "*",
+      "path": "/api/comments/*",
+      "level": "retired",
+      "from_rule": "* /api/comments/*",
+      "note": "the daemon answers 410 since U327a; comments are the element API's"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/elements/search",
+      "level": "read",
+      "from_rule": "GET /api/elements/search",
+      "daemon_mirror": "read"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/elements/anchor-stats",
+      "level": "host_only",
+      "from_rule": "GET /api/elements/*",
+      "note": "event-anchor counts, counts only; requireHost"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/elements/*",
+      "level": "read",
+      "from_rule": "GET /api/elements/*",
+      "daemon_mirror": "read"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/elements/:id/picture",
+      "level": "host_only",
+      "from_rule": "POST|PATCH|DELETE /api/elements/*",
+      "note": "Claude's tools write an ink picture; requireHost"
+    },
+    {
+      "methods": [
+        "POST",
+        "PATCH",
+        "DELETE"
+      ],
+      "path": "/api/elements/*",
+      "level": "write_page",
+      "from_rule": "POST|PATCH|DELETE /api/elements/*",
+      "daemon_mirror": "full",
+      "note": "comments, highlights, box grabs and chat pins (chat-comment), so commenting on the conversation is Write page in v1; POST /api/elements/:id/send (Push-like) stays here on purpose; a type's own tighter gate is the daemon's (element-policy typeGates)"
+    },
+    {
+      "methods": "*",
+      "path": "/api/elements/*",
+      "level": "host_only",
+      "from_rule": "* /api/elements/*"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/queue/message",
+      "level": "message",
+      "from_rule": "POST /api/queue/message",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/queue/task-stop",
+      "level": "message",
+      "from_rule": "POST /api/queue/task-stop",
+      "daemon_mirror": "full",
+      "note": "a stop request reaches Claude as a composer line, so it is a message"
+    },
+    {
+      "methods": "*",
+      "path": "/api/queue/items/:id/resend",
+      "level": "host_only",
+      "from_rule": "* /api/queue/items/:id/resend"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/queue",
+      "level": "read",
+      "from_rule": "* /api/queue/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/queue/policy",
+      "level": "read",
+      "from_rule": "* /api/queue/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/queue/pending",
+      "level": "read",
+      "from_rule": "* /api/queue/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/queue/*",
+      "level": "host_only",
+      "from_rule": "* /api/queue/*",
+      "note": "a GET no row above names is refused until classified"
+    },
+    {
+      "methods": "*",
+      "path": "/api/queue/*",
+      "level": "message",
+      "from_rule": "* /api/queue/*",
+      "note": "Push, repush, pending consume and recall, PATCH and DELETE of items; the route checks full itself where a message is sent or edited (lib/server/routes/queue.js isFull)"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mirror/access",
+      "level": "status",
+      "from_rule": "GET /api/mirror/access",
+      "daemon_mirror": "basic"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mirror/status",
+      "level": "status",
+      "from_rule": "GET /api/mirror/status",
+      "daemon_mirror": "basic"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mirror",
+      "level": "status",
+      "from_rule": "GET /api/mirror",
+      "daemon_mirror": "basic",
+      "note": "route-level: below read the body is status rows only"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/mirror/*",
+      "level": "read",
+      "from_rule": "GET /api/mirror/*",
+      "daemon_mirror": "read"
+    },
+    {
+      "methods": "*",
+      "path": "/api/mirror/*",
+      "level": "host_only",
+      "from_rule": "* /api/mirror/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/asks",
+      "level": "status",
+      "from_rule": "GET /api/asks",
+      "daemon_mirror": "basic",
+      "note": "route-level: below read, the typed projection"
+    },
+    {
+      "methods": "*",
+      "path": "/api/asks/*",
+      "level": "host_only",
+      "from_rule": "* /api/asks/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/files",
+      "level": "message",
+      "from_rule": "GET /api/files",
+      "daemon_mirror": "full",
+      "note": "the composer's @ files: names and sizes, never content (Q-04.12)"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/skills",
+      "level": "message",
+      "from_rule": "GET /api/skills",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/code/preview",
+      "level": "files",
+      "from_rule": "GET /api/code/preview",
+      "daemon_mirror": "read",
+      "note": "the restore preview: paths and counts, never content; its one consumer is Restore (Files), and each call runs git on the host. The daemon admits read today (Q-04.4)"
+    },
+    {
+      "methods": "*",
+      "path": "/api/code/*",
+      "level": "host_only",
+      "from_rule": "* /api/code/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/control/*",
+      "level": "host_only",
+      "from_rule": "* /api/control/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/bridge/*",
+      "level": "host_only",
+      "from_rule": "* /api/bridge/*"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/attachments",
+      "level": "message",
+      "from_rule": "POST /api/attachments",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/project",
+      "level": "read",
+      "from_rule": "GET /api/project"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/project/*",
+      "level": "read",
+      "from_rule": "GET /project/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/project/*",
+      "level": "host_only",
+      "from_rule": "* /api/project/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/theme",
+      "level": "read",
+      "from_rule": "GET /api/theme"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/theme/apply",
+      "level": "write_page",
+      "from_rule": "POST /api/theme/apply"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/themes",
+      "level": "read",
+      "from_rule": "GET /api/themes"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/themes",
+      "level": "host_only",
+      "from_rule": "POST /api/themes"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/theme",
+      "level": "host_only",
+      "from_rule": "POST /api/theme"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/toolbar",
+      "level": "read",
+      "from_rule": "GET /api/toolbar"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/toolbar/icon/:type",
+      "level": "read",
+      "from_rule": "GET /api/toolbar/icon/:type"
+    },
+    {
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/api/toolbar",
+      "level": "write_page",
+      "from_rule": "PATCH /api/toolbar",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": "*",
+      "path": "/api/toolbar/*",
+      "level": "host_only",
+      "from_rule": "* /api/toolbar/*"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/components/:name/use",
+      "level": "write_page",
+      "from_rule": "POST /api/components/:name/use"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/components/*",
+      "level": "read",
+      "from_rule": "GET /api/components/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/components/*",
+      "level": "host_only",
+      "from_rule": "* /api/components/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/services/pending",
+      "level": "read",
+      "from_rule": "GET /api/services/pending"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/services/pack/:name",
+      "level": "read",
+      "from_rule": "GET /api/services/pack/:name"
+    },
+    {
+      "methods": "*",
+      "path": "/api/services/*",
+      "level": "host_only",
+      "from_rule": "* /api/services/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/packs",
+      "level": "read",
+      "from_rule": "GET /api/packs"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/packs/audit",
+      "level": "read",
+      "from_rule": "GET /api/packs/audit"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/packs/quarantine/:name/review",
+      "level": "read",
+      "from_rule": "GET /api/packs/quarantine/:name/review"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/packs/quarantine/:name/logo",
+      "level": "read",
+      "from_rule": "GET /api/packs/quarantine/:name/logo"
+    },
+    {
+      "methods": "*",
+      "path": "/api/packs/*",
+      "level": "host_only",
+      "from_rule": "* /api/packs/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/brand",
+      "level": "read",
+      "from_rule": "GET /api/brand"
+    },
+    {
+      "methods": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "path": "/api/brand/*",
+      "level": "host_only",
+      "from_rule": "POST|PUT|PATCH|DELETE /api/brand/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/replay/render",
+      "level": "host_only",
+      "from_rule": "* /api/replay/render"
+    },
+    {
+      "methods": "*",
+      "path": "/api/replay/open",
+      "level": "host_only",
+      "from_rule": "* /api/replay/open"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/replay",
+      "level": "read",
+      "from_rule": "GET /replay"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/replay/*",
+      "level": "read",
+      "from_rule": "GET /api/replay/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/version",
+      "level": "status",
+      "from_rule": "GET /api/version"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/health",
+      "level": "status",
+      "from_rule": "GET /api/health",
+      "note": "the connector adds X-WC-Answer-Origin to this response when the decision names an answer origin (C-04.9)"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/embed-check",
+      "level": "read",
+      "from_rule": "GET /api/embed-check"
+    },
+    {
+      "methods": "*",
+      "path": "/api/machine/*",
+      "level": "host_only",
+      "from_rule": "* /api/machine/*"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/export/:ref",
+      "level": "read",
+      "from_rule": "GET /api/export/:ref",
+      "refuse_query": {
+        "key": "format",
+        "value": "file"
+      }
+    },
+    {
+      "methods": "*",
+      "path": "/api/shutdown",
+      "level": "host_only",
+      "from_rule": "* /api/shutdown"
+    },
+    {
+      "methods": "*",
+      "path": "/tunnel/*",
+      "level": "host_only",
+      "from_rule": "* /tunnel/*"
+    },
+    {
+      "methods": "*",
+      "path": "/setup/*",
+      "level": "host_only",
+      "from_rule": "* /setup/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/profiles/reload",
+      "level": "host_only",
+      "from_rule": "* /api/profiles/reload"
+    },
+    {
+      "methods": "*",
+      "path": "/api/profiles/*",
+      "level": "host_only",
+      "from_rule": "* /api/profiles/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/capture/*",
+      "level": "host_only",
+      "from_rule": "* /api/capture/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/captures/*",
+      "level": "host_only",
+      "from_rule": "* /api/captures/*"
+    },
+    {
+      "methods": "*",
+      "path": "/api/profile-match",
+      "level": "host_only",
+      "from_rule": "* /api/profile-match"
+    },
+    {
+      "methods": "*",
+      "path": "/extensions/*",
+      "level": "host_only",
+      "from_rule": "* /extensions/*"
+    },
+    {
+      "methods": "*",
+      "path": "/embed-helper/*",
+      "level": "host_only",
+      "from_rule": "* /embed-helper/*"
+    }
+  ],
+  "answer": [
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/ask/:id",
+      "level": "message",
+      "from_rule": "GET /answer/ask/:id",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/api/asks/:id",
+      "level": "message",
+      "from_rule": "GET /answer/api/asks/:id",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/asks/:id/decide",
+      "level": "message",
+      "from_rule": "POST /answer/api/asks/:id/decide",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/interrupt",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/interrupt",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/task-stop",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/task-stop",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": "*",
+      "path": "/answer/control/resume",
+      "level": "host_only",
+      "from_rule": "GET /answer/control/:action",
+      "note": "the mod's fork here and switch the terminal (lib/server/control/mod.js forkTurn, then a resume command): another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/api/control/resume",
+      "level": "host_only",
+      "from_rule": "POST /answer/api/control/:action",
+      "note": "the mod's fork here and switch the terminal (lib/server/control/mod.js forkTurn, then a resume command): another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/session-compact",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/session-compact",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/session-plan",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/session-plan",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/session-rename",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/session-rename",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/session-clear",
+      "level": "message",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/session-clear",
+      "level": "message",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ]
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/restore",
+      "level": "files",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/restore",
+      "level": "files",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control/undo",
+      "level": "files",
+      "from_rule": "GET /answer/control/:action",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/control/undo",
+      "level": "files",
+      "from_rule": "POST /answer/api/control/:action",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/control/fork",
+      "level": "host_only",
+      "from_rule": "GET /answer/control/:action",
+      "note": "would start or switch to another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/api/control/fork",
+      "level": "host_only",
+      "from_rule": "POST /answer/api/control/:action",
+      "note": "would start or switch to another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/control/session-resume",
+      "level": "host_only",
+      "from_rule": "GET /answer/control/:action",
+      "note": "would start or switch to another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/api/control/session-resume",
+      "level": "host_only",
+      "from_rule": "POST /answer/api/control/:action",
+      "note": "would start or switch to another Claude session in a chat that is one agent (Q-04.5)"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/control/pack-approve",
+      "level": "host_only",
+      "from_rule": "GET /answer/control/:action",
+      "note": "approvals are contract 09's"
+    },
+    {
+      "methods": "*",
+      "path": "/answer/api/control/pack-approve",
+      "level": "host_only",
+      "from_rule": "POST /answer/api/control/:action",
+      "note": "approvals are contract 09's"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/api/control/state",
+      "level": "message",
+      "from_rule": "GET /answer/api/control/state",
+      "daemon_mirror": "full",
+      "requires": [
+        "steer"
+      ],
+      "note": "the long-polled state view of the action its query names"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/fonts/:file",
+      "level": "message",
+      "from_rule": "GET /answer/fonts/:file",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/answer.js",
+      "level": "message",
+      "from_rule": "GET /answer/answer.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/answer.css",
+      "level": "message",
+      "from_rule": "GET /answer/answer.css",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/answer-gate.js",
+      "level": "message",
+      "from_rule": "GET /answer/answer-gate.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/answer-view.js",
+      "level": "message",
+      "from_rule": "GET /answer/answer-view.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control-stop.js",
+      "level": "message",
+      "from_rule": "GET /answer/control-stop.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/control-confirm.js",
+      "level": "message",
+      "from_rule": "GET /answer/control-confirm.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/elicitation-form.js",
+      "level": "message",
+      "from_rule": "GET /answer/elicitation-form.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/elements-report.js",
+      "level": "message",
+      "from_rule": "GET /answer/elements-report.js",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/palette.css",
+      "level": "message",
+      "from_rule": "GET /answer/palette.css",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/fonts.css",
+      "level": "message",
+      "from_rule": "GET /answer/fonts.css",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/answer/api/elements/report",
+      "level": "write_page",
+      "from_rule": "POST /answer/api/elements/report",
+      "daemon_mirror": "full"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/answer/elements/:layout",
+      "level": "write_page",
+      "from_rule": "GET /answer/elements/:layout",
+      "daemon_mirror": "full"
+    }
+  ],
+  "ws_inbound": [
+    {
+      "type": "client",
+      "level": "read",
+      "note": "the chrome's posture and device; a Read socket needs it to receive stream frames"
+    },
+    {
+      "type": "store:set",
+      "level": "write_page",
+      "note": "a browser store write; may reach a service's control key (C-04.16); the daemon also drops it from a stamped read socket (C-04.18a)"
+    },
+    {
+      "type": "event",
+      "level": "write_page",
+      "note": "a pane DOM event: an activity origin that rides the next Push; the daemon also drops it from a stamped read socket (C-04.18a)"
+    },
+    {
+      "type": "pane:form",
+      "level": "write_page",
+      "note": "a pane's form_state, shared by every viewer and kept in nodes; the daemon also drops it from a stamped read socket (C-04.18a)"
+    },
+    {
+      "type": "pane:state",
+      "level": "write_page",
+      "note": "move, resize, pin, lock, minimise; the daemon also drops it from a stamped read socket (C-04.18a)"
+    },
+    {
+      "type": "script:error",
+      "level": "write_page",
+      "note": "a ring entry Claude's get_events reads; the daemon also drops it from a stamped read socket (C-04.18a)"
+    },
+    {
+      "type": "report",
+      "level": "host_only",
+      "note": "the daemon refuses a remote socket's report whole already (lib/server/domain/reports)"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "cki_01jc4m7t9w2q8r5v3x6z0b1n4r",
+  "label": "Weekly self-review (synthetic)",
+  "trigger": {
+    "kind": "cron",
+    "expr": "0 18 * * 0",
+    "zone": "America/New_York"
+  },
+  "instruction": "Review the synthetic check-ins of the past week and propose at most one change on Needs you",
+  "destination": {
+    "kind": "home_page"
+  },
+  "autonomy": "notify",
+  "zone": "America/New_York",
+  "enabled": false,
+  "needs_confirm": true,
+  "set_by": {
+    "kind": "home",
+    "id": "svc_home"
+  },
+  "created_at": "2026-11-08T22:02:17.540Z",
+  "updated_at": "2026-11-08T22:02:17.540Z",
+  "last_fired_at": null,
+  "fires": 0,
+  "next_fire_at": null
+}

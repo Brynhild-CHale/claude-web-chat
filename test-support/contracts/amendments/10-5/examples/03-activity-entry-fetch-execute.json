@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0b5",
+  "at": "2026-11-08T20:06:33.880Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "fetch.execute",
+  "target": {
+    "type": "fetch",
+    "id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Fetched search.example: HTTP 200, 2310 bytes, held for one read",
+    "source": "template",
+    "template": "fetch.execute-held",
+    "chars": 63,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

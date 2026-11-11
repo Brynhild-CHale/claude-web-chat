@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_7c5zmr2k9w4q8t1v6x3b0n5h2c",
+  "at": "2026-11-08T21:04:09.733Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "auth.approve_refused",
+  "target": {
+    "type": "credential",
+    "id": "pky_fc9n46xpxhb362pn5hcfnev7a4"
+  },
+  "outcome": "refused:request_changed",
+  "summary": {
+    "text": "Passkey approval refused: the request changed since the card was drawn",
+    "source": "template",
+    "template": "auth.approve-request-changed",
+    "chars": 70,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

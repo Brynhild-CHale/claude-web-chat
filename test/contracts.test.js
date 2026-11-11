@@ -80,14 +80,17 @@ test('a copy with one byte changed in a schema and in an example fails the same 
   assert.ok(paths.includes('LOCK.md'), paths.join(', '));
 });
 
-test('the amendment folders are exactly the ones LOCK.md\'s validation lines name, and nothing of round v1.5', () => {
+test('the amendment folders are exactly the ones LOCK.md\'s validation lines name, and nothing of an unlocked round', () => {
   const present = fs.readdirSync(path.join(CONTRACTS_DIR, 'amendments')).sort();
   const named = [...lockOrder()].sort();
   assert.deepStrictEqual(present, named);
   assert.equal(named.length, new Set(lockValidation().amendments.map((a) => a.id)).size);
-  // Round v1.5's folders (proposed, unlocked at the copy) never come in.
-  for (const v15 of ['03-7', '03-8', '10-4', '10-5', '10-6', '11-3']) {
-    assert.ok(!present.includes(v15), `amendment folder ${v15} is round v1.5's — not locked, not copied`);
+  // The tag's commit also carries proposed texts of rounds v1.7 (03-9, 05-4,
+  // 11-4) and v1.8 (05-6); unlocked at the copy, they never come in, and
+  // LOCK.md names none of them.
+  for (const unlocked of ['03-9', '05-4', '11-4', '05-6']) {
+    assert.ok(!present.includes(unlocked), `amendment folder ${unlocked} is of an unlocked round — not locked, not copied`);
+    assert.ok(!named.includes(unlocked), `LOCK.md names ${unlocked}: the copy predates its lock`);
   }
 });
 
@@ -130,15 +133,22 @@ test('the combined overlay, every locked folder in lock order, validates every e
   assert.deepStrictEqual(got.failed, []);
   assert.equal(got.ok, names.size);
 
-  // Where two folders replace one path, the later lock's file wins.
+  // Where two folders replace one path, the later lock's file wins: the
+  // expected folder is the LAST one in lockOrder() (LOCK.md's own line order,
+  // which is not the folders' numeric order) that carries the schema.
   const fileOf = (name) => all.view.schemas.get(name).file;
-  assert.equal(fileOf('03-activity-entry'), 'amendments/03-5/schemas/03-activity-entry.json');
-  assert.equal(fileOf('03-credential'), 'amendments/03-2/schemas/03-credential.json');
-  assert.equal(fileOf('10-hub-request'), 'amendments/10-3/schemas/10-hub-request.json');
-  assert.equal(fileOf('11-retention-table'), 'amendments/11-2/schemas/11-retention-table.json');
+  const lastLocked = (name) => {
+    const rel = (id) => `amendments/${id}/schemas/${name}.json`;
+    const carrying = lockOrder().filter((id) => fs.existsSync(path.join(CONTRACTS_DIR, rel(id))));
+    assert.ok(carrying.length >= 2, `${name} is replaced by more than one locked folder`);
+    return rel(carrying[carrying.length - 1]);
+  };
+  for (const name of ['03-activity-entry', '03-credential', '10-hub-request', '11-retention-table']) {
+    assert.equal(fileOf(name), lastLocked(name), name);
+  }
   // The order a caller names folders in does not change that.
   const reversed = loadContracts({ folders: [...lockOrder()].reverse() });
-  assert.equal(reversed.schemas.get('03-activity-entry').file, 'amendments/03-5/schemas/03-activity-entry.json');
+  assert.equal(reversed.schemas.get('03-activity-entry').file, lastLocked('03-activity-entry'));
   assert.throws(() => loadContracts({ folders: ['99-1'] }), /99-1/);
 });
 

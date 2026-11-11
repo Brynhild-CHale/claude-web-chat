@@ -1,0 +1,36 @@
+{
+  "v": 1,
+  "id": "act_9a1b3c5d7e9f1g3h5j7k9m1n3t",
+  "at": "2026-11-10T21:30:47.902Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "project.archive",
+  "target": {
+    "type": "project",
+    "id": "prj_01jc6p3r5t7v9x1z3b5d7f9h1k"
+  },
+  "outcome": "accepted",
+  "related": "act_9a1b3c5d7e9f1g3h5j7k9m1n3q",
+  "summary": {
+    "text": "Project archived with its workspace (3 chats)",
+    "source": "template",
+    "template": "project.archive-cascade",
+    "chars": 45,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

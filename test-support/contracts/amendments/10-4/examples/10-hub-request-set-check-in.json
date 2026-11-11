@@ -1,0 +1,18 @@
+{
+  "type": "SetCheckIn",
+  "params": {
+    "record": {
+      "label": "Deploy board (synthetic)",
+      "trigger": {
+        "kind": "cron",
+        "expr": "0 9 * * 1-5",
+        "zone": "America/New_York"
+      },
+      "instruction": "Check the deploy board at 09:00 and tell me only if it is red",
+      "destination": {
+        "kind": "home_page"
+      },
+      "autonomy": "notify"
+    }
+  }
+}

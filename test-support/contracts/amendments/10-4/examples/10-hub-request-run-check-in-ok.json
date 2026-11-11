@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "type": "RunCheckIn",
+  "request_id": "rq_01JC4MDG7H",
+  "result": {
+    "dry_run": false,
+    "hub_msg_id": "hm_01JC4N9D2F6G8H1J3K5M7N9P0Q",
+    "state": "queued",
+    "msg_id": null
+  }
+}

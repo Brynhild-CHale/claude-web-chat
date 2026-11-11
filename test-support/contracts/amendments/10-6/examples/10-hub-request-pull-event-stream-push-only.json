@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "PullEventStream",
+  "request_id": "rq_01JC8S7M5N",
+  "error": {
+    "code": "conflict",
+    "message": "This event stream is push only; it cannot be pulled.",
+    "hint": "Read the batches the hub queues to this chat, or ask the user for a grant in pull or both mode."
+  }
+}

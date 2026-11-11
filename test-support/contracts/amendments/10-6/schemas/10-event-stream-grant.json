@@ -1,0 +1,447 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/10-event-stream-grant.json",
+  "title": "An event-stream grant (contract 10)",
+  "description": "An event-stream grant as the hub stores it (amendment A-10.6, 10 C-10.14e; R36 H23 (a), tranche 5, row I3-30; A-11.3's event-stream-grant row): a narrow, explicit, expiring, recorded grant of one EventsDB slice to one project chat. GrantEventStream proposes it (Home or the user), A-03.7's approve-request ceremony activates it, the hub pipes it (push) or serves it (pull), RevokeEventStream or the expiry ends it. Every selector field is an EventsDB name or id, never content and never free text; the record keeps no event, only the pipe's cursor and counts (11 C-11.9). Not 04's chat grant (04 C-04.3, the hub's grt_ rows): a record of contract 10's own.",
+  "$ref": "#/$defs/grant",
+  "$defs": {
+    "grant_id": {
+      "type": "string",
+      "pattern": "^esg_[0-9a-hjkmnp-tv-z]{26}$",
+      "description": "An event-stream grant. Minted by the hub; its form is contract 03's (prefix esg_, A-03.7)."
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "$ref": "10-hub-request.json#/$defs/events_filter/properties/source",
+          "description": "One EventsDB source name, from the sources the user enabled (R37 H5 (a)). Required: a stream is one source."
+        },
+        "subject": {
+          "$ref": "10-hub-request.json#/$defs/events_filter/properties/subject",
+          "description": "One channel or thread id, as EventsDB names its subject (signal://group/..., a Slack thread uri), at most 200 characters. Absent: every subject of the source the other fields allow."
+        },
+        "persons": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "10-hub-request.json#/$defs/events_filter/properties/persons/items"
+          },
+          "description": "Only events naming one of these EventsDB person ids (its identity registry), at most 16: the participants the card shows."
+        },
+        "kinds": {
+          "$ref": "10-hub-request.json#/$defs/events_filter/properties/kinds",
+          "description": "Only events of these EventsDB event kinds, at most 8."
+        },
+        "since": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The backlog starts here, RFC 3339; an instant only, never a window (a stream's start does not move)."
+        }
+      },
+      "required": [
+        "source",
+        "since"
+      ],
+      "description": "Which events (A-10.6, C-10.14e): the fields of ReadEvents' events_filter less until and the search text, with persons up to 16. Every field an EventsDB name or id, so the proposer chooses almost no bits and never holds the content (design section 7). The hub applies the own-event exclusion to every read of the stream, as for ReadEvents (C-10.23a)."
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "$ref": "10-hub-request.json#/$defs/project/properties/project_id",
+          "description": "One project of the user's registered projects."
+        },
+        "chat_id": {
+          "$ref": "10-hub-request.json#/$defs/chat/properties/chat_id",
+          "description": "The chat in that project that receives the batches and whose agent may pull: 07's queue is per chat. The hub checks it is in the project, not archived and assigned to a machine (bad_request with field /destination/chat_id otherwise)."
+        }
+      },
+      "required": [
+        "project_id",
+        "chat_id"
+      ],
+      "description": "Where the events go (A-10.6, C-10.14e): one project and the one chat in it."
+    },
+    "mode": {
+      "enum": [
+        "push",
+        "pull",
+        "both"
+      ],
+      "description": "push: the hub sends the backlog once, then live events, as hub-queued messages to the destination chat; pull: the destination chat's agent reads the slice itself with PullEventStream; both: one grant row carrying both (design section 7, the pull variant)."
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 280,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "description": "Why, in the proposer's words, one line: shown on the card marked as the proposer's, never sent with a batch, never enforced; stored through the hub's redactor (A-11.3's event-stream-grant row)."
+    },
+    "grant_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selector": {
+          "$ref": "#/$defs/selector"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "purpose": {
+          "$ref": "#/$defs/purpose"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The date the grant ends, RFC 3339 (design section 7: a date or a default of 14 days). Absent, the ceremony sets the record's expires_at to 14 days after the activation. The hub checks what the schema cannot: a date not later than the proposal, or more than 90 days after it, is bad_request with field /expires_at, so no grant runs more than 90 days past its activation; a proposal still waiting at its date lapses then."
+        }
+      },
+      "required": [
+        "selector",
+        "destination",
+        "mode",
+        "purpose"
+      ],
+      "description": "GrantEventStream's params: the grant less its hub-set fields (A-10.6, C-10.14e). This object, whole, is the params of A-03.7's canonical request for the activation."
+    },
+    "grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/grant_id"
+        },
+        "selector": {
+          "$ref": "#/$defs/selector"
+        },
+        "destination": {
+          "$ref": "#/$defs/destination"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "purpose": {
+          "$ref": "#/$defs/purpose"
+        },
+        "state": {
+          "enum": [
+            "proposed",
+            "active",
+            "revoked",
+            "expired"
+          ],
+          "description": "proposed: waiting on the ceremony, lapsing 24 hours after created_at; active: activated by the ceremony and before expires_at; revoked: ended by RevokeEventStream (a proposal dismissed, or a grant revoked); expired: a proposal that lapsed, or a grant past expires_at."
+        },
+        "proposed_by": {
+          "type": "string",
+          "pattern": "^(usr_[0-9a-hjkmnp-tv-z]{26}|svc_home)$",
+          "description": "Whose GrantEventStream stored it: svc_home (Home's proposal) or the user's usr_ account (a proposal from Settings)."
+        },
+        "granted_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
+          "description": "The user whose approve-request ceremony activated it (A-03.7 C-03.17e), and the sender of its batches; null until then."
+        },
+        "granted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the ceremony activated it, RFC 3339; null until then."
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When it ends, RFC 3339: the proposer's date (grant_input.expires_at), or, when the proposal named none, granted_at plus 14 days, which the ceremony sets. While proposed: the proposer's date, or null for the default."
+        },
+        "revoked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When RevokeEventStream ended it; null otherwise (an expiry sets state, not this)."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the proposal was stored, RFC 3339; the proposal lapses 24 hours later unless activated."
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z0-9_.~+/=-]+$",
+          "description": "The push pipe's position: EventsDB's changes cursor after the last event the hub put in a batch, opaque. Null before the first batch and for a pull-only grant."
+        },
+        "events_sent": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Events put in batches so far (push)."
+        },
+        "batches": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Batches queued so far (push), each one hub-queued message and one stream.deliver entry."
+        },
+        "last_batch_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the last batch was queued; null before the first."
+        },
+        "pulls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "PullEventStream reads served so far, each one stream.pull entry, counted in the read's transaction."
+        }
+      },
+      "required": [
+        "id",
+        "selector",
+        "destination",
+        "mode",
+        "purpose",
+        "state",
+        "proposed_by",
+        "granted_by",
+        "granted_at",
+        "expires_at",
+        "revoked_at",
+        "created_at",
+        "cursor",
+        "events_sent",
+        "batches",
+        "last_batch_at",
+        "pulls"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "granted_by": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "granted_by"
+            ]
+          },
+          "then": {
+            "properties": {
+              "granted_at": {
+                "type": "null"
+              },
+              "cursor": {
+                "type": "null"
+              },
+              "events_sent": {
+                "const": 0
+              },
+              "batches": {
+                "const": 0
+              },
+              "last_batch_at": {
+                "type": "null"
+              },
+              "pulls": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "granted_at": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "A grant never activated carries no activation and no traffic (its expires_at is the proposer's date or null); an activated one names its time and its end."
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "proposed"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "granted_by": {
+                "type": "null"
+              },
+              "revoked_at": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "active"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "granted_by": {
+                "type": "string"
+              },
+              "revoked_at": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "revoked"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "revoked_at": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "expired"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "revoked_at": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "pull"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "cursor": {
+                "type": "null"
+              },
+              "events_sent": {
+                "const": 0
+              },
+              "batches": {
+                "const": 0
+              },
+              "last_batch_at": {
+                "type": "null"
+              }
+            }
+          },
+          "description": "A pull-only grant has no push pipe."
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "push"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "pulls": {
+                "const": 0
+              }
+            }
+          },
+          "description": "A push-only grant answers a pull conflict, so it counts none."
+        },
+        {
+          "if": {
+            "properties": {
+              "batches": {
+                "const": 0
+              }
+            },
+            "required": [
+              "batches"
+            ]
+          },
+          "then": {
+            "properties": {
+              "last_batch_at": {
+                "type": "null"
+              },
+              "events_sent": {
+                "const": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "last_batch_at": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "description": "The stored grant (A-10.6, C-10.14e; A-11.3's event-stream-grant row: kept until it ends, then 30 days, so a late pull is refused as revoked or expired, not unknown). The hub checks what the schema cannot: that the chat is in the project and assigned, that expires_at is the proposer's date or granted_at plus 14 days and falls after the proposal and within 90 days of it, that a proposal lapses 24 hours after created_at or at its expires_at if that comes first, and the counts."
+    }
+  }
+}

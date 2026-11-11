@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "type": "SetCheckIn",
+  "request_id": "rq_01JC4M7T9W",
+  "result": {
+    "checkin": {
+      "id": "cki_01jc4m7t9w2q8r5v3x6z0b1n4p",
+      "label": "Deploy board (synthetic)",
+      "trigger": {
+        "kind": "cron",
+        "expr": "0 9 * * 1-5",
+        "zone": "America/New_York"
+      },
+      "instruction": "Check the deploy board at 09:00 and tell me only if it is red",
+      "destination": {
+        "kind": "home_page"
+      },
+      "autonomy": "notify",
+      "zone": "America/New_York",
+      "enabled": true,
+      "needs_confirm": false,
+      "set_by": {
+        "kind": "user",
+        "id": "usr_f8qy40ygecyys9e9r04a2k1hyr"
+      },
+      "created_at": "2026-11-08T21:14:03.120Z",
+      "updated_at": "2026-11-08T21:14:03.120Z",
+      "last_fired_at": null,
+      "fires": 0,
+      "next_fire_at": "2026-11-09T14:00:00Z"
+    },
+    "dry_run": {
+      "next_fires": [
+        "2026-11-09T09:00:00-05:00",
+        "2026-11-10T09:00:00-05:00",
+        "2026-11-11T09:00:00-05:00",
+        "2026-11-12T09:00:00-05:00",
+        "2026-11-13T09:00:00-05:00"
+      ],
+      "match_count": null,
+      "unavailable": false,
+      "instruction_resolved": "## Check-in cki_01jc4m7t9w2q8r5v3x6z0b1n4p: Deploy board (synthetic)\nCheck the deploy board at 09:00 and tell me only if it is red"
+    }
+  }
+}

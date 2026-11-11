@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0b4",
+  "at": "2026-11-08T20:06:31.207Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "fetch.decide",
+  "target": {
+    "type": "fetch",
+    "id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Fetch approved from the shell, host confirmed",
+    "source": "template",
+    "template": "fetch.decide-user",
+    "chars": 45,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

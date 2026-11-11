@@ -1,0 +1,70 @@
+{
+  "ok": true,
+  "type": "ListCheckIns",
+  "request_id": "rq_01JC4MBE5F",
+  "result": {
+    "checkins": [
+      {
+        "id": "cki_01jc4m7t9w2q8r5v3x6z0b1n4p",
+        "label": "Deploy board (synthetic)",
+        "trigger": {
+          "kind": "cron",
+          "expr": "0 9 * * 1-5",
+          "zone": "America/New_York"
+        },
+        "instruction": "Check the deploy board at 09:00 and tell me only if it is red",
+        "destination": {
+          "kind": "home_page"
+        },
+        "autonomy": "notify",
+        "zone": "America/New_York",
+        "enabled": true,
+        "needs_confirm": false,
+        "set_by": {
+          "kind": "user",
+          "id": "usr_f8qy40ygecyys9e9r04a2k1hyr"
+        },
+        "created_at": "2026-11-08T21:14:03.120Z",
+        "updated_at": "2026-11-08T21:14:03.120Z",
+        "last_fired_at": null,
+        "fires": 0,
+        "next_fire_at": "2026-11-09T14:00:00Z"
+      },
+      {
+        "id": "cki_01jc4m7t9w2q8r5v3x6z0b1n4q",
+        "label": "Trip group, new messages (synthetic)",
+        "trigger": {
+          "kind": "events_count",
+          "query": {
+            "source": "signal",
+            "subject": "signal://group/trip-planning-synthetic",
+            "since": "PT15M"
+          },
+          "every_s": 900
+        },
+        "condition": {
+          "field": "count",
+          "op": "gt",
+          "value": 0
+        },
+        "instruction": "Summarise what is new in the synthetic trip-planning group about the flight to Lisbon, on my Home page",
+        "destination": {
+          "kind": "home_page"
+        },
+        "autonomy": "notify",
+        "zone": "America/New_York",
+        "enabled": true,
+        "needs_confirm": false,
+        "set_by": {
+          "kind": "user",
+          "id": "usr_f8qy40ygecyys9e9r04a2k1hyr"
+        },
+        "created_at": "2026-11-08T21:20:41.006Z",
+        "updated_at": "2026-11-08T21:20:41.006Z",
+        "last_fired_at": null,
+        "fires": 0,
+        "next_fire_at": "2026-11-08T21:35:41Z"
+      }
+    ]
+  }
+}

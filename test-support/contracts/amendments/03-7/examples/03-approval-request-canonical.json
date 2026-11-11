@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "SetFetchPolicy",
+  "params": {
+    "fetch_per_day": 60
+  },
+  "requested_by": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+  "issued_at": "2026-11-08T20:30:12.551Z"
+}

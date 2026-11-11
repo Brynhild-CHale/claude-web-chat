@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0b3",
+  "at": "2026-11-08T11:20:03.118Z",
+  "actor": {
+    "v": 1,
+    "user": null,
+    "machine": null,
+    "chat": null,
+    "session": null,
+    "writer_class": null,
+    "verified": false,
+    "verified_by": null,
+    "via": "hub"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "fetch.decide",
+  "target": {
+    "type": "fetch",
+    "id": "fch_01jc5e9m2p4r6t8v0x2z4b6d8f"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Fetch auto-passed: clean session, every term the user's words",
+    "source": "template",
+    "template": "fetch.decide-clean",
+    "chars": 61,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

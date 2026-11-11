@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "type": "GetChatAttach",
+  "request_id": "rq_01JBX5C2M4",
+  "result": {
+    "chat_id": "cht_01jbz9a1b2c3d4e5f6g7h8j9k0",
+    "machine": {
+      "id": "mch_01jbz3k9q4w8r2t6v0x5m7n8p1",
+      "name": "studio-mbp",
+      "tailnet_name": "studio-mbp.yak-bebop.ts.net",
+      "login": "dev-hale",
+      "online": true
+    },
+    "folder": {
+      "id": "f_3a9c1e07b54d2f68",
+      "display": "~/Dev/ServerWebChat"
+    },
+    "session": {
+      "multiplexer": "tmux",
+      "name": "wc-01jbz9a1b2c3d4e5f6g7h8j9k0"
+    },
+    "launch": "connector",
+    "commands": {
+      "terminal": "ssh -t dev-hale@studio-mbp.yak-bebop.ts.net \"tmux attach-session -t '=wc-01jbz9a1b2c3d4e5f6g7h8j9k0'\"",
+      "shell": "ssh -t dev-hale@studio-mbp.yak-bebop.ts.net 'cd /Users/dev-hale/Dev/ServerWebChat && exec \"$SHELL\" -l'",
+      "code": "vscode://vscode-remote/ssh-remote+dev-hale@studio-mbp.yak-bebop.ts.net/Users/dev-hale/Dev/ServerWebChat",
+      "unavailable": {}
+    }
+  }
+}

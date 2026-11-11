@@ -1,0 +1,8 @@
+{
+  "type": "DecideFetch",
+  "params": {
+    "fetch_id": "fch_01jc5f3k8q2w7r4t9v6x0z1b3n",
+    "decision": "approve",
+    "confirm": "search.example"
+  }
+}

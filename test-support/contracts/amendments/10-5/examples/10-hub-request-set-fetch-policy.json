@@ -1,0 +1,6 @@
+{
+  "type": "SetFetchPolicy",
+  "params": {
+    "fetch_per_day": 60
+  }
+}

@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-chat-contracts/schemas/05-hub-request.json",
+  "title": "Connector hub reads for its CLI",
+  "description": "The control pair a connector uses to read the hub for the CLI on its own machine (C-05.26a, amendment A-05.3; 06 C-06.26a): hub.request carries one of three contract 10 read requests whole ({type, params}; 10 C-10.14 for ListMachines and ListChats, C-10.14a for GetChatAttach) and hub.response carries contract 10's answer whole ({ok, type, request_id, result} or {ok, type, request_id, error}), paired by re (C-05.10). The hub judges the request as the user who paired the machine (C-05.3 paired_by) and answers exactly as it would answer that user on POST /hub/api/read, the attach.read Activity entry included (10 C-10.14a). The body is contract 10's: schemas/10-hub-request.json, as its amendments replace it (A-10.1 for GetChatAttach), is normative for params and result, and this file closes the frame around it. The response body is the one 05 body that names a command text, an offered folder's real path or a chat in its cht_ id form (C-05.49, C-05.15 and section 2's chat label definition as A-05.3 amends them; 03 section 2 as A-03.3 amends it): it is data the machine's own user asked for, which the connector hands to the CLI and runs nothing from.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/hub_request"
+    },
+    {
+      "$ref": "#/$defs/hub_response"
+    }
+  ],
+  "$defs": {
+    "hub_request": {
+      "type": "object",
+      "description": "One contract 10 read the connector forwards for the CLI on its own machine (C-05.26a). Direction: connector to hub. The hub answers every one with exactly one hub.response whose re is this frame's id. Pause (C-05.27) does not withhold it.",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "hub.request",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection. The hub.response names it in `re`."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11). Durable positions live in the bodies (contract 07 cursors, hub_msg_id, contract 06 rev), never here."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "ListMachines",
+                "ListChats",
+                "GetChatAttach"
+              ],
+              "description": "The closed list of read types a connector may forward for its CLI (C-05.26a): ListMachines (10 C-10.14, a signed-in user) and ListChats (10 C-10.14, Read on each chat listed) and GetChatAttach (10 C-10.14a, amendment A-10.1). Any other value fails this schema, which C-05.10 refuses as a bad frame (fatal, A-05.1), so the connector forwards nothing else and refuses the CLI itself (06 C-06.26a)."
+            },
+            "params": {
+              "type": "object",
+              "description": "The type's params as contract 10 defines them (schemas/10-hub-request.json $defs/params_<type>; A-10.1's file for GetChatAttach); {} when it takes none. Contract 10's schema is normative for the body: the hub validates it as it validates a hub-API request, and a bad body comes back as 10's bad_request inside hub.response, never as a 05 error frame."
+            }
+          },
+          "required": [
+            "type",
+            "params"
+          ],
+          "description": "Contract 10's request body {type, params} (10 $defs/request), carried whole."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "hub_response": {
+      "type": "object",
+      "description": "The hub's answer to one hub.request (C-05.26a): contract 10's response body as the hub served it to the user who paired the machine (C-05.3 paired_by), result or error. Direction: hub to connector. The connector hands it to the CLI as received, caches nothing and runs nothing from it (C-05.15, C-05.49 and section 2's chat label definition as A-05.3 amends them; 06 C-06.26a).",
+      "properties": {
+        "ch": {
+          "const": "control",
+          "description": "The channel this frame travels on (C-05.10)."
+        },
+        "kind": {
+          "const": "hub.response",
+          "description": "The frame kind within its channel."
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "This frame's id, unique per sender per connection."
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per connection, per channel, per direction: 1 for the first frame, plus 1 for each next (C-05.11)."
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "When the sender built the frame. Informative; never used for ordering or expiry."
+        },
+        "re": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "description": "The `id` of the hub.request this answers (C-05.10). Required: a hub.response is never unsolicited."
+        },
+        "response": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": true,
+                  "description": "Success (10 $defs/response_ok)."
+                },
+                "type": {
+                  "enum": [
+                    "ListMachines",
+                    "ListChats",
+                    "GetChatAttach"
+                  ],
+                  "description": "The request's type, echoed."
+                },
+                "request_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{8,64}$",
+                  "description": "The id the hub minted for the read, 10's request_id (it is not the frame id)."
+                },
+                "result": {
+                  "type": "object",
+                  "description": "The type's result as contract 10 defines it ($defs/result_<type>; A-10.1's result_GetChatAttach for GetChatAttach), served to the pairing user: for GetChatAttach the commands text and, for a folder chat, the offered folder's real path inside commands.shell and commands.code (06 C-06.14), and chats in 10's cht_ id form. Contract 10's schema is normative for it."
+                }
+              },
+              "required": [
+                "ok",
+                "type",
+                "request_id",
+                "result"
+              ],
+              "description": "A success answer (10 $defs/response_ok)."
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": false,
+                  "description": "Failure (10 $defs/response_error)."
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The request's type, echoed when the body named one."
+                },
+                "request_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{8,64}$",
+                  "description": "The id the hub minted for the read, 10's request_id."
+                },
+                "error": {
+                  "$ref": "10-hub-request.json#/$defs/error",
+                  "description": "Contract 10's error (C-10.13) as served to the pairing user: not_found, forbidden with need, bad_request, rate_limited, unavailable."
+                }
+              },
+              "required": [
+                "ok",
+                "type",
+                "request_id",
+                "error"
+              ],
+              "description": "A failure answer (10 $defs/response_error)."
+            }
+          ],
+          "description": "Contract 10's response body, carried whole."
+        }
+      },
+      "required": [
+        "ch",
+        "kind",
+        "id",
+        "seq",
+        "re",
+        "response"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

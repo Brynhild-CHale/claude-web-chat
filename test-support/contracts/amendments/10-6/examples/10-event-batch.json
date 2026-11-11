@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "untrusted": true,
+  "grant_id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m",
+  "batch": 2,
+  "window": {
+    "since": "2026-12-28T10:21:40Z",
+    "until": "2026-12-28T10:23:12Z"
+  },
+  "events": [
+    {
+      "id": "evt-synthetic-0138",
+      "at": "2026-12-28T10:21:40Z",
+      "source": "signal",
+      "kind": "message",
+      "subject": "signal://group/trip-planning-synthetic",
+      "persons": [
+        "person-synthetic-b"
+      ],
+      "text": "Synthetic: the second week of December works for me"
+    },
+    {
+      "id": "evt-synthetic-0139",
+      "at": "2026-12-28T10:23:12Z",
+      "source": "signal",
+      "kind": "message",
+      "subject": "signal://group/trip-planning-synthetic",
+      "persons": [
+        "person-synthetic-a"
+      ],
+      "text": "Synthetic: then book the flight to Lisbon once the price is under the budget"
+    }
+  ],
+  "more": false
+}

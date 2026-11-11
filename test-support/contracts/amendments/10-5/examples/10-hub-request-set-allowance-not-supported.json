@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "type": "SetAllowance",
+  "request_id": "rq_01JC5FCW7A",
+  "error": {
+    "code": "not_supported",
+    "message": "This hub does not answer SetAllowance yet.",
+    "hint": "GetApiInfo lists the types this hub answers."
+  }
+}

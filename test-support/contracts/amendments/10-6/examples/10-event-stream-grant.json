@@ -1,0 +1,30 @@
+{
+  "id": "esg_01jc8s2t4v6x8z0b2d4f6h8k0m",
+  "selector": {
+    "source": "signal",
+    "subject": "signal://group/trip-planning-synthetic",
+    "persons": [
+      "person-synthetic-a",
+      "person-synthetic-b"
+    ],
+    "since": "2026-11-01T00:00:00Z"
+  },
+  "destination": {
+    "project_id": "pj_travel_synthetic",
+    "chat_id": "cht_01jc7d3e5f7g9h1j3k5m7n9p1q"
+  },
+  "mode": "both",
+  "purpose": "Stream the synthetic trip-planning thread to the travel project so its agent can book the Lisbon trip",
+  "state": "active",
+  "proposed_by": "svc_home",
+  "granted_by": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+  "granted_at": "2026-12-28T10:15:27.604Z",
+  "expires_at": "2027-01-11T10:15:27.604Z",
+  "revoked_at": null,
+  "created_at": "2026-12-28T10:02:11.317Z",
+  "cursor": "c2lnbmFsLXN5bnRoZXRpYy0wMTM5",
+  "events_sent": 39,
+  "batches": 2,
+  "last_batch_at": "2026-12-28T10:25:03.118Z",
+  "pulls": 1
+}

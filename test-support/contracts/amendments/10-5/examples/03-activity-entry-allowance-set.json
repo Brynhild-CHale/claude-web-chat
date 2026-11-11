@@ -1,0 +1,35 @@
+{
+  "v": 1,
+  "id": "act_6b4ykqw2n3rp8dv0h1xz5tf0b7",
+  "at": "2026-12-28T10:02:41.090Z",
+  "actor": {
+    "v": 1,
+    "user": "usr_f8qy40ygecyys9e9r04a2k1hyr",
+    "machine": null,
+    "chat": null,
+    "session": "ses_ppyva2rpcv8w72a5ya4jhn7ybb",
+    "writer_class": "remote",
+    "verified": true,
+    "verified_by": "hub",
+    "via": "shell"
+  },
+  "machine": null,
+  "chat": null,
+  "kind": "allowance.set",
+  "target": {
+    "type": "allowance",
+    "id": "fal_01jc6a2b4c6d8e0f2g4h6j8k0m"
+  },
+  "outcome": "accepted",
+  "summary": {
+    "text": "Standing allowance created for search.example /search, 30 days",
+    "source": "template",
+    "template": "allowance.set-ceremony",
+    "chars": 62,
+    "truncated": false,
+    "redaction": {
+      "pass": "hub-rules",
+      "masks": 0
+    }
+  }
+}

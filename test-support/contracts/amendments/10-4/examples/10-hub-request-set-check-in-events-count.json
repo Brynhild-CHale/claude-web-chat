@@ -1,0 +1,28 @@
+{
+  "type": "SetCheckIn",
+  "params": {
+    "record": {
+      "label": "Trip group, new messages (synthetic)",
+      "trigger": {
+        "kind": "events_count",
+        "query": {
+          "source": "signal",
+          "subject": "signal://group/trip-planning-synthetic",
+          "since": "PT15M"
+        },
+        "every_s": 900
+      },
+      "condition": {
+        "field": "count",
+        "op": "gt",
+        "value": 0
+      },
+      "instruction": "Summarise what is new in the synthetic trip-planning group about the flight to Lisbon, on my Home page",
+      "destination": {
+        "kind": "home_page"
+      },
+      "autonomy": "notify",
+      "zone": "America/New_York"
+    }
+  }
+}
