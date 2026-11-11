@@ -772,3 +772,38 @@ test('fake hub: every events.batch the ring sends over the real link validates a
   assert.strictEqual(spyClient.streams, 1, 'one hold per chat; the ring opens no stream');
   assert.strictEqual(h.ring.cursorOf(CHAT).boot, bootOf(d));
 });
+
+// ── hand fold 7 (h), U790: a resend holding a registered secret ────────────
+
+test('a resend batch the link refuses for a registered secret (code secret) is not sent; the later \'ready\' listeners still run and the other batches still go', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false });
+  const ring = rootedRing({ deps: { client: recordsClient({}), portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  for (let s = 1; s <= 3; s++) {
+    lc.emit({ type: 'entry', entry: { seq: s, ts: s, kind: 'store', patch: { a: s } } });
+    await settle(5);
+  }
+  const first = link.batches().map((b) => b.batch_id);
+  assert.strictEqual(first.length, 3);
+  // The link now holds a secret the second batch carries (U716b: send throws).
+  const send = link.send;
+  link.send = (ch, kind, body) => {
+    if (body && body.batch && body.batch.batch_id === first[1]) throw Object.assign(new Error('a registered secret'), { code: 'secret' });
+    return send(ch, kind, body);
+  };
+  let later = 0;
+  link.on('ready', () => { later += 1; });
+  link.slots.clear();
+  assert.doesNotThrow(() => link.emit('ready', {}));
+  assert.strictEqual(later, 1, 'the listener after the ring\'s ran');
+  assert.deepStrictEqual(link.batches().slice(3).map((b) => b.batch_id), [first[0], first[2]], 'the refused batch alone is skipped');
+  // What follows cannot claim to continue it.
+  lc.emit({ type: 'entry', entry: { seq: 4, ts: 4, kind: 'store', patch: { a: 4 } } });
+  await settle(5);
+  const next = link.batches()[link.batches().length - 1];
+  assert.strictEqual(next.entries[0].seq, 4);
+  assert.strictEqual(next.contiguous, false, 'the next batch after a refused resend is not contiguous');
+});
