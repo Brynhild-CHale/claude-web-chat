@@ -1,0 +1,301 @@
+{
+  "derived_from": "089783b9 (ae-alpha.6)",
+  "record_types": [
+    "epoch",
+    "el",
+    "ver",
+    "commit",
+    "migration",
+    "close",
+    "ack",
+    "drop",
+    "answers"
+  ],
+  "record_keys": {
+    "el": [
+      "t",
+      "id",
+      "kind",
+      "created_at"
+    ],
+    "ver": [
+      "t",
+      "id",
+      "v",
+      "parent_v",
+      "seq",
+      "schema",
+      "payload",
+      "payload_hash",
+      "src_hash",
+      "original",
+      "writer",
+      "provenance",
+      "owner",
+      "display",
+      "author",
+      "at"
+    ],
+    "commit": [
+      "t",
+      "node",
+      "parent",
+      "created_at",
+      "pins",
+      "digest",
+      "at"
+    ]
+  },
+  "plugin_ver_keys": [
+    "t",
+    "id",
+    "v",
+    "parent_v",
+    "seq",
+    "schema",
+    "payload",
+    "payload_hash",
+    "src_hash",
+    "original",
+    "writer",
+    "provenance",
+    "owner",
+    "display",
+    "author",
+    "at"
+  ],
+  "id_letters": [
+    "c",
+    "h",
+    "g",
+    "k",
+    "p"
+  ],
+  "id_prefix": {
+    "comment": "c",
+    "highlight": "h",
+    "box-grab": "g",
+    "chat-comment": "k"
+  },
+  "schemas": {
+    "comment@1": {
+      "type": "comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor"
+      ]
+    },
+    "highlight@1": {
+      "type": "highlight",
+      "keys": [
+        "anchor",
+        "shared",
+        "color",
+        "note"
+      ]
+    },
+    "box-grab@1": {
+      "type": "box-grab",
+      "keys": [
+        "anchor",
+        "shared",
+        "rect",
+        "meta",
+        "grab"
+      ]
+    },
+    "comment@2": {
+      "type": "comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor",
+        "chain"
+      ]
+    },
+    "chat-comment@1": {
+      "type": "chat-comment",
+      "keys": [
+        "text",
+        "shared",
+        "replies",
+        "anchor",
+        "chain"
+      ]
+    }
+  },
+  "engine_kinds": [
+    "element",
+    "range",
+    "source",
+    "point",
+    "turn",
+    "item",
+    "item-range",
+    "diff-line"
+  ],
+  "siblings": [
+    "original",
+    "writer",
+    "provenance",
+    "owner",
+    "display"
+  ],
+  "node_id": "^n\\d+$",
+  "page_record": {
+    "kind": "page",
+    "keys": [
+      "v",
+      "kind",
+      "item",
+      "frame",
+      "from",
+      "to"
+    ],
+    "end_keys": [
+      "item",
+      "x",
+      "y",
+      "w",
+      "h"
+    ],
+    "item_re": "^[A-Za-z0-9_-]+$",
+    "item_max": 256,
+    "end_max": 8,
+    "plugin_admitted": true
+  },
+  "stroke_keys": [
+    "anchor",
+    "shared",
+    "tool",
+    "width",
+    "colour",
+    "points",
+    "stride",
+    "aspect"
+  ],
+  "describe_keys": [
+    "text_under",
+    "bbox",
+    "text_box"
+  ],
+  "picture": {
+    "profile": "element-picture",
+    "without_suffix": ".without.png",
+    "image_block_keys": [
+      "state",
+      "capture",
+      "path",
+      "sha256",
+      "width",
+      "height",
+      "bytes",
+      "without"
+    ],
+    "image_block_without_keys": [
+      "path",
+      "sha256",
+      "width",
+      "height",
+      "bytes"
+    ],
+    "without_block_keys": [
+      "state",
+      "capture",
+      "path",
+      "sha256",
+      "width",
+      "height",
+      "bytes"
+    ]
+  },
+  "comment_manifest": {
+    "version": "1.1.0",
+    "schema": "comment@2",
+    "reads": [
+      "comment@1",
+      "comment@2"
+    ],
+    "anchors": [
+      "element",
+      "range",
+      "source",
+      "point"
+    ]
+  },
+  "parsed_conversations_max": 389,
+  "project_paths_keys": [
+    "EXTENSIONS_DIR",
+    "PUBLIC_DIR",
+    "asksAudit",
+    "asksDir",
+    "attachmentsDir",
+    "brandDir",
+    "brandThemeDir",
+    "brandThemesDir",
+    "captureToken",
+    "captures",
+    "components",
+    "controlAudit",
+    "controlDir",
+    "controlRestores",
+    "dir",
+    "disabled",
+    "draft",
+    "elementTypesDir",
+    "elementsBootReport",
+    "elementsDir",
+    "elementsLog",
+    "excerpts",
+    "exports",
+    "formShifts",
+    "graphDir",
+    "graphIndex",
+    "hookLog",
+    "managed",
+    "mcpRegistration",
+    "meta",
+    "migrationReport",
+    "mirrorConversations",
+    "mirrorDiff",
+    "mirrorDiffsDir",
+    "mirrorDir",
+    "mirrorGit",
+    "mirrorIndex",
+    "mirrorIndexDir",
+    "mirrorNodeDiff",
+    "mirrorSettings",
+    "mirrorTmp",
+    "modDir",
+    "noRemote",
+    "packs",
+    "packsAudit",
+    "packsBackup",
+    "packsDir",
+    "packsPending",
+    "profiles",
+    "projectFavicon",
+    "projectFaviconDark",
+    "projectJson",
+    "projectLogo",
+    "projectLogoDark",
+    "projectTouchIcon",
+    "quarantine",
+    "root",
+    "serverJson",
+    "serverLog",
+    "services",
+    "theme",
+    "themeDefault",
+    "themeLogosDir",
+    "themesDir",
+    "tmp",
+    "toolbar",
+    "version",
+    "writerToken"
+  ],
+  "accepted_messages_named_in": []
+}
