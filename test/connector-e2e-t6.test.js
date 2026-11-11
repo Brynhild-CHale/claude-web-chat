@@ -911,17 +911,15 @@ test('(19) an acknowledged Push streams to the connector contiguous: missing 0, 
   const port = W.spaceDaemon.port;
   const boot = (await client.request(port, 'GET', '/api/health', null, {})).headers['x-wc-boot'];
   const since = await latestSeq(port);
-  let markReady;
-  const ready = new Promise((r) => { markReady = r; });
+  // The bridge's own stream finds the daemon by the root's portfile; its
+  // health probe, heartbeat and ack go to the port, never spawning.
   const bridgeClient = {
-    subscribeSSE: (o) => client.subscribeSSE({ ...o, root: undefined, port, onOpen: () => { if (o.onOpen) o.onOpen(); markReady(); } }),
     get: (p) => client.get(p, { port, noSpawn: true }),
     post: (p, b) => client.post(p, b, { port, noSpawn: true }),
   };
   const bridge = startChannelBridge({ notify: async () => {}, client: bridgeClient, root: W.spaceRoot });
   let push;
   try {
-    await ready;
     await waitUntil(async () => json(await host(port, 'GET', '/api/queue/policy')).channel_connected === true,
       { timeout: 10000, what: 'the channel live' });
     push = json(await host(port, 'POST', '/api/queue/push', { note: 'u748b: an acknowledged Push' }));
