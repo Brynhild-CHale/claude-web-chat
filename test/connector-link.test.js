@@ -357,7 +357,7 @@ test('4409 stops without redialling; 4403 after machine.revoked emits revoked an
   await up;
   const revoked = once(b.link, 'revoked');
   fake.revoke();
-  assert.deepStrictEqual((await revoked)[0], { afterNotice: true });
+  assert.deepStrictEqual((await revoked)[0], { afterNotice: true, hint: null });
   assert.strictEqual(b.link.state, 'revoked');
   assert.strictEqual(b.link.start(), false, 'a revoked link never dials again');
   b.vt.advance(60 * 60 * 1000);
@@ -864,4 +864,52 @@ test('on-demand rotation (`connect rotate`, U726): a pending request makes one k
   assert.deepStrictEqual(cleared, [5000, 500]);
   assert.strictEqual(pending, null);
   assert.strictEqual(fake.find('key.rotate', { dir: 'in' }).length, 1);
+});
+
+// ── machine.revoked's hint (U726b; 05 C-05.9: "for the person at the machine") ──
+
+test('machine.revoked: the hub\'s hint, cleaned, is on the revoked event and the log line; none gives null', async (t) => {
+  const { REVOKED_HINT_MAX } = require('../lib/connector/link');
+  assert.strictEqual(REVOKED_HINT_MAX, 300);
+  const cases = [
+    // [what the hub sends, what the connector keeps]
+    ['Disconnected in Settings > Machines.', 'Disconnected in Settings > Machines.'],
+    ['\u001b[31mred\u001b[0m and ‮evil‬\nnext line\r\nlast​.', '[31mred[0m and evil next line last.'],
+    [`${'a'.repeat(REVOKED_HINT_MAX - 1)}\u{1F600}${'b'.repeat(100)}`, `${'a'.repeat(REVOKED_HINT_MAX - 1)}\u{1F600}`],
+    [undefined, null],
+    ['\u0007​ \n', null],
+  ];
+  for (const [sent, kept] of cases) {
+    const fake = await withFakeHub(t);
+    const a = openLink(t, fake);
+    const up = ready(a.link);
+    a.link.start();
+    await up;
+    const revoked = once(a.link, 'revoked');
+    fake.revoke(sent);
+    const [ev] = await revoked;
+    assert.deepStrictEqual(ev, { afterNotice: true, hint: kept }, JSON.stringify(sent));
+    if (kept !== null) {
+      assert.ok(Array.from(kept).length <= REVOKED_HINT_MAX);
+      assert.doesNotMatch(kept, /[\ud800-\udbff](?![\udc00-\udfff])/, 'no lone surrogate');
+    }
+    const line = a.logs.find((l) => l.startsWith('link machine revoked by the hub'));
+    assert.strictEqual(line, kept === null ? 'link machine revoked by the hub' : `link machine revoked by the hub; the hub says: ${kept}`);
+    assert.deepStrictEqual(fake.errors, []);
+  }
+});
+
+test('machine.revoked: a hint holding a registered secret is never logged or emitted; the line goes out without it', async (t) => {
+  const fake = await withFakeHub(t);
+  const a = openLink(t, fake);
+  const up = ready(a.link);
+  a.link.start();
+  await up;
+  const secret = 'relay-secret-0123456789abcdef';
+  a.link.registerSecret(secret);
+  const revoked = once(a.link, 'revoked');
+  fake.revoke(`pair again; your token was ${secret}`);
+  assert.deepStrictEqual((await revoked)[0], { afterNotice: true, hint: null });
+  assert.ok(a.logs.includes('link machine revoked by the hub'));
+  assert.ok(!a.logs.join('\n').includes(secret), 'the secret in no log line');
 });

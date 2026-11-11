@@ -372,3 +372,54 @@ test('`connect ls` through lib/cli/commands/connect.js answers from the paired r
   assert.deepEqual(asked, ['ListMachines', 'ListChats'], 'both reads reached the paired record\'s socket');
   assert.match(out.join('\n'), /Notes {2}studio-mbp {2}0123456789abcdefghjkmnpqrs {2}running/);
 });
+
+// ── a revoked record (U726b: the hub's hint is in the log, not the record) ──
+
+test('`connect status` on a revoked record adds one line from the record alone: when, where the hub\'s message is, how to pair again', async (t) => {
+  withTempHome(t);
+  const rec = pairedRecord();
+  const { key_file: _k, ...cred } = rec.credential;
+  rec.credential = { ...cred, state: 'revoked', revoked_at: Date.UTC(2026, 10, 11, 9, 30) };
+  rec.service = null;
+  conn.writeRecord(rec);
+  const before = tree(userPaths().connectorDir);
+  const r = await run(t, ['connect', 'status']);
+  assert.equal(r.code, 0, r.err);
+  const lines = r.out.split('\n').filter((l) => /^ {2}revoked: /.test(l));
+  assert.deepEqual(lines, [
+    `  revoked: 2026-11-11T09:30:00.000Z; the hub's message, if it sent one, is in the connector's log (${userPaths().connectorLog}, `
+      + 'or the terminal of a foreground `connect run`); pair again with `claude-web-chat connect https://hub.example.com`',
+  ]);
+  assert.deepEqual(tree(userPaths().connectorDir), before, 'status writes nothing');
+  assert.deepEqual(r.dials, []);
+
+  // A paired record prints no such line.
+  conn.writeRecord(pairedRecord());
+  assert.doesNotMatch((await run(t, ['connect', 'status'])).out, /^ {2}revoked: /m);
+  // Nor does a record that was never paired, or one still pairing.
+  for (const credential of [
+    { state: 'unpaired' },
+    { state: 'pending', algorithm: 'ed25519', public_key: 'A'.repeat(43), fingerprint: `SHA256:${'A'.repeat(43)}` },
+  ]) {
+    conn.writeRecord({ ...pairedRecord({ service: false }), credential });
+    const other = await run(t, ['connect', 'status']);
+    assert.match(other.out, new RegExp(`^ {2}credential: ${credential.state}`, 'm'), other.out + other.err);
+    assert.doesNotMatch(other.out, /^ {2}revoked: /m, credential.state);
+  }
+});
+
+test('`connect status` on a revoked plain-http loopback record names --insecure-loopback; no revoked_at says so', async (t) => {
+  withTempHome(t);
+  const rec = pairedRecord();
+  const { key_file: _k, revoked_at: _r, ...cred } = rec.credential;
+  rec.hub = { ...rec.hub, origin: 'http://127.0.0.1:8477' };
+  rec.credential = { ...cred, state: 'revoked' };
+  rec.service = null;
+  conn.writeRecord(rec);
+  const r = await run(t, ['connect', 'status']);
+  assert.equal(r.code, 0, r.err);
+  const line = r.out.split('\n').find((l) => /^ {2}revoked: /.test(l));
+  assert.ok(line, r.out);
+  assert.match(line, /^ {2}revoked: at a time the record does not hold; /);
+  assert.match(line, /pair again with `claude-web-chat connect http:\/\/127\.0\.0\.1:8477 --insecure-loopback`$/);
+});
