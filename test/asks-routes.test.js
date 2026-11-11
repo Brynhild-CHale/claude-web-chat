@@ -390,3 +390,18 @@ test('texts that mask alike: two labels, two questions, a multiSelect label with
   assert.deepEqual(mp.decision.picks, [{ q: 0, options: [0, 1] }], 'the indexes, never a joined string');
   assert.deepEqual(mp.decision.picks[0].options.map((i) => multi[0].options[i].label), ['red, green', 'blue']);
 });
+
+// ── tool_kind is the tool's class, never its name (U729b; form 4 F1) ────────
+
+test("GET /api/asks below read: an unknown tool's ask shows tool_kind 'Tool', a table tool its class word", async (t) => {
+  const r = await rig(t);
+  const unknown = (await r.call('POST', '/api/asks', { body: createBody({ name: 'LSP', input: { operation: 'hover' }, session: 'sess-u' }) })).json;
+  const known = (await r.call('POST', '/api/asks', { body: createBody({ name: 'Read', input: { file_path: '/p/a.js' }, session: 'sess-k' }) })).json;
+  const remote = await r.call('GET', '/api/asks', { headers: { 'x-wc-remote': '1' } });
+  const kinds = Object.fromEntries(remote.json.asks.map((x) => [x.id, x.tool_kind]));
+  assert.deepEqual(kinds, { [unknown.id]: 'Tool', [known.id]: 'Read' });
+  assert.ok(!remote.text.includes('LSP'), "the basic view never names the tool");
+  const local = await r.call('GET', '/api/asks');
+  const u = local.json.asks.find((x) => x.id === unknown.id);
+  assert.deepEqual([u.tool_name, u.tool_kind], ['LSP', 'Tool'], 'local reads the name from tool_name, the class from tool_kind');
+});
