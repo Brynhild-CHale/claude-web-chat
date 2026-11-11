@@ -1,7 +1,7 @@
 'use strict';
 
 // lib/connector/frames.js (tranche 6, U716): FRAME_SHAPES is held EQUAL to the
-// locked contract-05 schemas (the v1.4 lock, every locked amendment folder in
+// locked contract-05 schemas (the copied lock, every locked amendment folder in
 // lock order, through test-support/contracts-loader), so the runtime table —
 // which carries no schema and no ajv — cannot drift from a schema without this
 // file failing (ruling U716@inbound-frame-check (a)).

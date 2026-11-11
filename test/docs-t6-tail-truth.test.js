@@ -14,7 +14,8 @@
 // (the spawn lock, the ring's resend rule). U792 (hand fold 15, form 4): the
 // corrective wave's words (--pair-only, the loopback hosts, the revoked hint,
 // the spawn lock's callers, the tool class) and ROUTES@as-built (a), D1: the
-// pending routes as the build serves them, version 2 not yet copied.
+// routes added since table_version 1 as the build serves them. U793: the build
+// ships table_version 2 (A-04.2), and the pending list is empty.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
