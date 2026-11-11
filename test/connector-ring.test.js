@@ -55,14 +55,19 @@ function assertSchema(batch) {
 // ── stubs ──────────────────────────────────────────────────────────────────
 
 // The link's surface the ring uses: batchSlot (4 per chat), send, channel and
-// 'ready'. autoAck answers each batch as the fake hub does.
-function stubLink({ autoAck = true, window = 4 } = {}) {
+// 'ready'. autoAck answers each batch as the fake hub does. `up: false` is a
+// link before its first 'ready': batchSlot answers false until one, as the
+// real link's does (lib/connector/link.js batchSlot: not up, no slot; U723c).
+function stubLink({ autoAck = true, window = 4, up = true } = {}) {
   const l = new EventEmitter();
+  l.up = up;
+  l.on('ready', () => { l.up = true; });   // registered before the ring's listener
   l.sent = [];
   l.slots = new Map();
   l.handlers = new Map();
   l.cursors = new Map();
   l.batchSlot = (chat) => {
+    if (!l.up) return false;
     const n = l.slots.get(chat) || 0;
     if (n >= window) return false;
     l.slots.set(chat, n + 1);
@@ -1049,4 +1054,306 @@ test('U723b: a handed-back cursor whose capture_seq covers the record resends no
   await settle(80);
   assert.deepStrictEqual(h.sinceMark('cursor'), [], 'both batches are covered');
   assert.strictEqual(h.ring.stats(CHAT).held, false);
+});
+
+// ── U723c: the first cursor of a connector's life, after the read settled ───
+//
+// `connect run` resumes a chat's read before it starts the link
+// (lib/connector/run.js), so after a connector restart the read opens from 0
+// (no cursor yet) and may settle — entries read — before the hub's chat.assign
+// hands the first cursor over. C-07.10's rows 2 to 4 hold whichever comes
+// first. The link is down until its first 'ready' (stubLink up: false), and
+// every send and host read is stamped in one timeline.
+function restartWorld({ boot = 'boot-a', records = {}, healthOf = null } = {}) {
+  const timeline = [];
+  const lc = stubLifecycle({ boot });
+  if (healthOf) lc.healthOf = healthOf;
+  const link = stubLink({ up: false });
+  const send = link.send;
+  link.send = (ch, kind, body) => { timeline.push({ send: body.batch.batch_id }); return send(ch, kind, body); };
+  const base = recordsClient({ boot, ...records });
+  const client = { reads: base.reads, get: async (p, o) => { timeline.push(`read ${p}`); return (records.get || base.get)(p, o); } };
+  const timers = [];
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {} } });
+  ring.install({ lifecycle: lc, link });
+  const ready = () => { link.slots.clear(); timeline.push('ready'); link.emit('ready', {}); };
+  const handBack = (c) => { timeline.push('cursor'); ring.setCursor(CHAT, c); };
+  const entry = (s) => lc.emit({ type: 'entry', entry: { seq: s, ts: s, kind: 'store', patch: { a: s } } });
+  const firstSend = () => timeline.findIndex((x) => typeof x === 'object' && x.send);
+  return { lc, link, client, ring, timeline, timers, ready, handBack, entry, firstSend };
+}
+
+// Row 2: the first batch after the cursor is contiguous from it, names its seq
+// as since, carries no gap object, and nothing at or below it is sent.
+function assertResumedFrom(h, seq, seqs) {
+  const batches = h.link.batches();
+  assert.ok(batches.length >= 1, 'a batch went after the cursor');
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), seqs, 'each entry above the cursor once, in order');
+  assert.ok(h.link.entries().every((e) => e.seq > seq), '0 entries at or below the cursor');
+  const [b] = batches;
+  assert.strictEqual(b.boot, 'boot-a');
+  assert.strictEqual(b.since, seq, 'the first batch names the cursor\'s seq as since');
+  assert.ok(!('gap' in b), 'no gap object: the hub records no source.gap');
+  assert.strictEqual(b.contiguous, true, 'C-07.10 row 2: contiguous from the cursor');
+  assert.strictEqual(h.ring.stats(CHAT).dropped, 0, 'dropped 0');
+  assert.ok(h.timeline.indexOf('cursor') < h.firstSend(), 'nothing before the cursor');
+}
+
+// Rows 3 and 4: the new boot's first batch is not contiguous, carries the
+// reset gap object and follows C-07.12a's boot check (reinit set).
+const OLD_CURSOR = cursor('boot-a', 40, { capture_seq: 5, element_seq: 30 });
+const NEW_RING = [1, 2, 3].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { b: s } }));
+const NEW_RECORDS = { captureNext: 2, elementNext: 50, ring: NEW_RING };
+
+function assertRestarted(h) {
+  const batches = h.link.batches();
+  assert.ok(batches.length >= 1, 'a batch went after the cursor');
+  batches.forEach(assertSchema);
+  const [b] = batches;
+  assert.strictEqual(b.boot, 'boot-b');
+  assert.strictEqual(b.contiguous, false, 'the new boot\'s first batch is not contiguous');
+  assert.deepStrictEqual(b.gap, { gap: true, dropped: 0, oldest: 1, reset: true }, 'one restart gap');
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [1, 2, 3], 'the new ring once, in order');
+  const capAt = h.timeline.indexOf('read /api/captures?since=5');
+  const elAt = h.timeline.indexOf('read /api/elements?since=30');
+  assert.ok(capAt >= 0 && elAt >= 0, 'the boot check read both routes from the cursor');
+  assert.ok(capAt < h.firstSend() && elAt < h.firstSend(), 'the boot check ran before the first batch');
+  assert.ok(h.timeline.indexOf('cursor') < h.firstSend(), 'nothing before the cursor');
+  assert.strictEqual(b.reinit, true, 'capture next_cursor 2 < capture_seq 5: reinit on the first batch');
+}
+
+test('U723c control: cursor first (ready, the cursor boot-a/3, then the read) — the first batch is contiguous from 3, no gap, nothing at or below 3', async () => {
+  const h = restartWorld();
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  assert.strictEqual(h.lc.open(), 3, 'since the cursor\'s seq');
+  for (let s = 4; s <= 5; s++) h.entry(s);
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the resumed batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+for (const readyFirst of [false, true]) {
+  const how = readyFirst ? 'ready first, the read opens and settles while the chat is held' : 'the link down until ready';
+  test(`U723c (A) same boot, read first, ${how}: entries 1..5 read from 0, then the cursor boot-a/3 — contiguous from 3, no gap, the reconcile from the cursor`, async () => {
+    const h = restartWorld();
+    if (readyFirst) h.ready();
+    assert.strictEqual(h.lc.open(), 0, 'no cursor yet: since 0');
+    for (let s = 1; s <= 5; s++) h.entry(s);
+    await settle();
+    assert.strictEqual(h.link.batches().length, 0, 'nothing on the wire before the cursor');
+    if (!readyFirst) h.ready();
+    await settle();
+    h.handBack(cursor('boot-a', 3));
+    await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+    await settle();
+    assertResumedFrom(h, 3, [4, 5]);
+    const at = h.timeline.indexOf('cursor');
+    assert.ok(h.timeline.indexOf('read /api/captures?since=0', at) > at, 'the reconcile a read with since > 0 makes, from the cursor\'s capture_seq');
+  });
+
+  test(`U723c (B) boot changed while the connector was down, read first, ${how}: boot-b entries 1..3, then the cursor boot-a/40 — restart gap, boot check first, reinit`, async () => {
+    const h = restartWorld({ boot: 'boot-b', records: NEW_RECORDS });
+    if (readyFirst) h.ready();
+    assert.strictEqual(h.lc.open(), 0, 'no cursor yet: since 0');
+    for (const e of NEW_RING) h.lc.emit({ type: 'entry', entry: e });
+    await settle();
+    assert.strictEqual(h.link.batches().length, 0, 'nothing on the wire before the cursor');
+    if (!readyFirst) h.ready();
+    await settle();
+    h.handBack(OLD_CURSOR);
+    await waitUntil(() => h.link.entries().length >= 3, { what: 'the new boot\'s batch' });
+    await settle();
+    assertRestarted(h);
+  });
+}
+
+test('U723c control: cursor first (ready, the cursor boot-a/40, then the read finds boot-b) — restart gap, boot check, reinit', async () => {
+  const h = restartWorld({ boot: 'boot-b', records: NEW_RECORDS });
+  h.ready();
+  h.handBack(OLD_CURSOR);
+  assert.strictEqual(h.lc.open(), 40, 'since chosen against the cursor\'s boot');
+  await waitUntil(() => h.link.entries().length >= 3, { what: 'the re-based new ring' });
+  await settle();
+  assertRestarted(h);
+});
+
+test('U723c no header: the boot learned from health, the read settled before the cursor — the same first batch as with the header; a cursor that lands while health is pending too', async () => {
+  // The read settles (health names the boot) before the cursor.
+  const h = restartWorld();
+  assert.strictEqual(h.lc.open({}), 0);
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle();
+  assert.ok(h.lc.healthReads >= 2, 'health as the hold opened and after the first entry');
+  h.ready();
+  await settle();
+  assert.strictEqual(h.link.batches().length, 0);
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+
+  // The cursor lands while the read's health reads are still pending: the read
+  // settles after it, from 0, and is met the same way.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const g = restartWorld({ healthOf: async () => { await gate; return { boot: 'boot-a', viewers: 0 }; } });
+  g.ready();
+  assert.strictEqual(g.lc.open({}), 0);
+  for (let s = 1; s <= 5; s++) g.entry(s);
+  await settle();
+  g.handBack(cursor('boot-a', 3));
+  await settle();
+  assert.strictEqual(g.link.batches().length, 0, 'the read has no boot yet');
+  release();
+  await waitUntil(() => g.link.entries().length >= 2, { what: 'the batch after the read settled' });
+  await settle();
+  assertResumedFrom(g, 3, [4, 5]);
+});
+
+test('U723c the poll: three failed opens, the poll from 0 ingested before the cursor — the same first batch; a cursor that lands while the poll is in flight too', async () => {
+  const ringOf = Array.from({ length: 5 }, (_, i) => ({ seq: i + 1, ts: i + 1, kind: 'store', patch: { a: i + 1 } }));
+  const h = restartWorld({ records: { ring: ringOf } });
+  for (let i = 0; i < 3; i++) { h.lc.provider(CHAT); h.lc.emit({ type: 'close' }); }
+  await waitUntil(() => h.client.reads.includes('/api/events?since=0'), { what: 'the poll from 0' });
+  await settle();
+  assert.strictEqual(h.ring.stats(CHAT).pending, 5, 'the poll\'s entries read');
+  h.ready();
+  await settle();
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+
+  // The poll from 0 is in flight when the cursor lands.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const base = recordsClient({ boot: 'boot-a', ring: ringOf });
+  const g = restartWorld({ records: { get: async (p, o) => { if (p.startsWith('/api/events')) await gate; return base.get(p, o); } } });
+  for (let i = 0; i < 3; i++) { g.lc.provider(CHAT); g.lc.emit({ type: 'close' }); }
+  await waitUntil(() => g.timeline.includes('read /api/events?since=0'), { what: 'the poll in flight' });
+  g.ready();
+  g.handBack(cursor('boot-a', 3));
+  release();
+  await waitUntil(() => g.link.entries().length >= 2, { what: 'the batch after the poll' });
+  await settle();
+  assertResumedFrom(g, 3, [4, 5]);
+});
+
+test('U723c (A) the cursor above everything read: nothing to send; the replay\'s entries up to it are not kept, and the next goes contiguous from the cursor', async () => {
+  const h = restartWorld();
+  h.lc.open();
+  for (let s = 1; s <= 3; s++) h.entry(s);
+  await settle();
+  h.ready();
+  h.handBack(cursor('boot-a', 5));
+  await settle();
+  assert.strictEqual(h.link.batches().length, 0, 'nothing to send');
+  assert.strictEqual(h.ring.stats(CHAT).pending, 0);
+  for (let s = 4; s <= 6; s++) h.entry(s);
+  await waitUntil(() => h.link.entries().length >= 1, { what: 'the entry above the cursor' });
+  await settle();
+  assertResumedFrom(h, 5, [6]);
+});
+
+test('U723c (A) a daemon ring that no longer reaches cursor + 1: the first batch reports the evicted gap from the cursor, never contiguous: true — read before the cursor, or after it', async () => {
+  for (const before of [true, false]) {
+    const h = restartWorld();
+    h.lc.open();
+    if (before) for (let s = 10; s <= 12; s++) h.entry(s);
+    await settle();
+    h.ready();
+    h.handBack(cursor('boot-a', 3));
+    if (!before) for (let s = 10; s <= 12; s++) h.entry(s);
+    await waitUntil(() => h.link.entries().length >= 3, { what: 'the batch after the cursor' });
+    await settle();
+    const [b] = h.link.batches();
+    assertSchema(b);
+    assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [10, 11, 12]);
+    assert.strictEqual(b.contiguous, false, `not contiguous (${before ? 'read before' : 'read after'})`);
+    assert.deepStrictEqual(b.gap, { gap: true, dropped: 6, oldest: 10 }, 'the evicted gap a read from the cursor answers: 4..9');
+    assert.strictEqual(b.since, 3);
+  }
+});
+
+test('U723c (B) the read settled on the new boot with nothing read yet: the restart mark lands on the next entry, after the boot check', async () => {
+  const h = restartWorld({ boot: 'boot-b', records: NEW_RECORDS });
+  h.lc.open();
+  await settle();
+  h.ready();
+  h.handBack(OLD_CURSOR);
+  await settle();
+  for (const e of NEW_RING) h.lc.emit({ type: 'entry', entry: e });
+  await waitUntil(() => h.link.entries().length >= 3, { what: 'the new boot\'s batch' });
+  await settle();
+  assertRestarted(h);
+});
+
+test('U723c row 1 unchanged: a cursor with no boot after the read settled — the whole ring from 0; a ring whose oldest is above 1 not contiguous with no gap object', async () => {
+  for (const [from, contiguous] of [[1, true], [3, false]]) {
+    const h = restartWorld();
+    h.lc.open();
+    for (let s = from; s <= 5; s++) h.entry(s);
+    await settle();
+    h.ready();
+    h.handBack(cursor(null, 0));
+    await waitUntil(() => h.link.entries().length >= 6 - from, { what: 'the whole ring' });
+    await settle();
+    const [b] = h.link.batches();
+    assertSchema(b);
+    assert.strictEqual(b.since, 0);
+    assert.strictEqual(b.contiguous, contiguous);
+    assert.ok(!('gap' in b), 'no gap object');
+    assert.deepStrictEqual(h.link.entries().map((e) => e.seq), Array.from({ length: 6 - from }, (_, i) => from + i));
+  }
+});
+
+test('U723c the hold unchanged: a chat whose cursor never arrives stays held and sends nothing; a second ready before the first cursor holds again, then one correct first batch', async () => {
+  const h = restartWorld();
+  h.ready();
+  h.lc.open();
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle(60);
+  assert.strictEqual(h.link.batches().length, 0, 'nothing without a cursor');
+  assert.strictEqual(h.ring.stats(CHAT).held, true);
+  assert.strictEqual(h.ring.stats(CHAT).pending, 5, 'held, not lost');
+
+  // The link drops and a second hello.ack comes before any cursor.
+  h.ready();
+  await settle();
+  assert.strictEqual(h.link.batches().length, 0, 'held again');
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assert.strictEqual(h.link.batches().length, 1, 'one first batch');
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+test('U723c a reset under the resumed boot ends the floor the first cursor set: the ring that counts from 1 again is sent whole, behind the reset gap', async () => {
+  const again = [1, 2].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { z: s } }));
+  const h = restartWorld({ records: { ring: again } });
+  h.lc.open();
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle();
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+  // The stream answers a reset under the boot it reads (C-07.10 row 4): the
+  // re-base reads 1 and 2 from 0, and 3 follows live — all at or below the
+  // first cursor's seq, none of them what the hub holds.
+  h.lc.emit({ type: 'gap', gap: { gap: true, dropped: 0, oldest: 1, since: 5, reset: true } });
+  await waitUntil(() => h.link.entries().length >= 4, { what: 'the re-based ring' });
+  h.entry(3);
+  await waitUntil(() => h.link.entries().length >= 5, { what: 'the entry after the re-base' });
+  await settle();
+  const batches = h.link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [4, 5, 1, 2, 3], 'nothing of the new count is taken for what the hub holds');
+  assert.strictEqual(batches[1].since, 0);
+  assert.strictEqual(batches[1].contiguous, false);
+  assert.deepStrictEqual(batches[1].gap, { gap: true, dropped: 0, oldest: 1, reset: true });
+  assert.strictEqual(batches[1].entries[0].seq, 1);
 });
