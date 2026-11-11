@@ -1963,3 +1963,23 @@ test('U723e the gate\'s own timing: the reconcile read issued before the ack and
   assert.strictEqual(h.link.batches().length, 1, 'no second batch carries them');
   assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
 });
+
+test('U723e after a relink the handed-back cursor covers the unacknowledged batch (its ack was lost with the link): the read asked before the cursor and answered after it queues nothing that batch carried', async () => {
+  const h = reconcileWorld();
+  const release = h.w.hold(1);   // the reconcile after the first batch answers late
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6']);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile asked' });
+  assert.strictEqual(h.capReads[1], '/api/captures?since=4', 'asked before the cursor, at the old counter');
+  // The link drops before the ack. The hub committed the batch: the cursor it
+  // hands back on the new link covers it (setCursor's covered()), so it is not resent.
+  h.relink();
+  h.handBack(cursor('boot-b', 2, { capture_seq: 6 }));
+  assert.strictEqual(h.ring.stats(CHAT).inflight, 0, 'the covered batch left');
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  assert.strictEqual(h.link.batches().length, 1, 'no resend, and no second batch carries them');
+  assert.deepStrictEqual(h.idsAfter('ready'), [], 'nothing the hub acknowledged goes on the new link');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+});
