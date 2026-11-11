@@ -615,3 +615,26 @@ test('no pause or resume row: `connect pause` prints the usage and exits 1', asy
     assert.ok(help.out.includes(`claude-web-chat ${usage}`), usage);
   }
 });
+
+// ── hand fold 7 (i), U790: the leave outlives a failed release ─────────────
+
+test('the leave was sent, then release-all answers ok:false or throws: the output names the leave, not HUB_KEEPS, and the direct path stops the daemons (U790)', async (t) => {
+  for (const failure of ['ok-false', 'throws']) {
+    const m = pairedMachine(t);
+    const s = stubs(m);
+    const asked = [];
+    const ask = async (request) => {
+      asked.push(request.type);
+      if (request.type === 'connector.leave') return { ok: true, local: true, type: request.type, result: { sent: true, closed: true } };
+      // The connector exits on the hub's 1000 close: the second ask fails.
+      if (failure === 'throws') throw Object.assign(new Error('socket closed'), { code: 'ECONNRESET' });
+      return { ok: false, local: true, error: 'the release failed (error)' };
+    };
+    const r = await connect(['disconnect'], { disconnectDeps: s.deps, ask });
+    assert.equal(r.code, 0, `${failure}: ${r.err}`);
+    assert.deepEqual(asked, ['connector.leave', 'connector.release-all'], failure);
+    assert.match(r.out, /the hub was told this machine is leaving/, failure);
+    assert.ok(!r.out.includes(setup.HUB_KEEPS), `${failure}: ${r.out}`);
+    assert.match(r.out, /stopped \d+ daemons? on owned roots/, `${failure}: the release was not done, so the direct path ran`);
+  }
+});
