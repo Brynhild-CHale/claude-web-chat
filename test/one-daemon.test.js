@@ -379,16 +379,53 @@ test('five concurrent first spawns for one fresh root start ONE child and hand e
 });
 
 test('a stale spawn lock is taken over: a dead holder, and a live pid with another start time', async (t) => {
-  for (const stale of [{ pid: deadPid(), proc_start: Date.now() - 1000 }, { pid: process.pid, proc_start: 1 }]) {
+  // The third is ANOTHER live process (this one's parent) with a start that is
+  // not its own: the reused pid, whose real start is read from the system
+  // (this process's own pid is compared without that read).
+  const cases = [
+    ['dead pid', { pid: deadPid(), proc_start: Date.now() - 1000 }],
+    ['own pid, other start', { pid: process.pid, proc_start: 1 }],
+    ['another live pid, other start', { pid: process.ppid, proc_start: 1 }],
+  ];
+  for (const [what, stale] of cases) {
     const w = raceWorld(t);
     fs.mkdirSync(path.dirname(w.lockFile), { recursive: true });
     require('../lib/core/fsjson').writeJsonAtomic(w.lockFile, stale);
     const t0 = Date.now();
     const rec = await spawnDaemon(w.root, { maxMs: 8000, spawn: w.spawn, daemonFor: w.daemonFor });
-    assert.equal(w.children.length, 1, `spawned under the broken lock (${JSON.stringify(stale.pid === process.pid ? 'own pid, other start' : 'dead pid')})`);
+    assert.equal(w.children.length, 1, `spawned under the broken lock (${what})`);
     assert.equal(rec && rec.pid, w.children[0].pid);
-    assert.ok(Date.now() - t0 < 5000, 'taken over at once, not after a wait');
+    assert.ok(Date.now() - t0 < 5000, `taken over at once, not after a wait (${what})`);
     assert.equal(w.lockSeen[0].value.pid, process.pid, 'the new lock is this process\'s');
+    assert.equal(fs.existsSync(w.lockFile), false);
+  }
+});
+
+test('a live holder\'s spawn lock is waited for and left alone; past HELD_LOCK_MAX_MS it is taken over whatever its holder says', async (t) => {
+  // Two live holders by the pid and start rule: this process, and another one
+  // (its parent) with the start the system reports for it.
+  const { sampleProcs } = require('../lib/core/portfiles');
+  const parent = (await sampleProcs([process.ppid])).get(process.ppid);
+  const holders = [{ pid: process.pid, proc_start: Math.round(Date.now() - process.uptime() * 1000) }];
+  if (parent && Number.isFinite(parent.startedAt)) holders.push({ pid: process.ppid, proc_start: parent.startedAt });
+  for (const holder of holders) {
+    const w = raceWorld(t);
+    fs.mkdirSync(path.dirname(w.lockFile), { recursive: true });
+    require('../lib/core/fsjson').writeJsonAtomic(w.lockFile, holder);
+    const t0 = Date.now();
+    const none = await spawnDaemon(w.root, { maxMs: 300, spawn: w.spawn, daemonFor: w.daemonFor });
+    assert.equal(none, null, `nothing is up and the lock is held (pid ${holder.pid === process.pid ? 'own' : 'parent'})`);
+    assert.ok(Date.now() - t0 >= 250, 'it waited for the lock');
+    assert.equal(w.children.length, 0, 'a waiter whose wait ran out spawned nothing');
+    assert.deepEqual(readJson(w.lockFile).value, holder, 'the live holder\'s lock is left as it was');
+
+    // The same record, dated past the ceiling: stale whatever it says.
+    const old = new Date(Date.now() - registry.HELD_LOCK_MAX_MS - 5000);
+    fs.utimesSync(w.lockFile, old, old);
+    const rec = await spawnDaemon(w.root, { maxMs: 8000, spawn: w.spawn, daemonFor: w.daemonFor });
+    assert.equal(w.children.length, 1, 'spawned under the lock taken over');
+    assert.equal(rec && rec.pid, w.children[0].pid);
+    assert.equal(w.lockSeen[0].value.pid, process.pid);
     assert.equal(fs.existsSync(w.lockFile), false);
   }
 });
