@@ -287,3 +287,166 @@ test('a foreground `start` with no daemon starts one', async (t) => {
   assert.equal(found.pid, run.child.pid);
   assert.ok(isPidAlive(run.child.pid));
 });
+
+// ── one first spawn per root (U718b; the 6A gate's GT-23) ──────────────────
+//
+// Concurrent first spawns used to all pass spawnDaemon's "is a daemon up?"
+// check before any child bound: five callers started five daemons, the first
+// to answer was handed to every caller, and it then stepped aside (the
+// instance guard) for the last to write the portfile. The world here models
+// exactly that, in the suite's terms: the spawn seam starts a stub "daemon"
+// that boots, writes itself into the root's world file (last writer wins, as
+// the portfile), and then every GUARD_MS checks that file and exits when it
+// names another pid — the instance guard's step-aside. daemonFor answers the
+// pid the world file names while it is alive. spawnDaemon now holds the root's
+// spawn lock (userPaths().spawnLock, in the sandbox HOME) from the check until
+// its child answers, so ONE child is started and every caller is handed it.
+
+const { userPaths } = require('../lib/core/paths');
+const { withTempHome } = require('../test-support/helpers');
+const { readJson } = require('../lib/core/fsjson');
+const daemonUtil = require('../lib/util/daemon');
+
+const GUARD_MS = 400;
+const WORLD_STUB = `
+const fs = require('fs');
+const [world, guardMs] = [process.argv[2], Number(process.argv[3])];
+const write = () => {
+  fs.writeFileSync(world + '.' + process.pid, String(process.pid));
+  fs.renameSync(world + '.' + process.pid, world);
+};
+const check = () => {
+  let pid = null;
+  try { pid = Number(fs.readFileSync(world, 'utf8')); } catch {}
+  if (pid !== process.pid) process.exit(0);
+  setTimeout(check, guardMs);
+};
+setTimeout(() => { write(); setTimeout(check, guardMs); }, 150 + Math.floor(Math.random() * 150));
+setTimeout(() => process.exit(0), 30000);
+`;
+
+function raceWorld(t) {
+  withTempHome(t);
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wc-one-spawn-')));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+  const stub = path.join(dir, 'world-stub.js');
+  fs.writeFileSync(stub, WORLD_STUB);
+  const world = path.join(dir, 'world');
+  const root = path.join(dir, 'root');
+  fs.mkdirSync(path.join(root, '.web-chat'), { recursive: true });
+  const w = { dir, root, world, children: [], lockSeen: [] };
+  t.after(() => { for (const c of w.children) { try { c.kill('SIGKILL'); } catch {} } });
+  w.alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  w.daemonFor = async () => {
+    let pid = null;
+    try { pid = Number(fs.readFileSync(world, 'utf8')); } catch { return null; }
+    return pid && w.alive(pid) ? { pid, port: 1, url: 'http://localhost:1', source: 'portfile' } : null;
+  };
+  w.lockFile = daemonUtil.spawnLockFor(root);
+  w.spawn = () => {
+    // Read the lock while the spawner holds it (what it holds, where it lives).
+    w.lockSeen.push(readJson(w.lockFile));
+    const c = daemonUtil.spawnDetached({ bin: stub, args: [world, String(GUARD_MS)], log: path.join(dir, 'stub.log') });
+    w.children.push(c);
+    return c;
+  };
+  return w;
+}
+
+test('five concurrent first spawns for one fresh root start ONE child and hand every caller the same record, alive past the guard\'s window', async (t) => {
+  const w = raceWorld(t);
+  const recs = await Promise.all(Array.from({ length: 5 }, () => spawnDaemon(w.root, { maxMs: 8000, spawn: w.spawn, daemonFor: w.daemonFor })));
+  assert.equal(w.children.length, 1, `one child started, not ${w.children.length}`);
+  const pid = w.children[0].pid;
+  for (const r of recs) assert.equal(r && r.pid, pid, `every caller handed the one child: ${JSON.stringify(recs)}`);
+  assert.equal(recs.filter((r) => r.child_pid === pid).length, 1, 'the spawner\'s record carries child_pid; the four adopted ones do not');
+  for (const r of recs) assert.deepEqual({ pid: r.pid, port: r.port, url: r.url, source: r.source }, { pid, port: 1, url: 'http://localhost:1', source: 'portfile' });
+
+  // The lock: in the user tier, keyed by the root's instance id, holding a pid
+  // and a start time only; released once the child answered.
+  assert.equal(w.lockFile, path.join(userPaths().root, 'spawn', `${registry.instanceId(w.root)}.lock`));
+  assert.ok(!w.lockFile.startsWith(w.root));
+  assert.equal(w.lockSeen.length, 1);
+  assert.ok(w.lockSeen[0].ok, JSON.stringify(w.lockSeen[0]));
+  assert.deepEqual(Object.keys(w.lockSeen[0].value).sort(), ['pid', 'proc_start']);
+  assert.equal(w.lockSeen[0].value.pid, process.pid);
+  assert.equal(fs.existsSync(w.lockFile), false, 'released');
+
+  // Past the guard's window (three checks): the handed pid is alive and still the root's.
+  await new Promise((r) => setTimeout(r, GUARD_MS * 3));
+  assert.ok(w.alive(pid), 'the handed pid is alive');
+  assert.equal((await w.daemonFor()).pid, pid);
+});
+
+test('a stale spawn lock is taken over: a dead holder, and a live pid with another start time', async (t) => {
+  // The third is ANOTHER live process (this one's parent) with a start that is
+  // not its own: the reused pid, whose real start is read from the system
+  // (this process's own pid is compared without that read).
+  const cases = [
+    ['dead pid', { pid: deadPid(), proc_start: Date.now() - 1000 }],
+    ['own pid, other start', { pid: process.pid, proc_start: 1 }],
+    ['another live pid, other start', { pid: process.ppid, proc_start: 1 }],
+  ];
+  for (const [what, stale] of cases) {
+    const w = raceWorld(t);
+    fs.mkdirSync(path.dirname(w.lockFile), { recursive: true });
+    require('../lib/core/fsjson').writeJsonAtomic(w.lockFile, stale);
+    const t0 = Date.now();
+    const rec = await spawnDaemon(w.root, { maxMs: 8000, spawn: w.spawn, daemonFor: w.daemonFor });
+    assert.equal(w.children.length, 1, `spawned under the broken lock (${what})`);
+    assert.equal(rec && rec.pid, w.children[0].pid);
+    assert.ok(Date.now() - t0 < 5000, `taken over at once, not after a wait (${what})`);
+    assert.equal(w.lockSeen[0].value.pid, process.pid, 'the new lock is this process\'s');
+    assert.equal(fs.existsSync(w.lockFile), false);
+  }
+});
+
+test('a live holder\'s spawn lock is waited for and left alone; past HELD_LOCK_MAX_MS it is taken over whatever its holder says', async (t) => {
+  // Two live holders by the pid and start rule: this process, and another one
+  // (its parent) with the start the system reports for it.
+  const { sampleProcs } = require('../lib/core/portfiles');
+  const parent = (await sampleProcs([process.ppid])).get(process.ppid);
+  const holders = [{ pid: process.pid, proc_start: Math.round(Date.now() - process.uptime() * 1000) }];
+  if (parent && Number.isFinite(parent.startedAt)) holders.push({ pid: process.ppid, proc_start: parent.startedAt });
+  for (const holder of holders) {
+    const w = raceWorld(t);
+    fs.mkdirSync(path.dirname(w.lockFile), { recursive: true });
+    require('../lib/core/fsjson').writeJsonAtomic(w.lockFile, holder);
+    const t0 = Date.now();
+    const none = await spawnDaemon(w.root, { maxMs: 300, spawn: w.spawn, daemonFor: w.daemonFor });
+    assert.equal(none, null, `nothing is up and the lock is held (pid ${holder.pid === process.pid ? 'own' : 'parent'})`);
+    assert.ok(Date.now() - t0 >= 250, 'it waited for the lock');
+    assert.equal(w.children.length, 0, 'a waiter whose wait ran out spawned nothing');
+    assert.deepEqual(readJson(w.lockFile).value, holder, 'the live holder\'s lock is left as it was');
+
+    // The same record, dated past the ceiling: stale whatever it says.
+    const old = new Date(Date.now() - registry.HELD_LOCK_MAX_MS - 5000);
+    fs.utimesSync(w.lockFile, old, old);
+    const rec = await spawnDaemon(w.root, { maxMs: 8000, spawn: w.spawn, daemonFor: w.daemonFor });
+    assert.equal(w.children.length, 1, 'spawned under the lock taken over');
+    assert.equal(rec && rec.pid, w.children[0].pid);
+    assert.equal(w.lockSeen[0].value.pid, process.pid);
+    assert.equal(fs.existsSync(w.lockFile), false);
+  }
+});
+
+test('a spawner whose child never comes up releases the lock at its timeout; the next caller then spawns, and one whose wait runs out spawns nothing', async (t) => {
+  const w = raceWorld(t);
+  const order = [];
+  // A: its child never answers (a seam that starts nothing), maxMs 600.
+  const a = spawnDaemon(w.root, { maxMs: 600, spawn: () => { order.push('a-spawn'); }, daemonFor: w.daemonFor })
+    .then((r) => { order.push('a-done'); return r; });
+  // B: waits for A's lock, then finds nothing up and spawns its own.
+  const b = spawnDaemon(w.root, { maxMs: 8000, spawn: () => { order.push('b-spawn'); return w.spawn(); }, daemonFor: w.daemonFor });
+  // C: gives up waiting long before A lets go: adopts nothing, spawns nothing.
+  let cSpawned = 0;
+  const c = spawnDaemon(w.root, { maxMs: 150, spawn: () => { cSpawned++; }, daemonFor: w.daemonFor });
+  const [ra, rb, rc] = await Promise.all([a, b, c]);
+  assert.equal(ra, null, 'A: nothing came up');
+  assert.equal(rc, null, 'C: its wait ran out with nothing up');
+  assert.equal(cSpawned, 0, 'C spawned nothing');
+  assert.deepEqual(order, ['a-spawn', 'a-done', 'b-spawn'], 'B spawned only after A released at its timeout');
+  assert.equal(rb && rb.pid, w.children[0].pid);
+  assert.equal(w.children.length, 1);
+  assert.equal(fs.existsSync(w.lockFile), false);
+});
