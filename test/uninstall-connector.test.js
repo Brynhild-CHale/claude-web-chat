@@ -393,18 +393,26 @@ test('uninstall --self asks the running connector release-all over its socket by
   shortHome(t);
   const { keyFile } = pairedRecord();
   fs.writeFileSync(keyFile, 'not a real key\n', { mode: 0o600 });
+  // A second, revoked record on disk: soleHub refuses, so only the record's
+  // own socket (not the sole hub's) reaches the running connector.
+  const old = setup.newRecord({ hubId: 'a-old-hub', origin: 'https://old.example.com' });
+  old.credential = { state: 'revoked' };
+  setup.writeRecord(old);
+  assert.equal(setup.soleHub().ok, false, 'two records: soleHub refuses');
   const asked = await stubConnectorSocket(t, HUB);
   const order = [];
-  let result = null;
+  const results = new Map();
   const { opts } = seams(order, {
     // The real disconnectLocal and NO connectorDeps: uninstall's own default
     // viaConnector is what runs.
-    disconnectLocal: async (args) => { order.push('disconnect'); result = await setup.disconnectLocal(args); return result; },
+    disconnectLocal: async (args) => { order.push('disconnect'); const r = await setup.disconnectLocal(args); results.set(args.hubId, r); return r; },
   });
   const { error, text } = await captured(() => uninstall(['--self'], { cwd: projectRoot(t), ...opts }));
   assert.equal(error, null, error && error.message);
   assert.deepEqual(asked, ['connector.release-all'], 'release-all only: no connector.leave on uninstall');
+  const result = results.get(HUB);
   assert.deepEqual(result.steps.find((s) => s.step === 'daemons'), { step: 'daemons', via: 'connector' });
+  assert.equal(results.get('a-old-hub').steps.find((s) => s.step === 'daemons').via, 'direct', 'no connector answers on the revoked record\'s socket');
   assert.match(text, /every hold released and its daemons stopped/);
   assert.match(text, /The hub keeps this machine until you revoke it there\./);
   assert.ok(!fs.existsSync(keyFile), 'the key file was deleted');
