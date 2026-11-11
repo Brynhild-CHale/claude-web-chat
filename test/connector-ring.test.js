@@ -1709,3 +1709,277 @@ test('U723d the table ran every case', (t) => {
   assert.strictEqual(ordersRun, expected);
   assert.ok(expected >= 100, `${expected} cases`);
 });
+
+// ── U723e: a reconciled capture record is queued once ───────────────────────
+//
+// The gate's line (t6-6A-r4, C-6A4-23-reconcile-repeat): after a daemon
+// restart the boot check's capture records ride the new boot's first batch;
+// that batch is not contiguous, so C-07.12 reads again at once — at the
+// capture_seq the ack has not moved yet — and the read answers the same
+// records. C-07.12's reads are kept; what a read answers is not queued again
+// while an unacknowledged batch carries it, nor once the hub's cursor covers
+// its counter. Each record's capture_id goes on a link once.
+
+const capRecord = (n) => ({ id: `cap${n}`, seq: n, ts: n, url: 'https://x.test/p', title: 'T', distilled: 'body', raw_ref: `captures/cap${n}.html`, source: 'ext:tab-stream', profile: 'default' });
+
+// A boot-b daemon (ring 1..2) behind a cursor of boot-a. The capture route
+// answers `w.captures` whatever `since` is (a read that answers records again);
+// `w.hold(n)` makes capture read n (from 0) wait until its release.
+function reconcileWorld({ captures = [capRecord(5), capRecord(6)], captureNext = 6, start = cursor('boot-a', 40, { capture_seq: 4 }) } = {}) {
+  const lc = stubLifecycle({ boot: 'boot-b' });
+  const link = stubLink({ autoAck: false });
+  const timeline = [];
+  const send = link.send;
+  link.send = (ch, kind, body) => { timeline.push({ batch: body.batch }); return send(ch, kind, body); };
+  const w = { captures, captureNext, gates: new Map() };
+  const records = { boot: 'boot-b', ring: [ringEntry(1), ringEntry(2)], elementNext: 0 };
+  const base = recordsClient(records);
+  const capReads = [];
+  const client = {
+    reads: base.reads,
+    get: async (p, o) => {
+      if (!p.startsWith('/api/captures')) return base.get(p, o);
+      base.reads.push(p);
+      const g = w.gates.get(capReads.length);
+      capReads.push(p);
+      if (g) await g;
+      return { captures: w.captures, next_cursor: w.captureNext };
+    },
+  };
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, start);
+  w.hold = (n) => { let release; w.gates.set(n, new Promise((r) => { release = r; })); return release; };
+  // Every capture_id on the wire after the last mark of `mark` (all with none).
+  const idsAfter = (mark) => {
+    const i = mark ? timeline.lastIndexOf(mark) : -1;
+    return timeline.slice(i + 1).filter((x) => typeof x === 'object').flatMap((x) => (x.batch.reconciled || []).map((r) => r.capture_id));
+  };
+  const relink = () => { link.slots.clear(); timeline.push('ready'); link.emit('ready', {}); };
+  const handBack = (c) => { timeline.push('cursor'); ring.setCursor(CHAT, c); };
+  // A gap, then entry `s`: a batch that is not contiguous, so C-07.12's read.
+  const breakAt = (s) => {
+    lc.emit({ type: 'gap', gap: { gap: true, dropped: 1, oldest: s } });
+    lc.emit({ type: 'entry', entry: ringEntry(s) });
+  };
+  // The daemon starts again under `boot` (a new ring 1..2) and the read opens on it.
+  const restartAs = (boot) => {
+    lc.emit({ type: 'close' });
+    lc.boot = boot;
+    records.boot = boot;
+    return lc.open();
+  };
+  return { lc, link, ring, w, capReads, timeline, idsAfter, relink, handBack, breakAt, restartAs };
+}
+
+// The new boot's first batch, out with both records, and the reconcile its
+// send made answered before any ack.
+async function firstBatchOfNewBoot(h) {
+  assert.strictEqual(h.lc.open(), 40, 'since chosen against the cursor\'s boot');
+  await waitUntil(() => h.link.batches().length >= 1, { what: 'the new boot\'s first batch' });
+  const [b1] = h.link.batches();
+  assertSchema(b1);
+  assert.strictEqual(b1.boot, 'boot-b');
+  assert.strictEqual(b1.contiguous, false, 'not contiguous: the restart gap');
+  assert.strictEqual(b1.gap.reset, true);
+  assert.deepStrictEqual(b1.entries.map((e) => e.seq), [1, 2]);
+  return b1;
+}
+
+test('U723e the gate\'s line: after a boot change the two reconciled records ride the first batch and are not queued again by the reconcile that follows it before the ack, nor after the ack by a later read that answers them again', async () => {
+  const h = reconcileWorld();
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6'], 'the boot check\'s records ride the first batch');
+  assert.strictEqual(h.capReads[0], '/api/captures?since=4', 'the boot check read at the cursor\'s capture_seq');
+  // C-07.12 kept: the batch was not contiguous, so the capture route is read
+  // again at once, at the capture_seq the ack has not moved yet.
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile after the non-contiguous batch' });
+  await settle();
+  assert.strictEqual(h.capReads[1], '/api/captures?since=4', 'the reconcile reads as before');
+  assert.strictEqual(h.link.batches().length, 1, 'no second batch carries them');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+  // The ack: the hub's capture_seq covers both.
+  h.link.ack(b1);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 6);
+  const acked = h.link.batches().length;
+  h.breakAt(5);
+  await waitUntil(() => h.capReads.length >= 3, { what: 'a third read' });
+  await settle();
+  assert.strictEqual(h.capReads[2], '/api/captures?since=6', 'the third read at the acknowledged capture_seq');
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.link.batches().slice(acked).flatMap((b) => b.reconciled || []), [], 'the third read queues nothing');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+});
+
+test('U723e a record above the acknowledged counter that no unacknowledged batch carries is still queued', async () => {
+  const h = reconcileWorld();
+  const b1 = await firstBatchOfNewBoot(h);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile' });
+  await settle();
+  // Before the ack: the read answers a record no batch carries — it goes.
+  h.w.captures = [capRecord(5), capRecord(6), capRecord(7)];
+  h.breakAt(5);
+  await waitUntil(() => h.idsAfter().includes('cap7'), { what: 'capture 7' });
+  await settle();
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6', 'cap7'], 'capture 7 queued, 5 and 6 not again');
+  h.link.ack(b1);
+  // After the ack (capture_seq 6) and with capture 7's batch still unacknowledged:
+  // a record above both goes, the rest do not.
+  h.w.captures = [capRecord(5), capRecord(6), capRecord(7), capRecord(8)];
+  h.breakAt(7);
+  await waitUntil(() => h.idsAfter().includes('cap8'), { what: 'capture 8' });
+  await settle();
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6', 'cap7', 'cap8'], 'each once; nothing lost');
+});
+
+test('U723e after a relink an unacknowledged batch\'s records go once on the new link — a read answered while held, or after the resend, queues them not again', async () => {
+  const h = reconcileWorld();
+  const release = h.w.hold(1);   // the reconcile after the first batch answers late
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6']);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile asked' });
+  // The link drops before the ack; the read answers while the chat is held.
+  h.relink();
+  release();
+  await settle();
+  assert.deepStrictEqual(h.idsAfter('ready'), [], 'nothing between ready and the cursor');
+  // The hub never committed the batch: its handed-back cursor is the old one.
+  h.handBack(cursor('boot-a', 40, { capture_seq: 4 }));
+  await settle();
+  const resent = h.link.batches().slice(1);
+  assert.strictEqual(resent[0].batch_id, b1.batch_id, 'the unacknowledged batch goes again, as sent');
+  assert.deepStrictEqual(h.idsAfter('ready'), ['cap5', 'cap6'], 'its records once on the new link');
+  // A reconcile after the resend, before its ack: nothing again on this link.
+  h.breakAt(5);
+  await waitUntil(() => h.capReads.length >= 3, { what: 'a read after the resend' });
+  await settle();
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.idsAfter('ready'), ['cap5', 'cap6'], 'never twice on one link');
+  assert.deepStrictEqual(h.idsAfter().filter((id) => id === 'cap5').length, 2, 'once per link: the first and the new');
+});
+
+test('U723e after a reinit the old counter suppresses nothing: the new surface\'s records at or below the old capture_seq ride the first batch once, and a later record goes', async () => {
+  // The counters went backwards (next_cursor 2 < capture_seq 5): C-07.12a.
+  const h = reconcileWorld({ captures: [capRecord(1), capRecord(2)], captureNext: 2, start: cursor('boot-a', 40, { capture_seq: 5 }) });
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.strictEqual(b1.reinit, true);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap1', 'cap2'], 'records 1 and 2, below the old capture_seq 5, are sent');
+  assert.deepStrictEqual(h.capReads.slice(0, 2), ['/api/captures?since=5', '/api/captures?since=0'], 'the boot check, then the new surface from 0');
+  // The reconcile the non-contiguous batch makes, answered before the ack.
+  await waitUntil(() => h.capReads.length >= 3, { what: 'the reconcile' });
+  await settle();
+  assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2'], 'not again before the ack');
+  h.link.ack(b1);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 2, 'the hub reset the counter and holds 2');
+  h.w.captures = [capRecord(1), capRecord(2), capRecord(3)];
+  h.breakAt(5);
+  await waitUntil(() => h.idsAfter().includes('cap3'), { what: 'capture 3' });
+  await settle();
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2', 'cap3'], 'each once; capture 3 above the new counter goes');
+});
+
+test('U723e after a reinit, a later boot change of the same surface: the hub\'s counter is the floor again — the acknowledged records a later read answers are not queued again', async () => {
+  const h = reconcileWorld({ captures: [capRecord(1), capRecord(2)], captureNext: 2, start: cursor('boot-a', 40, { capture_seq: 5 }) });
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.strictEqual(b1.reinit, true);
+  await waitUntil(() => h.capReads.length >= 3, { what: 'the reconcile after the reinit batch' });
+  await settle();
+  h.link.ack(b1);
+  assert.deepStrictEqual([h.ring.cursorOf(CHAT).boot, h.ring.cursorOf(CHAT).capture_seq], ['boot-b', 2]);
+  // The daemon restarts again, the surface kept: captures 3 and 4 are its records.
+  h.w.captures = [capRecord(3), capRecord(4)];
+  h.w.captureNext = 4;
+  const reads = h.capReads.length;
+  assert.strictEqual(h.restartAs('boot-c'), 2, 'since chosen against boot-b');
+  await waitUntil(() => h.link.batches().some((b) => b.boot === 'boot-c'), { what: 'boot-c\'s first batch' });
+  const b2 = h.link.batches().find((b) => b.boot === 'boot-c');
+  assert.strictEqual(h.capReads[reads], '/api/captures?since=2', 'the boot check at the hub\'s counter');
+  assert.ok(!('reinit' in b2), 'next_cursor 4 is not below capture_seq 2: no reinit');
+  assert.deepStrictEqual((b2.reconciled || []).map((r) => r.capture_id), ['cap3', 'cap4']);
+  await waitUntil(() => h.capReads.length >= reads + 2, { what: 'the reconcile after boot-c\'s first batch' });
+  await settle();
+  h.link.ack(b2);
+  assert.deepStrictEqual([h.ring.cursorOf(CHAT).boot, h.ring.cursorOf(CHAT).capture_seq], ['boot-c', 4]);
+  // A later read answers 3 and 4 again: the hub acknowledged both.
+  const before = h.capReads.length;
+  h.breakAt(5);
+  await waitUntil(() => h.capReads.length > before, { what: 'a read after the ack' });
+  await settle();
+  assert.strictEqual(h.capReads[before], '/api/captures?since=4');
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2', 'cap3', 'cap4'], 'each capture_id on the wire once');
+});
+
+// The rule judges a read's answer by what held when the read was ASKED (its
+// capture `since`), never by the cursor when it answers: a hub ack can lift
+// capture_seq over records it never received (a stream capture entry raises
+// it, swc lib/ingest/batch.js plan()), and those records reach the hub only
+// by the reconcile.
+
+test('U723e a hole below a stream-carried counter: the ack (capture_seq 9) beats the answer of the read asked at 6, and captures 7 and 8 are still sent, each once', async () => {
+  const h = reconcileWorld();
+  await firstBatchOfNewBoot(h);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile' });
+  await settle();
+  for (const b of h.link.batches()) h.link.ack(b);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 6);
+  const n = h.capReads.length;
+  const release = h.w.hold(n);
+  // A ring gap, then capture 9 as a stream entry: captures 7 and 8 were evicted with the gap.
+  h.w.captures = [capRecord(7), capRecord(8), capRecord(9)];
+  h.lc.emit({ type: 'gap', gap: { gap: true, dropped: 2, oldest: 5 } });
+  h.lc.emit({ type: 'entry', entry: { seq: 5, ts: 5, kind: 'capture', capture_id: 'cap9', capture_seq: 9, url: 'https://x' } });
+  const hasCap9 = (b) => b.entries.some((e) => e.capture_id === 'cap9');
+  await waitUntil(() => h.link.batches().some(hasCap9), { what: 'the gap batch' });
+  const b2 = h.link.batches().find(hasCap9);
+  assert.strictEqual(b2.contiguous, false);
+  await waitUntil(() => h.capReads.length > n, { what: 'the reconcile read issued' });
+  assert.strictEqual(h.capReads[n], '/api/captures?since=6', 'C-07.12\'s read, asked at the acknowledged counter');
+  // The hub acks with capture_seq 9 (raised from the stream entry) before the read answers.
+  h.link.ack(b2, { ...h.link.cursorAfter(b2), capture_seq: 9 });
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  const ids = h.idsAfter();
+  assert.strictEqual(ids.filter((id) => id === 'cap7').length, 1, `capture 7 on the wire once: ${JSON.stringify(ids)}`);
+  assert.strictEqual(ids.filter((id) => id === 'cap8').length, 1, `capture 8 on the wire once: ${JSON.stringify(ids)}`);
+});
+
+test('U723e the gate\'s own timing: the reconcile read issued before the ack and answered after it queues nothing the acknowledged batch carried', async () => {
+  const h = reconcileWorld();
+  const release = h.w.hold(1);   // the reconcile after the first batch answers late
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6']);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile asked' });
+  assert.strictEqual(h.capReads[1], '/api/captures?since=4', 'asked before the ack, at the old counter');
+  // The ack arrives first (the gate's r4 record), then the read answers both records.
+  h.link.ack(b1);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 6);
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  assert.strictEqual(h.link.batches().length, 1, 'no second batch carries them');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+});
+
+test('U723e after a relink the handed-back cursor covers the unacknowledged batch (its ack was lost with the link): the read asked before the cursor and answered after it queues nothing that batch carried', async () => {
+  const h = reconcileWorld();
+  const release = h.w.hold(1);   // the reconcile after the first batch answers late
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6']);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile asked' });
+  assert.strictEqual(h.capReads[1], '/api/captures?since=4', 'asked before the cursor, at the old counter');
+  // The link drops before the ack. The hub committed the batch: the cursor it
+  // hands back on the new link covers it (setCursor's covered()), so it is not resent.
+  h.relink();
+  h.handBack(cursor('boot-b', 2, { capture_seq: 6 }));
+  assert.strictEqual(h.ring.stats(CHAT).inflight, 0, 'the covered batch left');
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  assert.strictEqual(h.link.batches().length, 1, 'no resend, and no second batch carries them');
+  assert.deepStrictEqual(h.idsAfter('ready'), [], 'nothing the hub acknowledged goes on the new link');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+});
