@@ -965,3 +965,88 @@ test('U723b: the owed re-read follows the hold — no /api/events read between r
   link.batches().forEach(assertSchema);
   assert.strictEqual(missingOf(link, total), 0, 'missing 0');
 });
+
+test('U723b: an events.ack processed while the chat is held starts no re-read; the owed re-read waits for the chat\'s cursor', async () => {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false });
+  const total = UNACKED_MAX_ENTRIES + 600;
+  const ringEntries = Array.from({ length: total }, (_, i) => ({ seq: i + 1, ts: i + 1, kind: 'store', patch: { a: i + 1 } }));
+  const client = recordsClient({ ring: ringEntries, boot: 'boot-a' });
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 0));
+  lc.open();
+  for (const e of ringEntries) lc.emit({ type: 'entry', entry: e });
+  await settle();
+  assert.strictEqual(ring.stats(CHAT).reread, true, 'a re-read is owed');
+  const old = link.batches();
+  const sentUpTo = link.entries()[link.entries().length - 1].seq;
+  link.slots.clear();
+  link.emit('ready', {});
+  // An events.ack the old link carried, handled after the new link's ready:
+  // onAck reaches maybeReread while the chat is held.
+  link.ack(old[0]);
+  await settle();
+  assert.strictEqual(ring.stats(CHAT).held, true);
+  assert.ok(!client.reads.some((p) => p.startsWith('/api/events')), 'no re-read while the chat is held');
+  assert.strictEqual(link.batches().length, old.length, 'nothing sent while held');
+  ring.setCursor(CHAT, cursor('boot-a', sentUpTo));
+  await waitUntil(() => client.reads.some((p) => p.startsWith('/api/events')), { what: 'the re-read after the cursor' });
+  assert.strictEqual(client.reads.filter((p) => p.startsWith('/api/events'))[0], `/api/events?since=${sentUpTo}`, 'the re-read starts at the handed-back cursor');
+});
+
+// An entry batch, then a batch of reconciled capture records alone, both sent
+// and not acknowledged: the reconcile's /api/captures read answers late, so
+// the record cannot ride the entry's batch.
+async function entryThenRecords() {
+  const lc = stubLifecycle();
+  const link = stubLink({ autoAck: false });
+  const timeline = [];
+  const send = link.send;
+  link.send = (ch, kind, body) => { timeline.push({ batch: body.batch }); return send(ch, kind, body); };
+  const base = recordsClient({
+    captures: [{ id: 'cap4', seq: 4, ts: 5, url: 'https://x.test/p', title: 'T', distilled: 'body', raw_ref: 'captures/cap4.html', source: 'ext:tab-stream', profile: 'default' }],
+    captureNext: 4,
+  });
+  const client = { reads: base.reads, get: async (p, o) => { if (p.startsWith('/api/captures')) await settle(40); return base.get(p, o); } };
+  const ring = rootedRing({ deps: { client, portOf: () => 40999, home: null } });
+  ring.install({ lifecycle: lc, link });
+  ring.setCursor(CHAT, cursor('boot-a', 2));
+  lc.open();
+  lc.emit({ type: 'entry', entry: { seq: 3, ts: 1, kind: 'store', patch: { a: 1 } } });
+  await waitUntil(() => link.batches().length >= 2, { what: 'the entry batch, then the records batch' });
+  const [eb, rb] = link.batches();
+  assertSchema(eb);
+  assertSchema(rb);
+  assert.deepStrictEqual(eb.entries.map((e) => e.seq), [3]);
+  assert.ok(!('reconciled' in eb));
+  assert.deepStrictEqual(rb.entries, [], 'records only');
+  assert.deepStrictEqual(rb.reconciled.map((r) => r.capture_id), ['cap4']);
+  link.slots.clear();
+  timeline.push('ready');
+  link.emit('ready', {});
+  await settle();
+  const sinceMark = (mark) => timeline.slice(timeline.lastIndexOf(mark) + 1).filter((x) => typeof x === 'object').map((x) => x.batch);
+  assert.deepStrictEqual(sinceMark('ready'), [], 'nothing between ready and the cursor');
+  const handBack = (c) => { timeline.push('cursor'); ring.setCursor(CHAT, c); };
+  return { ring, link, eb, rb, handBack, sinceMark };
+}
+
+test('U723b: a records-only batch the handed-back cursor\'s capture_seq does not cover is resent once after the cursor; the entry batch it covers is not', async () => {
+  const h = await entryThenRecords();
+  // The hub committed the entry batch, not the records batch.
+  h.handBack(cursor('boot-a', 3, { capture_seq: 0 }));
+  await settle(80);
+  const sent = h.sinceMark('cursor');
+  assert.deepStrictEqual(sent.map((b) => b.batch_id), [h.rb.batch_id], 'the records batch, exactly once, as sent');
+  assert.deepStrictEqual(sent.flatMap((b) => b.entries), [], '0 entries at or below the cursor');
+  assert.deepStrictEqual(sent[0].reconciled.map((r) => r.capture_id), ['cap4'], 'capture 4 reaches the hub');
+});
+
+test('U723b: a handed-back cursor whose capture_seq covers the record resends nothing', async () => {
+  const h = await entryThenRecords();
+  h.handBack(cursor('boot-a', 3, { capture_seq: 4 }));
+  await settle(80);
+  assert.deepStrictEqual(h.sinceMark('cursor'), [], 'both batches are covered');
+  assert.strictEqual(h.ring.stats(CHAT).held, false);
+});
