@@ -1732,7 +1732,8 @@ function reconcileWorld({ captures = [capRecord(5), capRecord(6)], captureNext =
   const send = link.send;
   link.send = (ch, kind, body) => { timeline.push({ batch: body.batch }); return send(ch, kind, body); };
   const w = { captures, captureNext, gates: new Map() };
-  const base = recordsClient({ boot: 'boot-b', ring: [ringEntry(1), ringEntry(2)], elementNext: 0 });
+  const records = { boot: 'boot-b', ring: [ringEntry(1), ringEntry(2)], elementNext: 0 };
+  const base = recordsClient(records);
   const capReads = [];
   const client = {
     reads: base.reads,
@@ -1761,7 +1762,14 @@ function reconcileWorld({ captures = [capRecord(5), capRecord(6)], captureNext =
     lc.emit({ type: 'gap', gap: { gap: true, dropped: 1, oldest: s } });
     lc.emit({ type: 'entry', entry: ringEntry(s) });
   };
-  return { lc, link, ring, w, capReads, timeline, idsAfter, relink, handBack, breakAt };
+  // The daemon starts again under `boot` (a new ring 1..2) and the read opens on it.
+  const restartAs = (boot) => {
+    lc.emit({ type: 'close' });
+    lc.boot = boot;
+    records.boot = boot;
+    return lc.open();
+  };
+  return { lc, link, ring, w, capReads, timeline, idsAfter, relink, handBack, breakAt, restartAs };
 }
 
 // The new boot's first batch, out with both records, and the reconcile its
@@ -1870,4 +1878,36 @@ test('U723e after a reinit the old counter suppresses nothing: the new surface\'
   await settle();
   h.link.batches().forEach(assertSchema);
   assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2', 'cap3'], 'each once; capture 3 above the new counter goes');
+});
+
+test('U723e after a reinit, a later boot change of the same surface: the hub\'s counter is the floor again — the acknowledged records a later read answers are not queued again', async () => {
+  const h = reconcileWorld({ captures: [capRecord(1), capRecord(2)], captureNext: 2, start: cursor('boot-a', 40, { capture_seq: 5 }) });
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.strictEqual(b1.reinit, true);
+  await waitUntil(() => h.capReads.length >= 3, { what: 'the reconcile after the reinit batch' });
+  await settle();
+  h.link.ack(b1);
+  assert.deepStrictEqual([h.ring.cursorOf(CHAT).boot, h.ring.cursorOf(CHAT).capture_seq], ['boot-b', 2]);
+  // The daemon restarts again, the surface kept: captures 3 and 4 are its records.
+  h.w.captures = [capRecord(3), capRecord(4)];
+  h.w.captureNext = 4;
+  const reads = h.capReads.length;
+  assert.strictEqual(h.restartAs('boot-c'), 2, 'since chosen against boot-b');
+  await waitUntil(() => h.link.batches().some((b) => b.boot === 'boot-c'), { what: 'boot-c\'s first batch' });
+  const b2 = h.link.batches().find((b) => b.boot === 'boot-c');
+  assert.strictEqual(h.capReads[reads], '/api/captures?since=2', 'the boot check at the hub\'s counter');
+  assert.ok(!('reinit' in b2), 'next_cursor 4 is not below capture_seq 2: no reinit');
+  assert.deepStrictEqual((b2.reconciled || []).map((r) => r.capture_id), ['cap3', 'cap4']);
+  await waitUntil(() => h.capReads.length >= reads + 2, { what: 'the reconcile after boot-c\'s first batch' });
+  await settle();
+  h.link.ack(b2);
+  assert.deepStrictEqual([h.ring.cursorOf(CHAT).boot, h.ring.cursorOf(CHAT).capture_seq], ['boot-c', 4]);
+  // A later read answers 3 and 4 again: the hub acknowledged both.
+  const before = h.capReads.length;
+  h.breakAt(5);
+  await waitUntil(() => h.capReads.length > before, { what: 'a read after the ack' });
+  await settle();
+  assert.strictEqual(h.capReads[before], '/api/captures?since=4');
+  h.link.batches().forEach(assertSchema);
+  assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2', 'cap3', 'cap4'], 'each capture_id on the wire once');
 });
