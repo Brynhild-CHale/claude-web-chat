@@ -818,3 +818,50 @@ test('a source scan of lib/connector: no option that relaxes TLS verification, a
   assert.match(link, /ws\.on\('error'/);
   assert.doesNotMatch(link, /\.listen\(|createServer\(|http\.request\(|os\.homedir\(\)|require\('ajv/);
 });
+
+test('on-demand rotation (`connect rotate`, U726): a pending request makes one key.rotate after hello.ack with no auth.ok flag, cleared when the key is committed; a request older than paired_at is dropped unperformed', async (t) => {
+  const fake = await withFakeHub(t);
+  const m = machineOn(fake);
+  m.record.credential.paired_at = 1000;
+  const vt = clock();
+  const written = [];
+  let pending = 5000;
+  const cleared = [];
+  const rotateRequest = {
+    read: () => pending,
+    clear: (at) => { cleared.push(at); if (pending === at) pending = null; },
+  };
+  const link = createLink({
+    record: m.record,
+    key: m.privateKey,
+    versions: () => versionsRecord({ claudeVersion: null }),
+    facts: () => machineFacts({ record: m.record, names: { mcp_servers: [], skills: [] }, hostname: 'test-host', login: 'tester' }),
+    routeTable: () => ({ table_version: TABLE_VERSION, sha256: TABLE_SHA256 }),
+    timers: vt.timers,
+    random: () => 0.5,
+    now: vt.now,
+    writeKey: (k) => written.push(k),
+    rotateRequest,
+  });
+  t.after(() => link.stop());
+  const rotated = once(link, 'rotated');
+  link.start();
+  const [ev] = await rotated;
+  assert.strictEqual(fake.find('auth.ok', { dir: 'out' })[0].frame.rotate, false, 'the hub did not ask');
+  assert.strictEqual(fake.find('key.rotate', { dir: 'in' }).length, 1);
+  assert.strictEqual(written.length, 1);
+  assert.strictEqual(written[0].keyId, ev.keyId);
+  assert.deepStrictEqual(cleared, [5000]);
+  assert.strictEqual(pending, null);
+  // Each beat checks again: nothing pending, nothing sent; a second check is a no-op.
+  vt.advance(15000);
+  assert.strictEqual(link.checkRotateRequest(), false);
+  assert.strictEqual(fake.find('key.rotate', { dir: 'in' }).length, 1, 'one per request');
+
+  // A leftover from before this pairing: cleared, never performed.
+  pending = 500;
+  assert.strictEqual(link.checkRotateRequest(), false);
+  assert.deepStrictEqual(cleared, [5000, 500]);
+  assert.strictEqual(pending, null);
+  assert.strictEqual(fake.find('key.rotate', { dir: 'in' }).length, 1);
+});
