@@ -591,7 +591,10 @@ test('connect ls prints one numbered row per chat: number, title, machine name, 
 
 test('the four rows are appended to the connect table and dispatched through it', async () => {
   const names = cli.ROWS.map((r) => r.name);
-  assert.deepStrictEqual(names.slice(-4), ['ls', 'open', 'shell', 'code']);
+  // Appended together, in this order (later units append their own rows after them).
+  const at = names.indexOf('ls');
+  assert.ok(at > 0);
+  assert.deepStrictEqual(names.slice(at, at + 4), ['ls', 'open', 'shell', 'code']);
   assert.strictEqual(names[0], 'status');
   const out = [];
   assert.strictEqual(await cli.main(['help'], { out: (l) => out.push(l) }), 0);
