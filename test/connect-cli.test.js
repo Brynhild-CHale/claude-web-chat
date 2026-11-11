@@ -313,3 +313,62 @@ test('lib/connector is required from one CLI file, connect.js', () => {
   }
   assert.deepEqual(hits, [path.join('commands', 'connect.js')]);
 });
+
+// ── a terminal row's socket (hand fold 9 C2) ───────────────────────────────
+
+test('`connect ls` through lib/cli/commands/connect.js answers from the paired record\'s socket when a second, revoked record is on disk', async (t) => {
+  // A short HOME under /tmp: the socket path must fit a Unix socket.
+  const base = fs.existsSync('/tmp') ? '/tmp' : require('os').tmpdir();
+  const home = fs.mkdtempSync(path.join(base, 'wcc-'));
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  t.after(() => {
+    process.env.HOME = prev.HOME;
+    if (prev.USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = prev.USERPROFILE;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  // The paired record, and a second record (sorted first) revoked.
+  const paired = pairedRecord();
+  conn.writeRecord(paired);
+  const old = conn.newRecord({ hubId: 'a-old-hub', origin: 'https://old.example.com' });
+  old.credential = { state: 'revoked' };
+  conn.writeRecord(old);
+  assert.equal(conn.soleHub().ok, false, 'two records: soleHub refuses');
+
+  const chatId = `cht_${'0123456789abcdefghjkmnpqrs'}`;
+  // The running connector's local socket through its one engine, on the
+  // PAIRED record's path; the link answers the two hub reads.
+  const asked = [];
+  const ctx = {
+    hubId: paired.hub.id,
+    log: () => {},
+    link: {
+      state: 'up',
+      request: async (ch, kind, body) => {
+        asked.push(body.request.type);
+        const result = body.request.type === 'ListMachines'
+          ? { machines: [{ machine_id: paired.machine.id, name: 'studio-mbp' }] }
+          : { chats: [{ chat_id: chatId, title: 'Notes', machine_id: paired.machine.id, state: 'running' }] };
+        return { kind: 'hub.response', response: { ok: true, type: body.request.type, result } };
+      },
+    },
+  };
+  const stop = await require('../lib/connector/local-socket').install(ctx);
+  t.after(() => stop());
+
+  const out = [];
+  const err = [];
+  const prevCode = process.exitCode;
+  try {
+    await require('../lib/cli/commands/connect')(['ls'], {
+      out: (l) => out.push(l), err: (l) => err.push(l), prompt: { interactive: false, close() {} },
+    });
+    assert.equal(process.exitCode, 0, err.join('\n'));
+  } finally {
+    process.exitCode = prevCode;
+  }
+  assert.deepEqual(asked, ['ListMachines', 'ListChats'], 'both reads reached the paired record\'s socket');
+  assert.match(out.join('\n'), /Notes {2}studio-mbp {2}0123456789abcdefghjkmnpqrs {2}running/);
+});
