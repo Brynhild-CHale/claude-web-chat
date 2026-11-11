@@ -656,3 +656,47 @@ test('an ask\'s tool_kind crosses as a class word: a tool the table does not kno
   assert.strictEqual(kindOf('mcp__github__create_issue'), 'mcp', 'a raw mcp__ name too');
   assert.strictEqual(kindOf(undefined), null);
 });
+
+// ── step_kind on the link, and an elicitation's ask (U729b; form 4 F1) ─────
+
+test("an elicitation's ask crosses as elicitation, not as tool", () => {
+  const { cutAsk } = require('../lib/connector/signals');
+  const base = { id: 'ask1', kind: 'elicitation', state: 'pending', answerable: true, version: 1, created_at: 1 };
+  assert.strictEqual(cutAsk({ ...base, tool_kind: 'elicitation' }).tool_kind, 'elicitation');
+  assert.strictEqual(cutAsk({ ...base, kind: 'permission', tool_kind: 'Tool' }).tool_kind, 'tool', "the daemon's class for a tool outside the table");
+});
+
+test("step_kind crosses as the tool's class word, lower-cased: bash, mcp, tool; a step with no tool as its own word", () => {
+  const { cutRecord } = require('../lib/connector/signals');
+  // What GET /api/mirror/status gives (lib/server/mirror/emit.js stepKindOf:
+  // toolKind's head word for a tool step, the live step's own kind else).
+  const daemon = { Bash: 'bash', MCP: 'mcp', Edit: 'edit', LSP: 'tool', Tool: 'tool', Reply: 'reply', Compacting: 'compacting' };
+  const rows = Object.keys(daemon).map((k, i) => ({ id: `conv-${i}`, state: 'working', step_kind: k }));
+  rows.push({ id: 'conv-null', state: 'working', step_kind: null }, { id: 'conv-empty', state: 'working', step_kind: '' });
+  const cut = cutRecord({ rev: 1, aggregate: { state: 'working' }, conversations: rows }).conversations;
+  const got = Object.fromEntries(cut.map((r) => [r.id, r.step_kind]));
+  const want = Object.fromEntries(Object.values(daemon).map((w, i) => [`conv-${i}`, w]));
+  assert.deepStrictEqual(got, { ...want, 'conv-null': null, 'conv-empty': null });
+  assert.ok(!JSON.stringify(cut).includes('LSP'), "an unknown tool's name never crosses");
+});
+
+test('a conversations record whose steps are tools stays valid against 05-event.json with their class words', async (t) => {
+  const d = await withServer(t);
+  const r = await rig(t, d);
+  await r.tick();
+  const rows = [
+    { id: 'conv-b', state: 'working', since: 5, quiet: false, step_kind: 'Bash' },
+    { id: 'conv-m', state: 'working', since: 5, quiet: false, step_kind: 'MCP' },
+    { id: 'conv-u', state: 'working', since: 5, quiet: false, step_kind: 'LSP' },
+    { id: 'conv-r', state: 'working', since: 5, quiet: false, step_kind: 'Reply' },
+  ];
+  r.client.rewrite = (p, res) => (p === '/api/mirror/status' ? { body: { ...res.body, rev: 9, conversations: rows }, headers: res.headers } : res);
+  const at = r.link.mark();
+  await r.tick();
+  const conv = r.link.since(at).filter((f) => f.kind === 'conversations');
+  assert.strictEqual(conv.length, 1);
+  conformsTo('05', conv[0]);
+  assert.deepStrictEqual(conv[0].record.conversations.map((c) => c.step_kind), ['bash', 'mcp', 'tool', 'reply']);
+  // (assertTextFree's key check reads `"reply"` as a key, so the name is checked alone.)
+  assert.ok(!JSON.stringify(conv[0]).includes('LSP'), "an unknown tool's name never crosses");
+});
