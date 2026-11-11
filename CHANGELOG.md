@@ -534,6 +534,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **An acknowledged Push no longer repeats a position in the event log.** Its
+  `wake-ack` entry took its Push's `seq`, so two entries shared one and the
+  next position was never served; it now has its own, and a reader that
+  matched the ack event to its wake by `seq` reads `wake_seq`.
 - **The first boot after the migration reads clean.** The migration wrote a
   commit record only for nodes that held a pin, so that boot adopted every
   other node and reported it; it now records every node.
