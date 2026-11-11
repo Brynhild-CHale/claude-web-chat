@@ -1041,8 +1041,9 @@ test('(18) a revocation: machine.revoked runs the local half in process — no m
 
   // The revocation.
   const leaves = fake.find('machine.leave', { dir: 'in' }).length;
-  fake.revoke();
+  fake.revoke('Disconnected in Settings > Machines.');
   assert.equal(await W2.done, 0, 'the connector stopped on the revocation');
+  assert.deepEqual(W2.out.filter((l) => l.startsWith('connect run: the hub says: ')), ['connect run: the hub says: Disconnected in Settings > Machines.'], 'the hub\'s hint printed once (U726b)');
   assert.equal(fake.find('machine.leave', { dir: 'in' }).length, leaves, 'no machine.leave on a revocation');
   assert.equal(await registry.daemonFor(root), null, 'the connector\'s daemon stopped (in-process release)');
   assert.ok(W2.out.some((l) => / release-all: 1 stopped, 0 left/.test(l)), 'released through ctx.releaseAll');

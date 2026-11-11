@@ -657,3 +657,56 @@ test('a disconnect removes a pending rotate request (<hub-id>.rotate.json) with 
     });
   }
 });
+
+// ── a revocation's hint (U726b; 05 C-05.9's hint for the person at the machine) ──
+
+test('`connect run` on a revocation prints the hub\'s cleaned hint once ("connect run: the hub says: …"), the log line holds it, and the record stores none of it', async (t) => {
+  shortHome(t);
+  const { EventEmitter } = require('events');
+  const runMod = require('../lib/connector/run');
+  const factsMod = require('../lib/connector/facts');
+  const fake = await withFakeHub(t, { hubId: HUB });
+  const { privateKey } = crypto.generateKeyPairSync('ed25519');
+  const raw = Buffer.from(privateKey.export({ format: 'jwk' }).x, 'base64url');
+  const m = fake.addMachine({ publicKey: raw, name: 'studio-mbp' });
+  setup.writeMachineKey({
+    hubId: HUB,
+    pem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    update: () => ({
+      ...setup.newRecord({ hubId: HUB, origin: setup.hubOrigin(fake.url, { insecureLoopback: true }) }),
+      machine: { id: m.id, name: m.name },
+      credential: { state: 'paired', algorithm: 'ed25519', paired_at: Date.now() - 1000 },
+    }),
+  });
+  const out = [];
+  const signals = new EventEmitter();
+  const done = runMod.run(['--insecure-loopback'], {
+    out: (l) => out.push(String(l)),
+    err: (l) => out.push(String(l)),
+    getuid: () => 501,
+    signals,
+    createFacts: (o) => factsMod.createFacts({
+      ...o,
+      runClaude: async () => ({ ok: true, stdout: '2.1.300 (Claude Code)\n' }),
+      exec: { findProgram: () => null, isExecutable: () => false, run: async () => ({ ok: false }) },
+      toolNames: () => ({ mcp_servers: [], skills: [] }),
+      platform: 'linux',
+    }),
+    disconnectLocal: (o) => setup.disconnectLocal({ ...o, deps: { ...o.deps, run: () => '' } }),
+  });
+  let ended = false;
+  t.after(async () => { if (!ended) { signals.emit('SIGTERM'); await done; } });
+  await fake.waitFor('hello.ack', { dir: 'out' });
+  fake.revoke('Disconnected in Settings \u001b[31m> Machines.\nRun `claude-web-chat connect` to pair it again.');
+  assert.equal(await done, 0);
+  ended = true;
+  const said = 'Disconnected in Settings [31m> Machines. Run `claude-web-chat connect` to pair it again.';
+  assert.deepEqual(out.filter((l) => l.startsWith('connect run: the hub says: ')), [`connect run: the hub says: ${said}`]);
+  assert.ok(out.some((l) => l.endsWith(`link machine revoked by the hub; the hub says: ${said}`)), 'the log line holds it');
+  assert.ok(!out.join('\n').includes('\u001b'), 'no escape printed');
+  const rec = setup.readRecord(HUB).value;
+  assert.equal(rec.credential.state, 'revoked');
+  assert.ok(!JSON.stringify(rec).includes('Disconnected'), 'the hint is not stored');
+  assert.deepEqual(fs.readdirSync(userPaths().connectorDir).filter((n) => /hint|revok/i.test(n)), [], 'no file beside the record');
+  assert.deepEqual(fake.errors, []);
+});

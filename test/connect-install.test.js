@@ -810,6 +810,50 @@ test('connect run: a plain-http loopback record runs only with --insecure-loopba
   assert.equal(await runMod.run(['--bogus'], runDeps(s2, { createLink: () => assert.fail('no dial') })), 2);
 });
 
+test('connect run\'s advice for a plain-http loopback record names --insecure-loopback: revoked, not paired yet, the key missing', async (t) => {
+  const origin = 'http://127.0.0.1:9';
+  for (const state of ['revoked', 'pending']) {
+    const s = sandbox(t);
+    const r = conn.newRecord({ hubId: HUB, origin });
+    r.credential = state === 'pending'
+      ? { state, algorithm: 'ed25519', public_key: 'A'.repeat(43), fingerprint: `SHA256:${'A'.repeat(43)}` }
+      : { state };
+    conn.writeRecord(r);
+    assert.equal(await runMod.run([], runDeps(s, { createLink: () => assert.fail('no dial') })), 0);
+    assert.match(s.out.join('\n'), new RegExp(`\`claude-web-chat connect ${origin.replace(/\./g, '\\.')} --insecure-loopback\``), state);
+  }
+  const s = sandbox(t);
+  seedPaired({ origin });
+  fs.rmSync(userPaths().connectorKey(HUB));
+  assert.equal(await runMod.run(['--insecure-loopback'], runDeps(s, { createLink: () => assert.fail('no dial') })), 0);
+  assert.match(s.out.join('\n'), /`claude-web-chat connect http:\/\/127\.0\.0\.1:9 --re-pair --insecure-loopback`/);
+  // An https record's advice is as it was.
+  const s2 = sandbox(t);
+  const r = conn.newRecord({ hubId: HUB, origin: 'https://hub.example.com' });
+  r.credential = { state: 'revoked' };
+  conn.writeRecord(r);
+  assert.equal(await runMod.run([], runDeps(s2, { createLink: () => assert.fail('no dial') })), 0);
+  assert.match(s2.out.join('\n'), /run `claude-web-chat connect https:\/\/hub\.example\.com` to pair again/);
+});
+
+test('connect run on a revocation prints the hub\'s hint ONCE as "connect run: the hub says: <hint>"; no hint, no line', async (t) => {
+  for (const hint of ['Disconnected in Settings > Machines.', null]) {
+    const s = sandbox(t);
+    seedPaired();
+    const link = stubLink();
+    const done = runMod.run([], runDeps(s, {
+      createLink: () => link,
+      disconnectLocal: async () => ({ ok: true }),
+    }));
+    await waitUntil(() => link.started === 1, { what: 'the link started' });
+    link.emit('revoked', { afterNotice: true, hint });
+    link.emit('revoked', { afterNotice: true, hint });
+    assert.equal(await done, 0);
+    const says = s.out.filter((l) => l.startsWith('connect run: the hub says: '));
+    assert.deepEqual(says, hint ? [`connect run: the hub says: ${hint}`] : [], String(hint));
+  }
+});
+
 test('connect run reads the machine key only from the connector\'s own directory (C-06.7): a key_file elsewhere exits 0 and never dials', async (t) => {
   const s = sandbox(t);
   seedPaired();
