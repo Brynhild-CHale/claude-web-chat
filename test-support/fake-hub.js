@@ -772,12 +772,18 @@ function createFakeHub(opts = {}) {
     const prev = sourceCursor(b.chat_id);
     const seqs = (b.entries || []).map((e) => e.seq);
     const caps = (b.reconciled || []).map((r) => r.seq);
-    const sameBoot = prev.boot === b.boot;
+    // C-07.12a: the counters outlive a boot change; a batch carrying reinit
+    // (the surface re-initialised) sets both to 0, and element_reset on a new
+    // boot's batch sets element_seq alone to 0 — as the real hub's
+    // lib/ingest/batch.js plan() does (PQ-6A3-2).
+    const newBoot = prev.boot !== b.boot;
+    const reinit = b.reinit === true;
+    const elementReset = !reinit && newBoot && b.element_reset === true;
     const cursor = {
       type: 'source', chat_id: b.chat_id, ring: 'main', boot: b.boot,
       seq: Math.max(b.since || 0, ...seqs),
-      capture_seq: Math.max(sameBoot ? prev.capture_seq : 0, ...caps),
-      element_seq: sameBoot ? prev.element_seq : 0,
+      capture_seq: Math.max(reinit ? 0 : prev.capture_seq, ...caps),
+      element_seq: reinit || elementReset ? 0 : prev.element_seq,
     };
     if (assignments.has(b.chat_id)) assignments.get(b.chat_id).cursor = cursor;
     const ack = {
