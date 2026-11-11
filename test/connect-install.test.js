@@ -552,6 +552,15 @@ function stubLink() {
   link.stop = async () => { link.stopped += 1; };
   link.checkRotateRequest = () => false;
   link.factsChanged = () => {};
+  // What the rest of the composition (U790) registers on the link: channels,
+  // sends, the stream table and the secrets it must never send.
+  link.channels = [];
+  link.channel = (ch, spec) => { link.channels.push({ ch, kinds: spec.kinds }); return () => {}; };
+  link.send = () => null;
+  link.request = async () => { throw Object.assign(new Error('down'), { code: 'ELINKDOWN' }); };
+  link.registerSecret = () => () => {};
+  link.state = 'connecting';
+  link.streams = { open: () => ({ ok: false, reason: 'not_up' }), close() {}, has: () => false, count: () => 0, countFor: () => 0, credit: () => 0, sendCredit: async () => {}, receive: () => false, grant() {} };
   return link;
 }
 
@@ -619,7 +628,7 @@ test('connect run reads the machine key only from the connector\'s own directory
   assert.equal(registry.readAllEntries().some((e) => e.role === 'connector'), false);
 });
 
-test('connect run composes the link: versions and facts from lib/connector/facts.js, the route table, onSettings = lifecycle.applySettings, no heartbeatBody', async (t) => {
+test('connect run composes the link: versions and facts from lib/connector/facts.js, the route table, onSettings = lifecycle.applySettings, heartbeatBody from the signals rows (U790)', async (t) => {
   const s = sandbox(t);
   seedPaired();
   let holder = null;
@@ -638,7 +647,12 @@ test('connect run composes the link: versions and facts from lib/connector/facts
   assert.equal(opts.versions().claude_code_version, '2.1.300');
   assert.deepEqual(opts.routeTable(), { table_version: TABLE_VERSION, sha256: TABLE_SHA256 });
   assert.strictEqual(opts.onSettings, lifecycle.applySettings);
-  assert.ok(!('heartbeatBody' in opts), 'the link\'s minimal body until U790');
+  // U790 (U726-U716@link-composition-inputs (a)): U729's heartbeatBody — the
+  // minimal body plus the signals' chat rows (none tracked here).
+  const beat = opts.heartbeatBody({ machine_id: 'mch_x', beat: 1, interval_ms: 15000, connector_now: 1 });
+  assert.equal(beat.type, 'heartbeat');
+  assert.deepEqual(beat.chats, []);
+  assert.deepEqual(link.channels.map((c) => c.ch).sort(), ['control', 'events', 'queue', 'relay'], 'the relay, ring, delivery and chats channels');
   assert.equal(opts.record.hub.id, HUB);
   assert.equal(opts.key.type, 'private');
   assert.equal(opts.key.asymmetricKeyType, 'ed25519');
