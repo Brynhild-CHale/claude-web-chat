@@ -275,7 +275,9 @@ test("a portfile naming another project's daemon: open does not browse it, and s
 
   const { calls, deps: d } = adoptDeps(root);
   await open([], d);
-  assert.deepEqual(calls.asked, [root]);
+  // Asked about THIS root only: open's own check, then spawnDaemon's under the
+  // root's spawn lock (U718c; before it, the unlocked spawn asked once).
+  assert.deepEqual(calls.asked, [root, root]);
   assert.ok(!calls.browsed.some((u) => u.startsWith(other.baseUrl)), `browsed another project's daemon: ${JSON.stringify(calls.browsed)}`);
   assert.deepEqual(calls.spawned, [root], "this project's daemon is spawned");
   assert.deepEqual(calls.browsed, [NEVER_PROBED], 'the one it spawned is opened');
@@ -472,4 +474,78 @@ test('a restart after which no daemon of this root comes up: open says so, exits
   assert.deepEqual(calls.browsed, [], 'the stopped daemon is not browsed as if it were the new one');
   assert.deepEqual(calls.exits, [1]);
   assert.match(calls.errs.join('\n'), /did not come up/);
+});
+
+// ── `open` starts through the root's spawn lock (U718c; SPAWNLOCK@open-start) ──
+//
+// `open`'s cold start used to call the bare spawnDaemonProcess, outside the
+// root's spawn lock (lib/util/daemon spawnDaemon, U718b): while another caller
+// (the connector's supervisor, the MCP client's auto-start, install's
+// pre-warm, another `open`) was starting this root's daemon, `open` asked
+// daemonFor, found nothing up yet and started a second child. It now starts
+// through spawnDaemon, so it waits for the holder and adopts the daemon that
+// serves. The world is stubs only: a spawn seam that counts children (no
+// process is started), and a daemonFor that answers the first child's record
+// once it is "up". The lock lives in a temp HOME.
+
+const { spawnDaemon } = require('../lib/util/daemon');
+const { withTempHome, waitUntil } = require('../test-support/helpers');
+
+function lockWorld(t, { upAfterMs = 400 } = {}) {
+  const w = { children: [], up: null, timers: [] };
+  t.after(() => { for (const x of w.timers) clearTimeout(x); });
+  w.spawn = () => {
+    const pid = 900001 + w.children.length;
+    w.children.push(pid);
+    w.timers.push(setTimeout(() => {
+      if (!w.up) w.up = { pid, port: 6101, url: 'http://localhost:6101', source: 'portfile' };
+    }, upAfterMs));
+    return { pid };
+  };
+  w.daemonFor = async () => w.up;
+  return w;
+}
+
+test('open racing a lock holder for a fresh root spawns no second child and opens the adopted daemon', async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  const w = lockWorld(t);
+  // The holder: another caller already starting this root's daemon.
+  const holder = spawnDaemon(root, { maxMs: 5000, spawn: w.spawn, daemonFor: w.daemonFor });
+  await waitUntil(() => w.children.length === 1, { what: 'the holder to spawn under the lock' });
+
+  const { calls, deps: d } = deps(root, {
+    daemonFor: w.daemonFor,
+    spawnDaemonProcess: w.spawn,
+    waitForDaemon: undefined,
+    startWithinMs: 5000,
+  });
+  const [held] = await Promise.all([holder, open([], d)]);
+
+  assert.equal(w.children.length, 1, `one child spawned, not ${w.children.length}`);
+  assert.equal(held && held.pid, w.children[0], 'the holder is handed its child');
+  assert.deepEqual(calls.exits, []);
+  assert.deepEqual(calls.errs, []);
+  assert.deepEqual(calls.browsed, ['http://localhost:6101'], "open browses the adopted daemon's port");
+  assert.ok(calls.logs.includes(`adopted the web-chat server another caller started at http://localhost:6101 (pid ${w.children[0]})`),
+    JSON.stringify(calls.logs));
+  assert.equal(calls.logs.some((l) => /web-chat server started at/.test(l)), false, 'it does not claim the start');
+});
+
+test('open alone on a fresh root spawns through the lock and prints the started line as before', async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  const w = lockWorld(t, { upAfterMs: 100 });
+  const { calls, deps: d } = deps(root, {
+    daemonFor: w.daemonFor,
+    spawnDaemonProcess: w.spawn,
+    waitForDaemon: undefined,
+    startWithinMs: 5000,
+  });
+  await open([], d);
+  assert.equal(w.children.length, 1);
+  assert.ok(calls.logs.includes(`web-chat server started at http://localhost:6101 (pid ${w.children[0]})`), JSON.stringify(calls.logs));
+  assert.ok(calls.logs.includes('browser extensions (page capture, embedding): http://localhost:6101/extensions'));
+  assert.deepEqual(calls.browsed, ['http://localhost:6101']);
+  assert.deepEqual(calls.exits, []);
 });
