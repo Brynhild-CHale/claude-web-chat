@@ -266,3 +266,93 @@ test('start --daemon with a copied portfile: the "started as daemon at" line nam
   assert.match(lines[0], new RegExp(`^web-chat server started as daemon at http://localhost:${minePort} \\(pid ${process.pid}, log `));
   assert.doesNotMatch(lines[0], new RegExp(`:${otherPort}\\b`), "never the other project's URL");
 });
+
+// ── `start --daemon` starts through the root's spawn lock (U718c) ───────────
+//
+// `start --daemon` used to call the bare spawnDaemonProcess, outside the root's
+// spawn lock (lib/util/daemon spawnDaemon, U718b): racing another caller's
+// first start it found nothing up yet and started a second child. It now starts
+// through spawnDaemon: it waits for the holder and adopts the daemon that
+// serves, naming its pid in one line. Stubs only: a spawn seam that counts
+// children (no process is started), a daemonFor that answers the first child's
+// record once it is "up"; the lock lives in a temp HOME.
+
+const { spawnDaemon } = require('../lib/util/daemon');
+const { waitUntil } = require('../test-support/helpers');
+
+function lockWorld(t, { upAfterMs = 400 } = {}) {
+  const w = { children: [], up: null, timers: [] };
+  t.after(() => { for (const x of w.timers) clearTimeout(x); });
+  w.spawn = () => {
+    const pid = 910001 + w.children.length;
+    w.children.push(pid);
+    w.timers.push(setTimeout(() => {
+      if (!w.up) w.up = { pid, port: 6102, url: 'http://localhost:6102', source: 'portfile' };
+    }, upAfterMs));
+    return { pid };
+  };
+  w.daemonFor = async () => w.up;
+  return w;
+}
+
+function lockedStartDeps(root, w, out) {
+  return {
+    root,
+    log: (m) => out.lines.push(String(m)),
+    errlog: (m) => out.errs.push(String(m)),
+    exit: (c) => out.exits.push(c),
+    takeRelaySecret: () => null,
+    restartIfStale: async () => { throw new Error('no live daemon of this root at the check: nothing to bounce'); },
+    daemonFor: w.daemonFor,
+    spawnDaemonProcess: w.spawn,
+  };
+}
+
+test('start --daemon racing a lock holder for a fresh root spawns no second child and names the pid it adopted', async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  const w = lockWorld(t);
+  const holder = spawnDaemon(root, { maxMs: 5000, spawn: w.spawn, daemonFor: w.daemonFor });
+  await waitUntil(() => w.children.length === 1, { what: 'the holder to spawn under the lock' });
+
+  const out = { lines: [], errs: [], exits: [] };
+  const [held] = await Promise.all([holder, start(['--daemon'], lockedStartDeps(root, w, out))]);
+
+  assert.equal(w.children.length, 1, `one child spawned, not ${w.children.length}`);
+  assert.equal(held && held.pid, w.children[0], 'the holder is handed its child');
+  assert.deepEqual(out.errs, []);
+  assert.deepEqual(out.exits, []);
+  assert.equal(out.lines.length, 1, out.lines.join('\n'));
+  assert.match(out.lines[0], new RegExp(`^web-chat server already being started by another caller — adopted it at http://localhost:6102 \\(pid ${w.children[0]}, log `));
+  assert.doesNotMatch(out.lines[0], /portfile not yet visible/);
+});
+
+test('start --daemon alone on a fresh root spawns through the lock and prints the spawned line as before', async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  const w = lockWorld(t, { upAfterMs: 100 });
+  const out = { lines: [], errs: [], exits: [] };
+  await start(['--daemon'], lockedStartDeps(root, w, out));
+  assert.equal(w.children.length, 1);
+  assert.deepEqual(out.errs, []);
+  assert.deepEqual(out.exits, []);
+  assert.equal(out.lines.length, 1, out.lines.join('\n'));
+  assert.match(out.lines[0], new RegExp(`^web-chat server started as daemon at http://localhost:6102 \\(pid ${w.children[0]}, log .*server\\.log\\)$`));
+});
+
+test("start --daemon whose wait for another caller's start runs out spawns nothing and exits 1", async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  // A holder whose child never comes up, holding the lock past start's wait.
+  const w = lockWorld(t, { upAfterMs: 60000 });
+  const holder = spawnDaemon(root, { maxMs: 1500, spawn: w.spawn, daemonFor: w.daemonFor });
+  await waitUntil(() => w.children.length === 1, { what: 'the holder to spawn under the lock' });
+
+  const out = { lines: [], errs: [], exits: [] };
+  await start(['--daemon'], { ...lockedStartDeps(root, w, out), startWithinMs: 200 });
+  assert.equal(w.children.length, 1, 'start spawned nothing beside the holder');
+  assert.deepEqual(out.exits, [1]);
+  assert.deepEqual(out.lines, []);
+  assert.match(out.errs.join('\n'), /held its spawn lock and no daemon is up yet — nothing spawned/);
+  assert.equal(await holder, null, "the holder's child never came up");
+});

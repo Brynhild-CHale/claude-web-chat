@@ -620,8 +620,11 @@ test('start(): takeRelaySecret runs before daemonFor and the value reaches the i
     daemonFor: async () => { order2.push('daemonFor'); return null; },
     spawnDaemonProcess: (...a) => { order2.push('spawn'); spawned.push(a); return { pid: 1 }; },
     waitForDaemon: async () => null,
+    startWithinMs: 200,
   });
-  assert.deepEqual(order2, ['take', 'daemonFor', 'spawn']);
+  // daemonFor twice: start's own check, then spawnDaemon's under the root's
+  // spawn lock (U718c: --daemon starts through the lock).
+  assert.deepEqual(order2, ['take', 'daemonFor', 'daemonFor', 'spawn']);
   assert.deepEqual(spawned, [[root]]);
 
   // Already running: taken first, then dropped; nothing is built.
