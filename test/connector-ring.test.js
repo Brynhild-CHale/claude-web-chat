@@ -1911,3 +1911,55 @@ test('U723e after a reinit, a later boot change of the same surface: the hub\'s 
   h.link.batches().forEach(assertSchema);
   assert.deepStrictEqual(h.idsAfter(), ['cap1', 'cap2', 'cap3', 'cap4'], 'each capture_id on the wire once');
 });
+
+// The rule judges a read's answer by what held when the read was ASKED (its
+// capture `since`), never by the cursor when it answers: a hub ack can lift
+// capture_seq over records it never received (a stream capture entry raises
+// it, swc lib/ingest/batch.js plan()), and those records reach the hub only
+// by the reconcile.
+
+test('U723e a hole below a stream-carried counter: the ack (capture_seq 9) beats the answer of the read asked at 6, and captures 7 and 8 are still sent, each once', async () => {
+  const h = reconcileWorld();
+  await firstBatchOfNewBoot(h);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile' });
+  await settle();
+  for (const b of h.link.batches()) h.link.ack(b);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 6);
+  const n = h.capReads.length;
+  const release = h.w.hold(n);
+  // A ring gap, then capture 9 as a stream entry: captures 7 and 8 were evicted with the gap.
+  h.w.captures = [capRecord(7), capRecord(8), capRecord(9)];
+  h.lc.emit({ type: 'gap', gap: { gap: true, dropped: 2, oldest: 5 } });
+  h.lc.emit({ type: 'entry', entry: { seq: 5, ts: 5, kind: 'capture', capture_id: 'cap9', capture_seq: 9, url: 'https://x' } });
+  const hasCap9 = (b) => b.entries.some((e) => e.capture_id === 'cap9');
+  await waitUntil(() => h.link.batches().some(hasCap9), { what: 'the gap batch' });
+  const b2 = h.link.batches().find(hasCap9);
+  assert.strictEqual(b2.contiguous, false);
+  await waitUntil(() => h.capReads.length > n, { what: 'the reconcile read issued' });
+  assert.strictEqual(h.capReads[n], '/api/captures?since=6', 'C-07.12\'s read, asked at the acknowledged counter');
+  // The hub acks with capture_seq 9 (raised from the stream entry) before the read answers.
+  h.link.ack(b2, { ...h.link.cursorAfter(b2), capture_seq: 9 });
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  const ids = h.idsAfter();
+  assert.strictEqual(ids.filter((id) => id === 'cap7').length, 1, `capture 7 on the wire once: ${JSON.stringify(ids)}`);
+  assert.strictEqual(ids.filter((id) => id === 'cap8').length, 1, `capture 8 on the wire once: ${JSON.stringify(ids)}`);
+});
+
+test('U723e the gate\'s own timing: the reconcile read issued before the ack and answered after it queues nothing the acknowledged batch carried', async () => {
+  const h = reconcileWorld();
+  const release = h.w.hold(1);   // the reconcile after the first batch answers late
+  const b1 = await firstBatchOfNewBoot(h);
+  assert.deepStrictEqual((b1.reconciled || []).map((r) => r.capture_id), ['cap5', 'cap6']);
+  await waitUntil(() => h.capReads.length >= 2, { what: 'the reconcile asked' });
+  assert.strictEqual(h.capReads[1], '/api/captures?since=4', 'asked before the ack, at the old counter');
+  // The ack arrives first (the gate's r4 record), then the read answers both records.
+  h.link.ack(b1);
+  assert.strictEqual(h.ring.cursorOf(CHAT).capture_seq, 6);
+  release();
+  await settle(80);
+  h.link.batches().forEach(assertSchema);
+  assert.strictEqual(h.link.batches().length, 1, 'no second batch carries them');
+  assert.deepStrictEqual(h.idsAfter(), ['cap5', 'cap6'], 'each capture_id on the wire once');
+});
