@@ -344,6 +344,9 @@ test('--pair-only: the usage, the help row, the closing line and event, as insta
   assert.ok(sec.includes('`claude-web-chat connect <hub-url> --pair-only` pairs this machine and stops there. It writes no unit, starts no service and waits for nothing.'));
   assert.ok(sec.includes('With `--json` that line is one `service` event with `kind` null and `pair_only` true.'));
   assert.ok(sec.includes('With `--pair-only` too, the closing line names only that command.'));
+  assert.ok(sec.includes('On a machine already paired it pairs nothing and prints that line (with `--workdir`, after the note that the workdir its record names is kept).'));
+  assert.ok(src.includes('connect: --workdir is used on the first pairing only; this machine keeps the workdir its record names'), 'the note a paired record\'s --workdir prints before the closing line');
+  assert.match(src, /if \(parsed\.workdir\) \{\s*if \(existing\) \{\s*io\.say\(/, 'and it prints before step (2) and the close');
   const help = read('lib/cli/index.js');
   assert.ok(help.slice(help.indexOf('function showHelp()')).includes('(--pair-only: pair, install no service, then use connect run)'));
   assert.ok(flat(unreleased()).includes('`connect <hub-url> --pair-only` pairs and stops there: no unit, no service, and one closing line naming `connect run`'));
