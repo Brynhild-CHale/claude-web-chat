@@ -967,3 +967,38 @@ test('registerRole without a port: port null and url null, read back, listed unp
   assert.equal(registry.readRoleEntry('connector'), null);
   assert.ok(registry.readRoleEntry('portal'), 'the portal row is untouched');
 });
+
+test('the rotation request (`connect rotate`, U726): its own 0600 file under the record\'s lock, never a record field; ENOTPAIRED without a paired record; cleared by time', (t) => {
+  const home = withTempHome(t);
+  assert.throws(() => conn.requestRotate('hub-one'), (e) => e.code === 'ENOTPAIRED');
+  assert.equal(conn.readRotateRequest('hub-one'), null);
+  assert.throws(() => conn.requestRotate('Bad/Id'), (e) => e.code === 'EHUBID');
+
+  const rec = pairedRecord(home);
+  conn.writeRecord(rec);
+  const recordBytes = fs.readFileSync(userPaths().connectorRecord('hub-one'), 'utf8');
+  assert.equal(conn.requestRotate('hub-one', { at: 1234 }), 1234);
+  const file = conn.rotateRequestFile('hub-one');
+  assert.equal(path.dirname(file), userPaths().connectorDir);
+  assert.equal(modeOf(file), 0o600);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { rotate_requested_at: 1234 });
+  assert.equal(conn.readRotateRequest('hub-one'), 1234);
+  assert.equal(fs.readFileSync(userPaths().connectorRecord('hub-one'), 'utf8'), recordBytes, 'the record is untouched');
+  assert.equal(conn.checkRecord(conn.readRecord('hub-one').value), true);
+  assert.deepEqual(conn.listRecords().map((r) => r.hubId), ['hub-one'], 'never listed as a record');
+  assert.equal(fs.existsSync(userPaths().connectorRecordLock('hub-one')), false, 'the lock released');
+
+  assert.equal(conn.clearRotateRequest('hub-one', { at: 999 }), false, 'a newer request stays');
+  assert.equal(conn.readRotateRequest('hub-one'), 1234);
+  assert.equal(conn.clearRotateRequest('hub-one', { at: 1234 }), true);
+  assert.equal(conn.readRotateRequest('hub-one'), null);
+  assert.equal(conn.clearRotateRequest('hub-one'), false, 'nothing to clear');
+
+  // A file that is not a request reads as none.
+  fs.writeFileSync(file, JSON.stringify({ rotate_requested_at: 'soon', extra: 1 }), { mode: 0o600 });
+  assert.equal(conn.readRotateRequest('hub-one'), null);
+
+  // Revoked: no request.
+  conn.writeRecord({ ...rec, credential: { state: 'revoked' } });
+  assert.throws(() => conn.requestRotate('hub-one'), (e) => e.code === 'ENOTPAIRED');
+});
