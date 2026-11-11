@@ -632,6 +632,45 @@ test('the flag admits loopback only: a non-loopback http host refuses before any
   assert.equal(fs.existsSync(userPaths().connectorDir), false, 'nothing written');
 });
 
+// LOOPBACK@ipv6 (a): the build admits 127.0.0.1 and localhost only (hubOrigin
+// never takes a bracketed IPv6 literal), and its words say so.
+test('the loopback refusals name 127.0.0.1 or localhost and never ::1; http://[::1]:8477 is still refused, by a sentence that claims nothing for ::1', async (t) => {
+  const s = sandbox(t);
+  const deps = { ...s.deps, request: async () => { throw new Error('no dial'); }, pair: stubPair(s) };
+  assert.equal(await main(['http://10.0.0.5:8080', '--insecure-loopback'], deps), 2);
+  const refusal = s.err.find((l) => /--insecure-loopback is for/.test(l));
+  assert.equal(refusal, 'connect: --insecure-loopback is for a hub on this machine\'s loopback (127.0.0.1 or localhost) only');
+  assert.doesNotMatch(refusal, /::1/);
+
+  s.err.length = 0;
+  assert.equal(await main(['http://[::1]:8477', '--insecure-loopback'], deps), 2);
+  assert.deepEqual(s.pairs, [], 'never reaches pairing');
+  assert.doesNotMatch(s.err.join('\n'), /::1/, 'no sentence names ::1');
+  assert.match(s.err.join('\n'), /^connect: /m);
+
+  const s2 = sandbox(t);
+  seedPaired();
+  assert.equal(await runMod.run(['--insecure-loopback'], runDeps(s2, { createLink: () => assert.fail('no dial') })), 2);
+  const runRefusal = s2.err.find((l) => /--insecure-loopback is for/.test(l));
+  assert.equal(runRefusal, 'connect run: --insecure-loopback is for a hub on this machine\'s loopback (127.0.0.1 or localhost) only');
+});
+
+test('no message or comment of the connector says ::1 is admitted, or that the CLI never passes --insecure-loopback', () => {
+  const root = path.join(__dirname, '..', 'lib');
+  const files = [
+    ...fs.readdirSync(path.join(root, 'connector')).filter((n) => n.endsWith('.js')).map((n) => path.join(root, 'connector', n)),
+    path.join(root, 'setup', 'connector.js'),
+  ];
+  for (const f of files) {
+    const text = fs.readFileSync(f, 'utf8');
+    assert.ok(!/::1/.test(text), `${f} names ::1`);
+    assert.ok(!/CLI\s+never\s+(?:\/\/\s*)?(?:passes|does)/.test(text), `${f} says the CLI never passes the flag`);
+  }
+  // And the build is as it was: hubOrigin refuses a bracketed literal.
+  assert.throws(() => conn.hubOrigin('http://[::1]:8477', { insecureLoopback: true }), (e) => e.code === 'EHUBORIGIN');
+  assert.equal(conn.hubOrigin('http://LOCALHOST:8477/', { insecureLoopback: true }), 'http://localhost:8477');
+});
+
 test('`connect https://hub-int.test:8444`: the proof signs the host with its port; the record\'s origin carries :8444', async (t) => {
   const s = sandbox(t);
   const seen = [];
