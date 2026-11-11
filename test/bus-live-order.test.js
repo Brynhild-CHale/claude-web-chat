@@ -220,6 +220,19 @@ test('(a) a ws-only emit inside a delivery waits its turn too', () => {
   assert.deepEqual(frames, ['outer', 'nested']);
 });
 
+test('(a) an outermost ws-only emit, and one that builds nothing, leave the bus ready: the next emit is delivered at once', () => {
+  const bus = createBus();
+  const frames = [];
+  const heard = [];
+  bus.setBroadcaster((f) => frames.push(f));
+  bus.subscribe((e) => heard.push(e.kind));
+  assert.equal(bus.emit({ ws: 'only' }), null);
+  assert.equal(bus.emit(), null);
+  bus.emit({ event: { kind: 'next' }, ws: 'next' });
+  assert.deepEqual(heard, ['next'], 'not left in a delivering state');
+  assert.deepEqual(frames, ['only', 'next']);
+});
+
 test('(a) the hook tap (another instance of the engine) keeps ring order for a re-entrant publish', () => {
   const tap = createHookTap();
   const heard = [];

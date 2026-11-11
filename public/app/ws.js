@@ -298,7 +298,7 @@ const HANDLERS = {
       if (msg.theme && msg.theme.name) syncThemeSelect(msg.theme.name);
       // The brand images follow the global theme (each theme keeps its own,
       // and its pack can fill an empty slot) — the daemon sends a `brand` frame
-      // with every global theme change, just ahead of this one, so there is
+      // with every global theme change, just after this one, so there is
       // nothing to re-read here (lib/server/routes/brand.js).
     } else if (msg.scope === 'node') {
       if (msg.target === view.activeId) setActiveNodeTheme(msg.theme || null);

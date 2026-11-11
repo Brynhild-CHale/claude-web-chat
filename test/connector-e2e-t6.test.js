@@ -903,8 +903,9 @@ test('AG-1 (in-suite half): the tranche-6 project\'s log records and node files 
 // the MCP process's half, never Claude Code — reaching the space daemon by its
 // port. Placed before (13), which stops the daemon. The Push carries a note and
 // no capture: a capture's queue item is emitted inside the capture's own
-// subscriber phase, so the live stream serves it before the capture (a
-// separate ordering finding, U748b's hand-off), which this case does not read.
+// subscriber phase, and the live stream then served it before the capture (a
+// separate ordering finding, U748b's hand-off; fixed by U750b, case (20)),
+// which this case does not read.
 
 test('(19) an acknowledged Push streams to the connector contiguous: missing 0, duplicate 0, no source.gap, the wake-ack delivered once', async () => {
   const { startChannelBridge } = require('../lib/channel/bridge');
