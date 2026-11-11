@@ -258,10 +258,9 @@ test('both USAGE strings name --no-warm', () => {
   assert.match(init.USAGE, /\[--no-warm\]/);
 });
 
-// The help text lives in lib/cli/index.js showHelp(), a product file outside
-// U755's cell: the patch is in the unit's hand-off as an open issue. This
-// assertion is a todo until it lands — then drop the todo.
-test('the help text names --no-warm for install and init', { todo: 'lib/cli/index.js showHelp() needs the grant (U755 hand-off)' }, async () => {
+// The help text lives in lib/cli/index.js showHelp(); U755's patch landed
+// with the tranche tail (U791, hand fold 9 C5), so this is no longer a todo.
+test('the help text names --no-warm for install and init', async () => {
   const { main } = require('../lib/cli');
   const out = await quiet(() => main(['help']));
   const block = (from, to) => {
