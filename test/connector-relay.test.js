@@ -739,3 +739,72 @@ test('step 5 is a lock of its own: a route a (substituted) connected table admit
   assert.strictEqual(c.denies.length, 3);
   for (const e of c.denies) checkDeny(e);
 });
+
+// ── hand fold 7 (h), U790: a ws piece holding a registered secret ──────────
+
+test('WS: a daemon message holding a registered secret is never sent (link.send throws secret); the stream ends with relay.ws.close and the daemon socket closes, and the next stream still relays', async (t) => {
+  const c = await setup(t, { stub: true });
+  const d = c.decision({ daemon_level: 'read' });
+  const token = 'tok-7f3a9c1e07b54d2f68aa';
+  c.link.registerSecret(token);
+  const ws = c.fake.relayWs({ chat: c.label, decision: d });
+  assert.strictEqual(await ws.opened, true);
+  await waitUntil(() => c.d.sockets.length === 1, { timeout: 5000, what: 'the daemon socket' });
+  const s = c.d.sockets[0];
+  s.ws.send(JSON.stringify({ type: 'hello', leak: token }));
+  const closed = await within(ws.closed, 2000, 'the relay closed');
+  assert.strictEqual(closed.code, 1011);
+  assert.strictEqual(await within(s.closedP, 2000, 'the daemon socket closed'), 1011, 'the upstream closed, never left paused');
+  assert.ok(!JSON.stringify(c.fake.frames.map((f) => f.frame)).includes(token), 'the secret reached no frame');
+  assert.ok(c.logs.some((l) => /relay stream \d+ data refused: secret/.test(l)), 'logged by code');
+  // The link is not stuck: another stream relays a message.
+  const ws2 = c.fake.relayWs({ chat: c.label, decision: d });
+  assert.strictEqual(await ws2.opened, true);
+  await waitUntil(() => c.d.sockets.length === 2, { timeout: 5000, what: 'the second daemon socket' });
+  c.d.sockets[1].ws.send(JSON.stringify({ type: 'hello' }));
+  await waitUntil(() => ws2.messages.length === 1, { timeout: 5000, what: 'the second stream\'s message' });
+  ws2.close(1000);
+  await ws2.closed;
+});
+
+// ── hand fold 5 (b), U790: a GET whose daemon response head never comes ────
+
+test('a relayed GET whose daemon holds its response head is dropped at the daemon within 1 s of an access change or the hub\'s abort (C-03.31)', async (t) => {
+  const c = await setup(t, { stub: true });
+  // The stub's own root and identity, on a server that never writes a head.
+  const pending = [];
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, role: 'instance', pid: process.pid, instance: instanceId(c.d.root) }));
+      return;
+    }
+    pending.push({ url: req.url, closed: new Promise((r) => req.socket.on('close', r)) });
+  });
+  await new Promise((resolve) => server.listen(0, LISTEN_HOST, resolve));
+  assert.ok(!isReservedPort(server.address().port));
+  t.after(async () => { server.closeAllConnections(); await new Promise((r) => server.close(r)); });
+  c.target.rec.port = server.address().port;
+
+  // (1) a newer decision version that changes the access.
+  const ref1 = c.fake.sendDecision(c.decision({ daemon_level: 'full', version: 1 }));
+  const p1 = c.http({ method: 'GET', path: '/api/store?nohead=1', decisionRef: ref1 });
+  await waitUntil(() => pending.length === 1, { timeout: 5000, what: 'the daemon request' });
+  const t0 = Date.now();
+  c.fake.sendDecision(c.decision({ daemon_level: 'read', version: 2 }));
+  await within(p1.then(() => null, (e) => e), 1000, 'the hub told');
+  await within(pending[0].closed, 1000, 'the daemon request dropped on access_changed');
+  assert.ok(Date.now() - t0 < 1000);
+
+  // (2) the hub's own abort of the stream.
+  const ref3 = c.fake.sendDecision(c.decision({ daemon_level: 'full', version: 3 }));
+  const p2 = c.http({ method: 'GET', path: '/api/store?nohead=2', decisionRef: ref3 });
+  p2.catch(() => {});
+  await waitUntil(() => pending.length === 2, { timeout: 5000, what: 'the second daemon request' });
+  const req = c.fake.frames.filter((f) => f.dir === 'out' && f.kind === 'relay.http.request').pop();
+  const t1 = Date.now();
+  c.fake.send({ ch: 'relay', kind: 'relay.http.abort', stream: req.frame.stream, reason: 'client_gone' });
+  await within(pending[1].closed, 1000, 'the daemon request dropped on the hub\'s abort');
+  assert.ok(Date.now() - t1 < 1000);
+  await waitUntil(() => c.relay.openCount === 0, { timeout: 2000, what: 'the streams released' });
+});

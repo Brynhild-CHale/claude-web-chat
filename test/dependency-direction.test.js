@@ -120,6 +120,12 @@ const BASELINE = {
   // command, and from no other CLI file.
   'lib/cli/commands/connect.js => lib/connector/index.js':
     'connect run is the CLI face of the connector process',
+  // The same CLI face binds the disconnect row's ask to U731's askConnector,
+  // the one client of the connector's local socket (U727-U731@via-connector-
+  // socket-op (a), U790): the CLI end of connector.leave/release-all. Lazy,
+  // inside the command, and from no other CLI file.
+  'lib/cli/commands/connect.js => lib/connector/local-socket.js':
+    'connect disconnect asks the running connector over its local socket (askConnector)',
 
   // The two hooks are MCP-adjacent by construction: they talk to the same daemon
   // through the same spawn-injecting shim the 24 tools use.
