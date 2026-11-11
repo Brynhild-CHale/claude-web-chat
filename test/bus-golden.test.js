@@ -26,11 +26,13 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //  - node-added carries `label` + `unlock:true`; seq-less WS frames stay out of
 //    the ring.
 //  - CHANNELS depth-1 addition: the capture is now wake-worthy, so the daemon's
-//    classify subscriber folds it into the queue. That enqueue fires SYNCHRONOUSLY
-//    inside the capture event's subscriber phase — i.e. BEFORE the capture emit's
-//    own `store:patch` WS frame — so the `queue` add frame precedes it, and a
-//    `queue` event lands between the capture and turn-end. `enqueued_at` is
-//    scrubbed volatile.
+//    classify subscriber folds it into the queue, inside the capture event's
+//    subscriber phase, and a `queue` event lands between the capture and
+//    turn-end. `enqueued_at` is scrubbed volatile. U750b (reviewed golden edit,
+//    contract 07 C-07.11): live delivery is in ring order — that nested emit
+//    takes its ring slot at once but is delivered after the capture emit's own
+//    delivery — so the capture's `store:patch` frame now precedes the `queue`
+//    add frame (it used to follow it). The event log is unchanged.
 //  - D1 (tranche 3): the capture pane's render is no longer a WS-only frame. It
 //    goes through the shared mount-set (lib/server/domain/mounts), so it emits a
 //    ring `render` event at seq 7 — which is what makes a capture pane visible
@@ -54,10 +56,11 @@ const { driveGoldenSession } = require('../test-support/golden-session');
 //  - wc085 (brand images per theme): a GLOBAL theme change is a brand change —
 //    each theme keeps its own images — so lib/server/routes/brand.js follows the
 //    theme event and emits a `brand` event + frame for the theme now on. Like
-//    the queue add above, it fires SYNCHRONOUSLY inside the theme event's
-//    subscriber phase: the `brand` frame precedes the `theme` frame, its event
-//    takes seq 4, and every later ring seq moves up one. The golden's set_theme
-//    carries no name, so the theme is the unnamed one.
+//    the queue add above, it is emitted inside the theme event's subscriber
+//    phase: its event takes seq 4, and every later ring seq moves up one. Since
+//    U750b (reviewed golden edit) its frame follows the `theme` frame, in ring
+//    order; it used to precede it. The golden's set_theme carries no name, so
+//    the theme is the unnamed one.
 //  - 2026-10-23 U311 (the report path, B6 = b): every per-pane render frame
 //    carries the pane's `gen` (0 for a fresh id; a report echoes it), and the
 //    hello's `surface` is the daemon's wall-clock-seeded counter, scrubbed as
@@ -87,18 +90,30 @@ const GOLDEN = {
     { type: 'render', html: '<p>hello</p>', target: 'main', id: 'm1', owner: 'claude', gen: 0 },
     { type: 'store:patch', patch: { greeting: 'hi', n: 1 } },
     {
-      type: 'brand',
-      theme: { key: '_unnamed', name: null, title: null },
-      slots: { logotype: null, lockup: null, seal: null },
-      fill: { logotype: null, lockup: null, seal: null },
-    },
-    {
       type: 'theme',
       scope: 'global',
       theme: { tokens: { '--wc-accent': '#123456' } },
       resolved: { scope: 'global', tokens: { '--wc-accent': '#123456' }, css: '' },
     },
+    {
+      type: 'brand',
+      theme: { key: '_unnamed', name: null, title: null },
+      slots: { logotype: null, lockup: null, seal: null },
+      fill: { logotype: null, lockup: null, seal: null },
+    },
     { type: 'lock', lock: { base: null, started_at: '<v>', message: 'golden turn', author: 'user', stale: false } },
+    {
+      type: 'store:patch',
+      patch: {
+        tab_capture: {
+          seq: 1,
+          capture_id: 'cap1',
+          url: 'https://example.com/page',
+          title: 'Example',
+          profile: 'tables',
+        },
+      },
+    },
     {
       type: 'queue',
       op: 'add',
@@ -115,18 +130,6 @@ const GOLDEN = {
         enqueued_at: '<v>',
       },
       count: 1,
-    },
-    {
-      type: 'store:patch',
-      patch: {
-        tab_capture: {
-          seq: 1,
-          capture_id: 'cap1',
-          url: 'https://example.com/page',
-          title: 'Example',
-          profile: 'tables',
-        },
-      },
     },
     {
       type: 'render',

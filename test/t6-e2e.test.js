@@ -823,7 +823,8 @@ test('gracefulShutdown() leaves no open handle: a mod attached, its op long-poll
 // Re-pinned by U311 (PLAN 2B.1): render frames gain `gen`, the hello's `surface` is scrubbed.
 // Re-pinned by U313 (PLAN 2B.2): the GOLDEN hello and the reset key-set gain `marks`.
 // Re-pinned by U750 (PLAN 6B.4, contract 07 C-07.12): the capture entry carries `capture_seq: 1` and its ring `seq` 6.
-const BUS_GOLDEN_SHA256 = '79ad01e75c2156c9a0501e265dacf78166b5bc4c03671dce624b7d51fd0fffc5';
+// Re-pinned by U750b (PLAN 6B.4, contract 07 C-07.11): live delivery in ring order — the theme frame before its brand frame, the capture's store:patch before its queue add.
+const BUS_GOLDEN_SHA256 = 'c43c181a363f9f1ba1ac752246a7d34086046696d5ef9ba379278eb67dfb5415';
 
 test('test/bus-golden.test.js is byte-identical', () => {
   const src = fs.readFileSync(path.join(REPO, 'test', 'bus-golden.test.js'), 'utf8').replace(/\r\n/g, '\n');
