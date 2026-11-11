@@ -699,6 +699,11 @@ test('(15) C-04.25, the second proof: a remote create with payload.shared: false
   });
   assert.equal(viaHub.status, 403);
   assert.equal(bodyOf(viaHub).error, PRIVATE);
+  // The connector records the daemon's refusal as daemon-rule (C-04.21) and
+  // ships it (the in-suite row for the brief's "recorded daemon-rule").
+  await waitUntil(() => W.fake.find('authority.log', { dir: 'in' }).flatMap((f) => f.frame.records)
+    .some((r) => r.enforcer === 'daemon' && r.reason === 'daemon-rule' && r.path === '/api/elements' && r.chat_id === W.space),
+  { timeout: 10000, what: 'the daemon\'s refusal recorded daemon-rule' });
   // A shared create through the same path is accepted (the refusal is the private one).
   const shared = await host(port, 'POST', '/api/elements', COMMENT(true), relayed(W.secret, 'full'));
   assert.equal(shared.status, 200, masked(JSON.stringify(shared.body)));
