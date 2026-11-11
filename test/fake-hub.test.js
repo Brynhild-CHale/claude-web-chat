@@ -742,3 +742,66 @@ test('revoke: machine.revoked then 4403, and the machine is refused after', asyn
   assert.strictEqual((await authenticate(fake, again, machine, key)).reason, 'machine_revoked');
   assert.strictEqual((await again.closed).code, 4403);
 });
+
+// ── the source cursor's counters (contract 07 C-07.12a; PQ-6A3-2) ─────────
+// The real hub keeps capture_seq and element_seq across a boot change and sets
+// them to 0 only on a batch carrying reinit (ServerWebChat lib/ingest/batch.js
+// plan()); element_reset on a new boot's batch sets element_seq alone to 0.
+const COUNTED = (chat) => ({ type: 'source', chat_id: chat, ring: 'main', boot: 'boot-a', seq: 40, capture_seq: 5, element_seq: 30 });
+const newBootBatch = (chat, n, extra = {}) => ({
+  type: 'events.batch', batch_id: `b_${'0'.repeat(25)}${n}`, chat_id: chat, ring: 'main', boot: 'boot-b', since: 0,
+  contiguous: false, gap: { gap: true, dropped: 0, oldest: 1, reset: true }, entries: [{ seq: 1, ts: 1793181402551, kind: 'graph' }], ...extra,
+});
+
+test('the cursor: a boot change keeps capture_seq and element_seq (C-07.12a); seq starts again in the new boot', async (t) => {
+  const { fake, key, machine } = await paired(t);
+  const chat = fake.mintLabel();
+  fake.assign({ chat }, { cursor: COUNTED(chat) });
+  const c = await connect(fake, machine, key);
+  assert.strictEqual((await c.next('chat.assign')).cursor.capture_seq, 5);
+  c.send({ ch: 'events', kind: 'events.batch', batch: newBootBatch(chat, 1) });
+  const { cursor } = (await c.next('events.ack')).ack;
+  assert.deepStrictEqual([cursor.boot, cursor.seq, cursor.capture_seq, cursor.element_seq], ['boot-b', 1, 5, 30], 'the counters survive the boot change');
+  assert.deepStrictEqual(fake.takeErrors(), []);
+});
+
+test('the cursor: a batch carrying reinit sets capture_seq and element_seq to 0; element_reset alone sets element_seq to 0', async (t) => {
+  const { fake, key, machine } = await paired(t);
+  const chat = fake.mintLabel();
+  fake.assign({ chat }, { cursor: COUNTED(chat) });
+  const c = await connect(fake, machine, key);
+  await c.next('chat.assign');
+  c.send({ ch: 'events', kind: 'events.batch', batch: newBootBatch(chat, 1, { reinit: true }) });
+  const { cursor } = (await c.next('events.ack')).ack;
+  assert.deepStrictEqual([cursor.boot, cursor.capture_seq, cursor.element_seq], ['boot-b', 0, 0], 'reinit: both counters to 0');
+
+  const other = fake.mintLabel();
+  fake.assign({ chat: other }, { cursor: COUNTED(other) });
+  await c.next('chat.assign', 2);
+  c.send({ ch: 'events', kind: 'events.batch', batch: newBootBatch(other, 2, { element_reset: true }) });
+  const second = (await c.next('events.ack', 2)).ack.cursor;
+  assert.deepStrictEqual([second.capture_seq, second.element_seq], [5, 0], 'element_reset: element_seq alone');
+  assert.deepStrictEqual(fake.takeErrors(), []);
+});
+
+// The real hub reads both flags only on a batch of a boot it does not hold
+// (plan(): reinit is the gap reason of a boot change, element_reset needs
+// !sameBoot): on a batch of the held boot they change nothing.
+test('the cursor: reinit or element_reset on a batch of the boot the cursor already holds changes neither counter', async (t) => {
+  const { fake, key, machine } = await paired(t);
+  const sameBootBatch = (chat, n, extra) => ({
+    type: 'events.batch', batch_id: `b_${'0'.repeat(25)}${n}`, chat_id: chat, ring: 'main', boot: 'boot-a', since: 40,
+    contiguous: true, entries: [{ seq: 41, ts: 1793181402551, kind: 'graph' }], ...extra,
+  });
+  const c = await connect(fake, machine, key);
+  const flags = [{ reinit: true }, { element_reset: true }];
+  for (let i = 0; i < flags.length; i++) {
+    const chat = fake.mintLabel();
+    fake.assign({ chat }, { cursor: COUNTED(chat) });
+    await c.next('chat.assign', i + 1);
+    c.send({ ch: 'events', kind: 'events.batch', batch: sameBootBatch(chat, i + 1, flags[i]) });
+    const { cursor } = (await c.next('events.ack', i + 1)).ack;
+    assert.deepStrictEqual([cursor.boot, cursor.seq, cursor.capture_seq, cursor.element_seq], ['boot-a', 41, 5, 30], `${Object.keys(flags[i])[0]} on the held boot: the counters stay`);
+  }
+  assert.deepStrictEqual(fake.takeErrors(), []);
+});

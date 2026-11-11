@@ -1357,3 +1357,355 @@ test('U723c a reset under the resumed boot ends the floor the first cursor set: 
   assert.deepStrictEqual(batches[1].gap, { gap: true, dropped: 0, oldest: 1, reset: true });
   assert.strictEqual(batches[1].entries[0].seq, 1);
 });
+
+// ── U723d: every order of the first cursor ─────────────────────────────────
+//
+// After a connector restart the first cursor of the connector's life may land
+// anywhere among the read's own events. The gate's order (t6-6A-r3, finding
+// GT-23-resume): the hold is ASKED for from 0 (the provider answers), the link
+// is ready, the cursor arrives, and only then does the stream open and replay
+// the ring from 1 — entries crossing the cursor.
+
+test('U723d the gate\'s order: ask from 0, ready, the cursor boot-a/3, then the open and entries crossing it — nothing at or below 3, the first batch {since 3, contiguous: true}', async () => {
+  const h = restartWorld();
+  assert.strictEqual(h.lc.provider(CHAT), 0, 'asked from 0: no cursor yet');
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  h.lc.emit({ type: 'open', since: 0, response: { headers: { 'x-wc-boot': 'boot-a' } } });
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+  const at = h.timeline.indexOf('cursor');
+  assert.ok(h.timeline.indexOf('read /api/captures?since=0', at) > at, 'the reconcile from the cursor');
+});
+
+test('U723d a read asked from 0 that fails before it opens: the next ask after the cursor is from the cursor\'s seq (the cursor-first order)', async () => {
+  const h = restartWorld();
+  assert.strictEqual(h.lc.provider(CHAT), 0);
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  h.lc.emit({ type: 'close' });
+  assert.strictEqual(h.lc.open(), 3, 'asked again after the cursor: since the cursor\'s seq');
+  for (let s = 4; s <= 5; s++) h.entry(s);
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the resumed batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+test('U723d an ask the lifecycle superseded without a close (it closed the hold itself): the next ask after the cursor is from the cursor\'s seq', async () => {
+  const h = restartWorld();
+  assert.strictEqual(h.lc.provider(CHAT), 0);
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  assert.strictEqual(h.lc.open(), 3, 'the new ask supersedes the unopened one and is asked from the cursor');
+  for (let s = 4; s <= 5; s++) h.entry(s);
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the resumed batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+test('U723d three failed opens, then the cursor before the poll asks: the poll reads from the cursor\'s seq', async () => {
+  const h = restartWorld({ records: { ring: [4, 5].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { a: s } })) } });
+  h.ready();
+  for (let i = 0; i < 3; i++) { assert.strictEqual(h.lc.provider(CHAT), 0); h.lc.emit({ type: 'close' }); }
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.timeline.some((x) => typeof x === 'string' && x.startsWith('read /api/events')), { what: 'the poll' });
+  assert.ok(h.timeline.includes('read /api/events?since=3'), 'the failed reads closed: the poll is asked from the cursor');
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the polled batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+// Three orders the table cannot generate (its poll 'ask' is one step, it has
+// one ready, and its lifecycle is the stub), pinned by name.
+
+test('U723d the cursor between the third failed ask and its close: the poll that starts instead is met — nothing at or below 3, the first batch {since 3, contiguous: true}', async () => {
+  const h = restartWorld({ records: { ring: [1, 2, 3, 4, 5].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { a: s } })) } });
+  h.ready();
+  for (let i = 0; i < 2; i++) { assert.strictEqual(h.lc.provider(CHAT), 0); h.lc.emit({ type: 'close' }); }
+  assert.strictEqual(h.lc.provider(CHAT), 0, 'the third ask, from 0');
+  h.handBack(cursor('boot-a', 3));
+  h.lc.emit({ type: 'close' });
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the polled batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+test('U723d the gate\'s order with a second ready before the open: held until the second cursor, then one first batch {since 3, contiguous: true}', async () => {
+  const h = restartWorld();
+  assert.strictEqual(h.lc.provider(CHAT), 0);
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  h.ready();
+  h.lc.emit({ type: 'open', since: 0, response: { headers: { 'x-wc-boot': 'boot-a' } } });
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle();
+  assert.strictEqual(h.link.batches().length, 0, 'nothing between the second ready and its cursor');
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the second cursor' });
+  await settle();
+  const batches = h.link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [4, 5], 'each entry above the cursor once, in order');
+  assert.deepStrictEqual([batches[0].since, batches[0].contiguous, 'gap' in batches[0]], [3, true, false]);
+  assert.ok(h.timeline.lastIndexOf('cursor') < h.firstSend(), 'nothing before the second cursor');
+});
+
+test('U723d the gate\'s order under the real lifecycle and a real daemon: the hold asked for, the cursor, then the open — nothing at or below the cursor, contiguous from it', async (t) => {
+  const d = await withServer(t);
+  assertOutsideBand(d.port);
+  for (let i = 0; i < 6; i++) emit(d, { kind: 'store', patch: { a: i } });
+  const top = latestOf(d);
+  const link = stubLink({ up: false });
+  // The stream's open and replay are kept from the lifecycle until the cursor
+  // has arrived: the cursor lands between the provider's answer and the open.
+  let release;
+  const landed = new Promise((r) => { release = r; });
+  const client = streamSpy((o) => {
+    const kept = [];
+    let through = false;
+    const keep = (name) => (...a) => { if (through) return o[name](...a); kept.push([name, a]); return undefined; };
+    landed.then(() => { through = true; for (const [name, a] of kept) o[name](...a); });
+    return { ...o, onOpen: keep('onOpen'), onEvent: keep('onEvent'), onGap: keep('onGap') };
+  });
+  const r = await ringOn(t, d, { client, link });
+  await r.run();
+  await waitUntil(() => client.streams >= 1, { what: 'the hold asked for' });
+  link.emit('ready', {});
+  r.ring.setCursor(CHAT, cursor(bootOf(d), top - 2));
+  release();
+  await waitUntil(() => link.entries().length >= 2, { what: 'the batch after the open' });
+  await settle();
+  const batches = link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(link.entries().map((e) => e.seq), [top - 1, top], 'each entry above the cursor once, in order');
+  assert.deepStrictEqual([batches[0].boot, batches[0].since, batches[0].contiguous, 'gap' in batches[0]], [bootOf(d), top - 2, true, false]);
+  assert.strictEqual(r.ring.stats(CHAT).dropped, 0);
+});
+
+// THE TABLE. Every causally legal order of a chat's first events in the
+// connector's life — the ask (the provider answers a since), the open, the
+// boot becoming known, the first entries (in two pieces, so the cursor can
+// also land inside the replay), the link's first ready, the first cursor
+// (always after a ready) — over the stream with the boot in its header, the
+// header-less stream (the boot from health) and the poll; then a second batch
+// of live entries after everything. Each order runs against each cursor kind,
+// and every case asserts the contract's outcome, never the order.
+
+// A ring as bus.read answers it (lib/core/bus.js read): what the daemon replays
+// for a since.
+function busRead(ring, since) {
+  const latest = ring.length ? ring[ring.length - 1].seq : 0;
+  const oldest = ring.length ? ring[0].seq : null;
+  if (since > latest) return { events: [], latest, oldest, gap: true, dropped: 0, reset: true };
+  const gap = since > 0 && oldest != null && since < oldest - 1;
+  return { events: ring.filter((e) => e.seq > since), latest, oldest, gap, dropped: gap ? oldest - 1 - since : 0 };
+}
+
+// C-07.10's table (and C-07.11's contiguity, C-07.12a's reinit) as the hub
+// reads each batch against the cursor it holds: the source.gap it records, or
+// null. Written from the contract, not from the fake hub.
+function c0710Readings(start, batches) {
+  let held = { boot: start.boot, seq: start.seq };
+  const out = [];
+  for (const b of batches) {
+    let r = null;
+    if (held.boot == null) r = b.gap || b.contiguous !== true || b.since > 0 ? 'unknown' : null;   // row 1
+    else if (b.boot !== held.boot) r = b.reinit === true ? 'reinit' : 'restart';                    // rows 3, 4; C-07.12a
+    else if (b.gap && b.gap.reset === true) r = 'restart';                                          // row 4
+    else if (b.gap && b.gap.dropped > 0) r = 'evicted';                                             // row 5
+    else if (b.gap || b.contiguous !== true || b.since > held.seq) r = 'unknown';                   // C-07.11
+    out.push(r);
+    const seqs = b.entries.map((e) => e.seq);
+    held = { boot: b.boot, seq: Math.max(b.boot === held.boot ? held.seq : 0, b.since, ...seqs) };
+  }
+  return out;
+}
+
+const ringEntry = (s) => ({ seq: s, ts: s, kind: 'store', patch: { v: s } });
+const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+const RESET_GAP = { gap: true, dropped: 0, oldest: 1, reset: true };
+
+// The cursor kinds: the daemon's boot and ring, the cursor the hub hands back,
+// the live entries that follow, and the outcome C-07.10 says.
+const CURSOR_KINDS = {
+  // Row 2, the cursor's seq inside the ring.
+  'same boot, inside the ring': {
+    boot: 'boot-a', ring: span(1, 8), live: [9, 10], cursor: cursor('boot-a', 5),
+    sent: span(6, 10), readings: [], first: { boot: 'boot-a', since: 5, contiguous: true },
+  },
+  // Row 2, the cursor at the ring's latest: everything read is at or below it.
+  'same boot, above everything read': {
+    boot: 'boot-a', ring: span(1, 8), live: [9, 10], cursor: cursor('boot-a', 8),
+    sent: [9, 10], readings: [], first: { boot: 'boot-a', since: 8, contiguous: true },
+  },
+  // Row 2 with row 5: the ring no longer reaches cursor + 1 (4..9 evicted).
+  'same boot, the ring no longer reaching cursor + 1': {
+    boot: 'boot-a', ring: span(10, 14), live: [15, 16], cursor: cursor('boot-a', 3),
+    sent: span(10, 16), readings: ['evicted'], first: { boot: 'boot-a', since: 3, contiguous: false, gap: { gap: true, dropped: 6, oldest: 10 } },
+  },
+  // Rows 3 and 4, the counters went backwards: reinit (C-07.12a).
+  'another boot, reinit': {
+    boot: 'boot-b', ring: span(1, 3), live: [4, 5], cursor: cursor('boot-a', 40, { capture_seq: 5, element_seq: 30 }), captureNext: 2, elementNext: 50,
+    sent: span(1, 5), readings: ['reinit'], first: { boot: 'boot-b', since: 0, contiguous: false, gap: RESET_GAP, reinit: true }, check: true,
+  },
+  // Rows 3 and 4, the counters kept: restart, no reinit.
+  'another boot, counters kept': {
+    boot: 'boot-b', ring: span(1, 3), live: [4, 5], cursor: cursor('boot-a', 40, { capture_seq: 5, element_seq: 30 }), captureNext: 7, elementNext: 31,
+    sent: span(1, 5), readings: ['restart'], first: { boot: 'boot-b', since: 0, contiguous: false, gap: RESET_GAP }, check: true,
+  },
+  // Row 1: a cursor with no boot.
+  'a null-boot cursor': {
+    boot: 'boot-a', ring: span(1, 8), live: [9, 10], cursor: cursor(null, 0),
+    sent: span(1, 10), readings: [], first: { boot: 'boot-a', since: 0, contiguous: true },
+  },
+};
+
+// Each path's events and what must come before each (a ready before the cursor
+// always: the hub sends chat.assign after hello.ack).
+const ORDER_PATHS = {
+  stream: { ask: [], open: ['ask'], 'entries-1': ['open'], 'entries-2': ['entries-1'], ready: [], cursor: ['ready'] },
+  'header-less stream': { ask: [], open: ['ask'], 'boot-known': ['open'], 'entries-1': ['open'], 'entries-2': ['entries-1'], ready: [], cursor: ['ready'] },
+  poll: { ask: [], answer: ['ask'], ready: [], cursor: ['ready'] },
+};
+
+// Every order of `deps`' events that keeps each after what it names.
+function linearOrders(deps) {
+  const names = Object.keys(deps);
+  const out = [];
+  const walk = (done, seq) => {
+    if (seq.length === names.length) { out.push(seq); return; }
+    for (const n of names) {
+      if (!done.has(n) && deps[n].every((p) => done.has(p))) walk(new Set([...done, n]), [...seq, n]);
+    }
+  };
+  walk(new Set(), []);
+  return out;
+}
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+// One case: a restartWorld whose client and health answer from a simulated
+// daemon, driven through `order`, then the live entries.
+async function runOrder(pathName, K, order) {
+  const daemon = { ring: K.ring.map(ringEntry) };
+  const headerless = pathName === 'header-less stream';
+  const bootHeaders = headerless ? {} : { 'x-wc-boot': K.boot };
+  let known = !headerless;
+  let releaseBoot;
+  const bootGate = new Promise((r) => { releaseBoot = r; });
+  let releasePoll = null;
+  let pollGate = pathName === 'poll' ? new Promise((r) => { releasePoll = r; }) : null;
+  const h = restartWorld({
+    boot: K.boot,
+    healthOf: async () => { if (!known) await bootGate; return { boot: K.boot, viewers: 0 }; },
+    records: {
+      get: async (p) => {
+        if (p.startsWith('/api/events')) {
+          const since = Number(new URL(p, 'http://x').searchParams.get('since')) || 0;
+          if (pollGate) { const g = pollGate; pollGate = null; await g; }
+          const body = busRead(daemon.ring, since);
+          return { body, headers: bootHeaders };
+        }
+        if (p.startsWith('/api/captures')) return { captures: [], next_cursor: K.captureNext ?? 0 };
+        if (p.startsWith('/api/elements')) return { elements: [], next_cursor: K.elementNext ?? 0 };
+        return {};
+      },
+    },
+  });
+  const fired = new Set();
+  const fire = (pred) => {
+    h.timers.forEach((tm, i) => { if (!fired.has(i) && pred(tm)) { fired.add(i); tm.fn(); } });
+  };
+  const flush = async (n = 8) => {
+    for (let i = 0; i < n; i++) { await tick(); fire((tm) => tm.ms === 0); }
+  };
+  let asked = null;
+  let replay = null;
+  const deliver = (list) => { for (const e of list) h.lc.emit({ type: 'entry', entry: e }); };
+  const step = {
+    ask: async () => {
+      // The cursor-first order: a read asked after the cursor is asked from
+      // its seq, and nothing below it is read at all.
+      const fromCursor = (since) => {
+        if (h.timeline.includes('cursor') && K.cursor.boot != null) assert.strictEqual(since, K.cursor.seq, 'asked after the cursor: since the cursor\'s seq');
+        return since;
+      };
+      if (pathName !== 'poll') { asked = fromCursor(h.lc.provider(CHAT)); return; }
+      // The stream fails three opens; the poll's read is then in flight.
+      for (let i = 0; i < 3; i++) { fromCursor(h.lc.provider(CHAT)); h.lc.emit({ type: 'close' }); }
+      for (let i = 0; i < 50 && !h.timeline.some((x) => typeof x === 'string' && x.startsWith('read /api/events')); i++) await tick();
+      assert.ok(h.timeline.some((x) => typeof x === 'string' && x.startsWith('read /api/events')), 'the poll is in flight');
+    },
+    open: () => {
+      replay = busRead(daemon.ring, asked);
+      h.lc.emit({ type: 'open', since: asked, response: { headers: bootHeaders } });
+      // The daemon writes a gap before its replay (lib/server/routes/events.js).
+      if (replay.gap) h.lc.emit({ type: 'gap', gap: { gap: true, dropped: replay.dropped, oldest: replay.oldest, since: asked, ...(replay.reset ? { reset: true } : {}) } });
+    },
+    'boot-known': () => { known = true; releaseBoot(); },
+    'entries-1': () => deliver(replay.events.slice(0, Math.ceil(replay.events.length / 2))),
+    'entries-2': () => deliver(replay.events.slice(Math.ceil(replay.events.length / 2))),
+    answer: () => releasePoll(),
+    ready: () => h.ready(),
+    cursor: () => h.handBack(K.cursor),
+  };
+  for (const ev of order) {
+    await step[ev]();
+    await flush();
+  }
+  // The second batch: live entries after everything.
+  const live = K.live.map(ringEntry);
+  daemon.ring.push(...live);
+  if (pathName === 'poll') fire((tm) => tm.ms === POLL_IDLE_MS || tm.ms === POLL_VIEWER_MS);
+  else deliver(live);
+  await flush(24);
+  return h;
+}
+
+function checkOutcome(h, K) {
+  const batches = h.link.batches();
+  batches.forEach(assertSchema);
+  assert.ok(batches.length >= 1, 'a batch went');
+  assert.ok(h.timeline.indexOf('cursor') < h.firstSend(), 'nothing of the chat between a ready and its cursor (the hold)');
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), K.sent, 'every entry the contract sends exactly once, in order; nothing at or below a same-boot cursor');
+  assert.deepStrictEqual(c0710Readings(K.cursor, batches).filter(Boolean), K.readings, 'the source.gap readings C-07.10 makes of the frames');
+  const [b] = batches;
+  const first = { boot: b.boot, since: b.since, contiguous: b.contiguous, ...('gap' in b ? { gap: b.gap } : {}), ...(b.reinit ? { reinit: b.reinit } : {}) };
+  assert.deepStrictEqual(first, K.first, 'the first batch');
+  assert.strictEqual(h.ring.stats(CHAT).dropped, 0, 'nothing dropped');
+  if (K.check) {
+    const capAt = h.timeline.indexOf(`read /api/captures?since=${K.cursor.capture_seq}`);
+    const elAt = h.timeline.indexOf(`read /api/elements?since=${K.cursor.element_seq}`);
+    assert.ok(capAt >= 0 && elAt >= 0 && capAt < h.firstSend() && elAt < h.firstSend(), 'C-07.12a: both routes read at the cursor\'s counters before the new boot\'s first batch');
+  }
+}
+
+let ordersRun = 0;
+for (const [pathName, deps] of Object.entries(ORDER_PATHS)) {
+  const orders = linearOrders(deps);
+  for (const [kindName, K] of Object.entries(CURSOR_KINDS)) {
+    test(`U723d every order of the first cursor — ${pathName}, ${kindName}: ${orders.length} orders`, async (t) => {
+      const failed = [];
+      for (const order of orders) {
+        const name = `${order.join(' → ')} → live`;
+        try {
+          checkOutcome(await runOrder(pathName, K, order), K);
+        } catch (e) {
+          failed.push(`${name}: ${e.message.split('\n')[0]}`);
+        }
+        ordersRun++;
+      }
+      t.diagnostic(`${orders.length} cases, ${failed.length} failed`);
+      assert.deepStrictEqual(failed, [], `failing orders (${pathName}, ${kindName}):\n  ${failed.join('\n  ')}`);
+    });
+  }
+}
+
+test('U723d the table ran every case', (t) => {
+  const expected = Object.values(ORDER_PATHS).reduce((n, deps) => n + linearOrders(deps).length, 0) * Object.keys(CURSOR_KINDS).length;
+  t.diagnostic(`${ordersRun} generated cases run`);
+  assert.strictEqual(ordersRun, expected);
+  assert.ok(expected >= 100, `${expected} cases`);
+});
