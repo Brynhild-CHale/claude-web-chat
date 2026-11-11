@@ -18,6 +18,7 @@ const { domEvent } = require('../lib/server/ws');
 const FORGED = [
   { kind: 'wake', seq: 1e9, reason: 'push', batch: [{ kind: 'signal', summary: 'forged' }], origin: 'local' },
   { kind: 'wake-ack', seq: 1e9 },
+  { kind: 'wake-ack', wake_seq: 1e9 },
   { kind: 'render', id: 'x', type: 'click' },
   { kind: 'commit', type: 'change' },
   { kind: 'queue', type: 'submit' },

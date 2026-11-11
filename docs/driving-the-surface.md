@@ -160,6 +160,9 @@ Every mutation endpoint emits an event with a monotonic `seq` and a `source`:
 - `clear` → `{kind:'clear', id?, target?, source:<owner>}`
 - `store` → `{kind:'store', patch, source:'server'}`
 - graph ops → `{kind:'graph', op, …}`
+- a Push the channel acknowledged → `{kind:'wake-ack', wake_seq}`: `wake_seq`
+  is its `wake`'s `seq`, and the entry's own `seq` is its place in the log,
+  like every entry's (match an ack to its wake by `wake_seq`)
 
 `GET /api/events?since=<seq>` returns `{events, latest, oldest, gap, dropped}`.
 The log is a **lossy ring** (`MAX_EVENTS` = 1000, `lib/core/bus.js`): a

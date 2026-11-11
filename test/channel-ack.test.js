@@ -65,7 +65,9 @@ test('ackWake: a matching ack clears the retain and emits a wake-ack frame', () 
 
   assert.equal(queue.ackWake(state, bus, wake.seq, wake.boot), true, 'matching ack');
   assert.equal(state.pendingAck, null, 'retain cleared');
-  assert.ok(events.some((e) => e.kind === 'wake-ack' && e.seq === wake.seq), 'wake-ack event emitted');
+  const ack = events.find((e) => e.kind === 'wake-ack' && e.wake_seq === wake.seq);
+  assert.ok(ack, 'wake-ack event emitted, naming its wake in wake_seq');
+  assert.ok(ack.seq > wake.seq, 'the event\'s own seq is its ring position, after its wake\'s');
   assert.ok(wsFrames.some((f) => f.type === 'wake-ack' && f.seq === wake.seq), 'wake-ack WS frame emitted');
 });
 
@@ -168,7 +170,7 @@ test('bridge: a delivered wake is acked back, clearing the retain and emitting w
 
   // The bridge delivers the notification, then POSTs the ack, which emits wake-ack.
   await waitUntil(() => notified.length >= 1, { timeout: 2500, what: 'the bridge notification' });
-  await waitUntil(() => acks.some((a) => a.seq === push.seq), { timeout: 2500, what: 'the wake-ack event' });
+  await waitUntil(() => acks.some((a) => a.wake_seq === push.seq), { timeout: 2500, what: 'the wake-ack event' });
 
   // Retain is cleared: a repush now finds nothing in flight.
   const rp = await api.post('/api/queue/repush', { seq: push.seq });
@@ -263,4 +265,44 @@ test('bridge reconnect redelivers an in-flight wake even with nothing parked', a
   // …and the redelivery is itself retained, so a second drop is still recoverable.
   const rp = await api.post('/api/queue/repush', { seq: wake.seq });
   assert.equal(rp.status, 200, 'the drained wake was retained for ack like any other');
+});
+
+// ── the ring across an acknowledged Push (U748b; contract 07 C-07.11) ────────
+// Every main-ring entry's `seq` is its ring position. The wake-ack entry used
+// to carry its WAKE's seq as its own (the event's `seq` won the bus's spread),
+// so two entries shared a seq and the position the ack took was never served:
+// a ring reader (the connector's stream) saw a repeat, then a hole. The entry
+// now names its wake in `wake_seq`; the WS frame still carries the wake's seq.
+test('ring: across an acknowledged Push every entry\'s seq is its position, and the wake-ack names its wake in wake_seq', async (t) => {
+  const { api, root, port } = await withServer(t, { writePortfile: true });
+  const { client, ready } = readyClient();
+  const notified = [];
+  const bridge = startChannelBridge({ notify: (method, params) => notified.push({ method, params }), client, root });
+  t.after(() => bridge.stop());
+  await ready;
+
+  await api.post('/api/capture', { url: 'https://example.com/page', title: 'Ex', html: HTML });
+  const push = (await api.post('/api/queue/push', {})).json;
+  assert.equal(push.mode, 'wake', 'live channel → live wake');
+  const ringOf = async () => (await api.get('/api/events?since=0')).json;
+  await waitUntil(async () => (await ringOf()).events.some((e) => e.kind === 'wake-ack'),
+    { timeout: 2500, what: 'the wake-ack entry on the ring' });
+  // The event after the ack.
+  await api.post('/api/store', { patch: { u748b_after_ack: 1 } });
+
+  const ring = await ringOf();
+  const seqs = ring.events.map((e) => e.seq);
+  assert.equal(new Set(seqs).size, seqs.length, `no seq repeated on the ring: ${seqs.join(',')}`);
+  seqs.forEach((s, i) => assert.equal(s, i + 1, `entry ${i} sits at position ${i + 1} (${seqs.join(',')})`));
+  assert.equal(ring.latest, seqs.length, 'latest is the last position served');
+
+  const wake = ring.events.find((e) => e.kind === 'wake' && e.seq === push.seq);
+  assert.ok(wake, 'the wake sits at the position the push answered');
+  const acks = ring.events.filter((e) => e.kind === 'wake-ack');
+  assert.equal(acks.length, 1, 'one wake-ack');
+  assert.equal(acks[0].wake_seq, push.seq, 'the wake-ack names its wake in wake_seq');
+  assert.ok(acks[0].seq > wake.seq, 'the wake-ack\'s own seq follows its wake\'s');
+  const after = ring.events.find((e) => e.kind === 'store' && e.patch && e.patch.u748b_after_ack === 1);
+  assert.equal(after.seq, ring.events[ring.events.length - 1].seq, 'the next event follows on');
+  assert.ok(after.seq > acks[0].seq);
 });
