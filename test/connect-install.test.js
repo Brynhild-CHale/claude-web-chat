@@ -342,6 +342,26 @@ test('--workdir: refused inside ~/.web-chat or an offered folder; otherwise reco
   assert.equal(modeOf(wd), 0o700);
 });
 
+// C-06.5 (2): "pair when the record is absent or not `paired`" — a pending
+// record (a pairing that expired) and a revoked one each pair again without
+// --re-pair, then write the unit and start it.
+for (const state of ['pending', 'revoked']) {
+  test(`a ${state} record for this hub pairs again with no --re-pair, then writes the unit and starts it`, async (t) => {
+    const s = sandbox(t);
+    const r = conn.newRecord({ hubId: HUB, origin: 'https://hub.example.com' });
+    r.credential = state === 'pending'
+      ? { state, algorithm: 'ed25519', public_key: 'A'.repeat(43), fingerprint: `SHA256:${'A'.repeat(43)}` }
+      : { state };
+    conn.writeRecord(r);
+    const code = await main(['https://hub.example.com'], { ...s.deps, pair: stubPair(s) });
+    assert.equal(code, 0, s.err.join('\n'));
+    assert.equal(s.pairs.length, 1, 'pair() once');
+    assert.equal(s.pairs[0].rePair, false);
+    assert.equal(readRec().credential.state, 'paired');
+    assert.deepEqual(s.calls.map((a) => a[1]), ['bootout', 'bootstrap']);
+  });
+}
+
 // ── the arguments ──────────────────────────────────────────────────────────
 
 test('a unix: or ws+unix: address is refused at parsing with the usage line (exit 2); a stray option too', async (t) => {
@@ -583,6 +603,20 @@ test('connect run: a plain-http loopback record runs only with --insecure-loopba
   seedPaired();
   assert.equal(await runMod.run(['--insecure-loopback'], runDeps(s2, { createLink: () => assert.fail('no dial') })), 2);
   assert.equal(await runMod.run(['--bogus'], runDeps(s2, { createLink: () => assert.fail('no dial') })), 2);
+});
+
+test('connect run reads the machine key only from the connector\'s own directory (C-06.7): a key_file elsewhere exits 0 and never dials', async (t) => {
+  const s = sandbox(t);
+  seedPaired();
+  const elsewhere = path.join(s.home, 'elsewhere.pem');
+  fs.copyFileSync(userPaths().connectorKey(HUB), elsewhere);
+  fs.chmodSync(elsewhere, 0o600);
+  conn.updateRecord(HUB, (r) => ({ ...r, credential: { ...r.credential, key_file: elsewhere } }));
+  assert.equal(readRec().credential.key_file, elsewhere);
+  const code = await runMod.run([], runDeps(s, { createLink: () => assert.fail('no dial with a key outside the connector directory') }));
+  assert.equal(code, 0);
+  assert.match(s.out.join('\n'), /machine key is missing or unreadable/);
+  assert.equal(registry.readAllEntries().some((e) => e.role === 'connector'), false);
 });
 
 test('connect run composes the link: versions and facts from lib/connector/facts.js, the route table, onSettings = lifecycle.applySettings, no heartbeatBody', async (t) => {
