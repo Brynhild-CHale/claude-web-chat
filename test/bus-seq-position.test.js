@@ -62,13 +62,22 @@ test('the main bus is made with seqIsPosition, and only there', () => {
   assert.deepEqual(hits, ['server/index.js']);
 });
 
-test('a real server\'s main ring: every entry\'s seq is its position', async (t) => {
-  const { api } = await withServer(t);
+// The real server's own bus, not a bus this file made: an emitter that passes a
+// seq (none does today; ackWake did) still lands at its ring position, so the
+// case goes red if lib/server/index.js stops making the main bus with the
+// option, whatever the source scan above reads.
+test('a real server\'s main ring: every entry\'s seq is its position, an emitter\'s own seq included', async (t) => {
+  const { api, srv } = await withServer(t);
   await api.post('/api/store', { patch: { a: 1 } });
   await api.post('/api/render', { id: 'u748b-p', html: '<p>x</p>' });
+  const forged = srv.bus.emit({ event: { kind: 'u748b-probe', seq: 1 } });
   await api.post('/api/store', { patch: { b: 2 } });
   let ring;
-  await waitUntil(async () => { ring = (await api.get('/api/events?since=0')).json; return ring.events.length >= 3; });
+  await waitUntil(async () => { ring = (await api.get('/api/events?since=0')).json; return ring.events.length >= 4; });
   ring.events.forEach((e, i) => assert.equal(e.seq, ring.events[0].seq + i));
   assert.equal(ring.latest, ring.events[ring.events.length - 1].seq);
+  const probe = ring.events.find((e) => e.kind === 'u748b-probe');
+  assert.ok(probe.seq > 1, 'the emitter\'s seq (1) gave way to the ring position');
+  assert.equal(forged.seq, probe.seq, 'emit returns the entry the ring serves');
+  assert.equal(ring.events.filter((e) => e.seq === 1).length, 1, 'position 1 served once');
 });
