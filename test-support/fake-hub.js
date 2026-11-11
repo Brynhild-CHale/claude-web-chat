@@ -772,12 +772,13 @@ function createFakeHub(opts = {}) {
     const prev = sourceCursor(b.chat_id);
     const seqs = (b.entries || []).map((e) => e.seq);
     const caps = (b.reconciled || []).map((r) => r.seq);
-    // C-07.12a: the counters outlive a boot change; a batch carrying reinit
-    // (the surface re-initialised) sets both to 0, and element_reset on a new
-    // boot's batch sets element_seq alone to 0 — as the real hub's
-    // lib/ingest/batch.js plan() does (PQ-6A3-2).
+    // C-07.12a: the counters outlive a boot change; a new boot's batch carrying
+    // reinit (the surface re-initialised) sets both to 0, and element_reset on
+    // a new boot's batch sets element_seq alone to 0 — as the real hub's
+    // lib/ingest/batch.js plan() does (PQ-6A3-2). Either flag on a batch of the
+    // boot the cursor already holds changes neither counter, as there.
     const newBoot = prev.boot !== b.boot;
-    const reinit = b.reinit === true;
+    const reinit = newBoot && b.reinit === true;
     const elementReset = !reinit && newBoot && b.element_reset === true;
     const cursor = {
       type: 'source', chat_id: b.chat_id, ring: 'main', boot: b.boot,

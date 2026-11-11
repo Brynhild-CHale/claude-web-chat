@@ -1417,6 +1417,73 @@ test('U723d three failed opens, then the cursor before the poll asks: the poll r
   assertResumedFrom(h, 3, [4, 5]);
 });
 
+// Three orders the table cannot generate (its poll 'ask' is one step, it has
+// one ready, and its lifecycle is the stub), pinned by name.
+
+test('U723d the cursor between the third failed ask and its close: the poll that starts instead is met — nothing at or below 3, the first batch {since 3, contiguous: true}', async () => {
+  const h = restartWorld({ records: { ring: [1, 2, 3, 4, 5].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { a: s } })) } });
+  h.ready();
+  for (let i = 0; i < 2; i++) { assert.strictEqual(h.lc.provider(CHAT), 0); h.lc.emit({ type: 'close' }); }
+  assert.strictEqual(h.lc.provider(CHAT), 0, 'the third ask, from 0');
+  h.handBack(cursor('boot-a', 3));
+  h.lc.emit({ type: 'close' });
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the polled batch' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+});
+
+test('U723d the gate\'s order with a second ready before the open: held until the second cursor, then one first batch {since 3, contiguous: true}', async () => {
+  const h = restartWorld();
+  assert.strictEqual(h.lc.provider(CHAT), 0);
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  h.ready();
+  h.lc.emit({ type: 'open', since: 0, response: { headers: { 'x-wc-boot': 'boot-a' } } });
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle();
+  assert.strictEqual(h.link.batches().length, 0, 'nothing between the second ready and its cursor');
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the second cursor' });
+  await settle();
+  const batches = h.link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [4, 5], 'each entry above the cursor once, in order');
+  assert.deepStrictEqual([batches[0].since, batches[0].contiguous, 'gap' in batches[0]], [3, true, false]);
+  assert.ok(h.timeline.lastIndexOf('cursor') < h.firstSend(), 'nothing before the second cursor');
+});
+
+test('U723d the gate\'s order under the real lifecycle and a real daemon: the hold asked for, the cursor, then the open — nothing at or below the cursor, contiguous from it', async (t) => {
+  const d = await withServer(t);
+  assertOutsideBand(d.port);
+  for (let i = 0; i < 6; i++) emit(d, { kind: 'store', patch: { a: i } });
+  const top = latestOf(d);
+  const link = stubLink({ up: false });
+  // The stream's open and replay are kept from the lifecycle until the cursor
+  // has arrived: the cursor lands between the provider's answer and the open.
+  let release;
+  const landed = new Promise((r) => { release = r; });
+  const client = streamSpy((o) => {
+    const kept = [];
+    let through = false;
+    const keep = (name) => (...a) => { if (through) return o[name](...a); kept.push([name, a]); return undefined; };
+    landed.then(() => { through = true; for (const [name, a] of kept) o[name](...a); });
+    return { ...o, onOpen: keep('onOpen'), onEvent: keep('onEvent'), onGap: keep('onGap') };
+  });
+  const r = await ringOn(t, d, { client, link });
+  await r.run();
+  await waitUntil(() => client.streams >= 1, { what: 'the hold asked for' });
+  link.emit('ready', {});
+  r.ring.setCursor(CHAT, cursor(bootOf(d), top - 2));
+  release();
+  await waitUntil(() => link.entries().length >= 2, { what: 'the batch after the open' });
+  await settle();
+  const batches = link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(link.entries().map((e) => e.seq), [top - 1, top], 'each entry above the cursor once, in order');
+  assert.deepStrictEqual([batches[0].boot, batches[0].since, batches[0].contiguous, 'gap' in batches[0]], [bootOf(d), top - 2, true, false]);
+  assert.strictEqual(r.ring.stats(CHAT).dropped, 0);
+});
+
 // THE TABLE. Every causally legal order of a chat's first events in the
 // connector's life — the ask (the provider answers a since), the open, the
 // boot becoming known, the first entries (in two pieces, so the cursor can

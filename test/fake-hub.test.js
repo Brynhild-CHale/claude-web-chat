@@ -783,3 +783,25 @@ test('the cursor: a batch carrying reinit sets capture_seq and element_seq to 0;
   assert.deepStrictEqual([second.capture_seq, second.element_seq], [5, 0], 'element_reset: element_seq alone');
   assert.deepStrictEqual(fake.takeErrors(), []);
 });
+
+// The real hub reads both flags only on a batch of a boot it does not hold
+// (plan(): reinit is the gap reason of a boot change, element_reset needs
+// !sameBoot): on a batch of the held boot they change nothing.
+test('the cursor: reinit or element_reset on a batch of the boot the cursor already holds changes neither counter', async (t) => {
+  const { fake, key, machine } = await paired(t);
+  const sameBootBatch = (chat, n, extra) => ({
+    type: 'events.batch', batch_id: `b_${'0'.repeat(25)}${n}`, chat_id: chat, ring: 'main', boot: 'boot-a', since: 40,
+    contiguous: true, entries: [{ seq: 41, ts: 1793181402551, kind: 'graph' }], ...extra,
+  });
+  const c = await connect(fake, machine, key);
+  const flags = [{ reinit: true }, { element_reset: true }];
+  for (let i = 0; i < flags.length; i++) {
+    const chat = fake.mintLabel();
+    fake.assign({ chat }, { cursor: COUNTED(chat) });
+    await c.next('chat.assign', i + 1);
+    c.send({ ch: 'events', kind: 'events.batch', batch: sameBootBatch(chat, i + 1, flags[i]) });
+    const { cursor } = (await c.next('events.ack', i + 1)).ack;
+    assert.deepStrictEqual([cursor.boot, cursor.seq, cursor.capture_seq, cursor.element_seq], ['boot-a', 41, 5, 30], `${Object.keys(flags[i])[0]} on the held boot: the counters stay`);
+  }
+  assert.deepStrictEqual(fake.takeErrors(), []);
+});
