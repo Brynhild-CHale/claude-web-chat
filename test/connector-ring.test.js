@@ -1329,3 +1329,31 @@ test('U723c the hold unchanged: a chat whose cursor never arrives stays held and
   assert.strictEqual(h.link.batches().length, 1, 'one first batch');
   assertResumedFrom(h, 3, [4, 5]);
 });
+
+test('U723c a reset under the resumed boot ends the floor the first cursor set: the ring that counts from 1 again is sent whole, behind the reset gap', async () => {
+  const again = [1, 2].map((s) => ({ seq: s, ts: s, kind: 'store', patch: { z: s } }));
+  const h = restartWorld({ records: { ring: again } });
+  h.lc.open();
+  for (let s = 1; s <= 5; s++) h.entry(s);
+  await settle();
+  h.ready();
+  h.handBack(cursor('boot-a', 3));
+  await waitUntil(() => h.link.entries().length >= 2, { what: 'the batch after the cursor' });
+  await settle();
+  assertResumedFrom(h, 3, [4, 5]);
+  // The stream answers a reset under the boot it reads (C-07.10 row 4): the
+  // re-base reads 1 and 2 from 0, and 3 follows live — all at or below the
+  // first cursor's seq, none of them what the hub holds.
+  h.lc.emit({ type: 'gap', gap: { gap: true, dropped: 0, oldest: 1, since: 5, reset: true } });
+  await waitUntil(() => h.link.entries().length >= 4, { what: 'the re-based ring' });
+  h.entry(3);
+  await waitUntil(() => h.link.entries().length >= 5, { what: 'the entry after the re-base' });
+  await settle();
+  const batches = h.link.batches();
+  batches.forEach(assertSchema);
+  assert.deepStrictEqual(h.link.entries().map((e) => e.seq), [4, 5, 1, 2, 3], 'nothing of the new count is taken for what the hub holds');
+  assert.strictEqual(batches[1].since, 0);
+  assert.strictEqual(batches[1].contiguous, false);
+  assert.deepStrictEqual(batches[1].gap, { gap: true, dropped: 0, oldest: 1, reset: true });
+  assert.strictEqual(batches[1].entries[0].seq, 1);
+});
