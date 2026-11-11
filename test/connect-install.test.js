@@ -443,6 +443,163 @@ test('--json: the pairing event line and the bound event line; human prose goes 
   assert.match(s.err.join('\n'), /^Connector: hub hub-test /m, 'the status on stderr');
 });
 
+// ── --pair-only (A-06.4: C-06.5's steps (1) and (2), then stop) ─────────────
+
+// The closing sentence as A-06.4's C-06.5 words it: it names the foreground
+// `connect run` and `connect <hub-url>` without the flag; a plain-http
+// loopback record names `connect run --insecure-loopback` only.
+const PAIR_ONLY_HTTPS = (origin) => 'Paired; no service installed: run `claude-web-chat connect run` to run the connector in the foreground, '
+  + `or \`claude-web-chat connect ${origin}\` to install the start-at-login service later.`;
+const PAIR_ONLY_LOOPBACK = 'Paired; no service installed: run `claude-web-chat connect run --insecure-loopback` to run the connector in the foreground.';
+
+// The record's `service` as it was, and every service-manager trace: no
+// unit, no log, no call.
+function assertNoService(s, serviceBefore) {
+  assert.deepEqual(s.calls, [], 'no service manager call');
+  assert.equal(fs.existsSync(conn.unitPaths().launchd), false, 'no LaunchAgent');
+  assert.equal(fs.existsSync(conn.unitPaths()['systemd-user']), false, 'no systemd unit');
+  assert.equal(fs.existsSync(userPaths().connectorLog), false, 'no connector log pre-created');
+  assert.deepEqual(readRec().service, serviceBefore, 'the record\'s service as it was');
+}
+
+test('--pair-only pairs and installs nothing: no unit, no service-manager call, `service` unchanged, the closing sentence, exit 0', async (t) => {
+  for (const [kind, platform] of [['launchd', 'darwin'], ['systemd-user', 'linux'], [null, 'freebsd']]) {
+    const s = sandbox(t, { kind, platform });
+    let captured = 0;
+    const code = await main(['https://hub.example.com', '--pair-only'], {
+      ...s.deps, pair: stubPair(s), capturePathEnv: () => { captured += 1; return { pathEnv: '/x', tmux: false }; },
+    });
+    assert.equal(code, 0, s.err.join('\n'));
+    assert.equal(s.pairs.length, 1, 'pair() once');
+    assert.equal(captured, 0, 'no PATH captured');
+    assertNoService(s, undefined);
+    assert.equal(s.out[0], `bound mch_${'0'.repeat(26)} Studio Mac`, 'the bound line as without the flag');
+    assert.equal(s.out[s.out.length - 1], PAIR_ONLY_HTTPS('https://hub.example.com'), kind);
+    assert.equal(s.out.length, 2, 'the bound line and the sentence, no status');
+    assert.doesNotMatch(s.out.join('\n'), /tmux|Start at login|start at login is unavailable/);
+  }
+});
+
+test('--pair-only --json: the bound event, then exactly ONE closing event, its ids with the bound event\'s names', async (t) => {
+  const s = sandbox(t);
+  const code = await main(['https://hub.example.com', '--pair-only', '--json'], { ...s.deps, pair: stubPair(s) });
+  assert.equal(code, 0, s.err.join('\n'));
+  assertNoService(s, undefined);
+  assert.equal(s.out.length, 2);
+  const bound = JSON.parse(s.out[0]);
+  const last = JSON.parse(s.out[1]);
+  assert.equal(bound.event, 'bound');
+  assert.deepEqual(last, { event: 'service', kind: null, pair_only: true, hub_id: HUB, machine_id: `mch_${'0'.repeat(26)}` });
+  assert.deepEqual(Object.keys(last), ['event', 'kind', 'pair_only', 'hub_id', 'machine_id'], 'A-06.4\'s order');
+  assert.equal(last.hub_id, bound.hub_id);
+  assert.equal(last.machine_id, bound.machine_id);
+  assert.equal(last.machine_id, readRec().machine.id);
+  assert.equal(last.hub_id, readRec().hub.id);
+});
+
+test('--pair-only on a record already paired, no --re-pair: no pairing, only the closing sentence (or event), exit 0; a running unit is left alone', async (t) => {
+  const s = sandbox(t);
+  seedPaired();
+  const service = { kind: 'launchd', label: LABEL, unit_path: conn.unitPaths().launchd, path_env: '/usr/bin:/bin', installed_at: 1 };
+  conn.updateRecord(HUB, (r) => ({ ...r, service }));
+  const plist = conn.unitPaths().launchd;
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  fs.writeFileSync(plist, 'running unit');
+  const recBefore = fs.readFileSync(userPaths().connectorRecord(HUB));
+  const code = await main(['https://hub.example.com', '--pair-only'], { ...s.deps, pair: stubPair(s) });
+  assert.equal(code, 0, s.err.join('\n'));
+  assert.deepEqual(s.pairs, [], 'no pairing');
+  assert.deepEqual(s.out, [PAIR_ONLY_HTTPS('https://hub.example.com')], 'only the closing sentence');
+  assert.deepEqual(s.calls, [], 'no service manager call');
+  assert.equal(fs.readFileSync(plist, 'utf8'), 'running unit', 'the unit untouched');
+  assert.ok(fs.readFileSync(userPaths().connectorRecord(HUB)).equals(recBefore), 'the record byte-identical');
+
+  const s2 = sandbox(t);
+  seedPaired();
+  assert.equal(await main(['hub.example.com', '--json', '--pair-only'], { ...s2.deps, pair: stubPair(s2) }), 0);
+  assert.equal(s2.out.length, 1, 'the only line');
+  assert.deepEqual(JSON.parse(s2.out[0]), { event: 'service', kind: null, pair_only: true, hub_id: HUB, machine_id: `mch_${'0'.repeat(26)}` });
+  assert.deepEqual(s2.pairs, []);
+});
+
+test('--pair-only on a paired record with no machine: machine_id is null', async (t) => {
+  const s = sandbox(t);
+  seedPaired();
+  conn.updateRecord(HUB, (r) => { const { machine, ...rest } = r; return rest; });
+  assert.equal(readRec().machine, undefined);
+  assert.equal(await main(['https://hub.example.com', '--pair-only', '--json'], s.deps), 0, s.err.join('\n'));
+  assert.deepEqual(JSON.parse(s.out[0]), { event: 'service', kind: null, pair_only: true, hub_id: HUB, machine_id: null });
+});
+
+test('--pair-only --re-pair over a record whose unit is running: pairs once, replaces the key on bound, restarts nothing', async (t) => {
+  const s = sandbox(t);
+  seedPaired();
+  const service = { kind: 'launchd', label: LABEL, unit_path: conn.unitPaths().launchd, path_env: '/usr/bin:/bin', installed_at: 1 };
+  conn.updateRecord(HUB, (r) => ({ ...r, service }));
+  const keyBefore = fs.readFileSync(userPaths().connectorKey(HUB), 'utf8');
+  // The stub pairs as pair() does: a new key through the one writer, and the
+  // record's service kept (pair() never touches it).
+  const rePair = async (opts) => {
+    s.pairs.push(opts);
+    const { privateKey } = crypto.generateKeyPairSync('ed25519');
+    conn.writeMachineKey({
+      hubId: HUB,
+      pem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      update: (r) => ({ ...r, credential: { state: 'paired', algorithm: 'ed25519', paired_at: Date.now() } }),
+    });
+    return { ok: true, state: 'paired', hubId: HUB, machineId: `mch_${'0'.repeat(26)}`, keyId: 'mky_x' };
+  };
+  const code = await main(['https://hub.example.com', '--pair-only', '--re-pair'], { ...s.deps, pair: rePair });
+  assert.equal(code, 0, s.err.join('\n'));
+  assert.equal(s.pairs.length, 1);
+  assert.equal(s.pairs[0].rePair, true);
+  assert.notEqual(fs.readFileSync(userPaths().connectorKey(HUB), 'utf8'), keyBefore, 'the key replaced');
+  assert.deepEqual(s.calls, [], 'nothing restarted');
+  assert.deepEqual(readRec().service, service, 'the service as it was');
+  assert.match(s.out[0], /^bound mch_/);
+  assert.equal(s.out[1], PAIR_ONLY_HTTPS('https://hub.example.com'));
+});
+
+test('--pair-only --insecure-loopback with the fake: the pairing line, bound, then the sentence naming `connect run --insecure-loopback` only', async (t) => {
+  const s = sandbox(t);
+  const fake = await fakeHub(t);
+  const done = main([fake.url, '--insecure-loopback', '--pair-only'], s.deps);
+  const code = await waitUntil(() => { const m = s.out.length && LINE_RE.exec(s.out[0]); return m && m[1]; }, { timeout: 5000, what: 'the pairing line' });
+  assert.equal(fake.pairing.confirm(code, { name: 'Studio Mac' }).ok, true);
+  assert.equal(await done, 0, s.err.join('\n'));
+  assertNoService(s, undefined);
+  const rec = readRec();
+  assert.equal(rec.credential.state, 'paired');
+  assert.equal(rec.hub.origin, fake.url);
+  assert.ok(fs.existsSync(userPaths().connectorKey(HUB)), 'the key written');
+  assert.equal(s.out.length, 3);
+  assert.equal(s.out[1], `bound ${rec.machine.id} Studio Mac`);
+  assert.equal(s.out[2], PAIR_ONLY_LOOPBACK);
+  assert.doesNotMatch(s.out[2], /connect http/, 'no install advice: a unit runs `connect run` without the flag');
+  assert.ok(!JSON.stringify(rec).includes('pair_only') && !JSON.stringify(rec).includes('insecure'), 'neither flag is written');
+});
+
+test('--pair-only keeps step (1)\'s refusals: an unmanaged install and a missing ~/.local/bin link refuse before pairing', async (t) => {
+  const s = sandbox(t, { installKind: 'dev' });
+  assert.equal(await main(['https://hub.example.com', '--pair-only'], { ...s.deps, pair: stubPair(s) }), 1);
+  assert.deepEqual(s.pairs, []);
+  const s2 = sandbox(t, { link: false });
+  assert.equal(await main(['https://hub.example.com', '--pair-only'], { ...s2.deps, pair: stubPair(s2) }), 1);
+  assert.match(s2.err.join('\n'), /~\/\.local\/bin is missing/);
+  assert.deepEqual(s2.pairs, []);
+  // A failed pairing keeps its exit code and prints no closing sentence.
+  const s3 = sandbox(t);
+  assert.equal(await main(['https://hub.example.com', '--pair-only'], { ...s3.deps, pair: stubPair(s3, { answer: { ok: false, reason: 'refused', message: 'no' } }) }), 4);
+  assert.doesNotMatch(s3.out.join('\n'), /Paired; no service/);
+});
+
+test('the usage line names --pair-only', async (t) => {
+  assert.match(install.USAGE, /\[--pair-only\]/);
+  const s = sandbox(t);
+  assert.equal(await main(['https://hub.example.com', '--bogus'], s.deps), 2);
+  assert.match(s.err.join('\n'), /usage: claude-web-chat connect <hub-url> .*\[--pair-only\]/);
+});
+
 test('exit 3 when the code expires, 4 when the hub refuses (the hub\'s word in the line)', async (t) => {
   const s = sandbox(t, { kind: null, platform: 'freebsd' });
   const fake = await fakeHub(t, { codeTtlMs: 300 });
