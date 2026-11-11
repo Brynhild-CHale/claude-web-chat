@@ -252,6 +252,27 @@ rule has four arms:
 
 Only the first arm counts toward the "stopped N surfaces" line.
 
+## The hub connector (`connect`) per platform
+
+`claude-web-chat connect <hub-url>` pairs this machine with a hub, then writes
+a start-at-login unit for the connector and starts it through the platform's
+service manager. The unit launches `claude-web-chat connect run` through the
+`~/.local/bin` link, never a version directory, so after an `update` it runs
+the new build. No test runs a real service manager: the suite builds the
+argv and stubs the runner.
+
+| Platform | Start at login | Verified by |
+| --- | --- | --- |
+| **macOS** | A LaunchAgent, `~/Library/LaunchAgents/com.claude-web-chat.connector.plist` | The suite, with launchctl stubbed |
+| **Linux** | A systemd user unit, `~/.config/systemd/user/claude-web-chat-connector.service`. `connect` prints the hint `loginctl enable-linger $USER`, which keeps the connector running while you are logged out | The suite, with systemctl stubbed; not run on Linux by anyone |
+| **Windows (WSL2)** without systemd, and any other platform | None: start at login is unavailable, and `claude-web-chat connect run` runs the connector in the foreground | Not run by anyone |
+
+This build is manual mode: a chat's Claude Code session starts with
+`claude-web-chat connect attach <chat-label>` at the machine. Connector mode,
+the connector starting sessions itself under tmux, is not in 0.9.0-alpha.7.
+The Esc that stops a turn from the page has not been measured for a session
+running inside tmux (validation gate V34).
+
 ## Remote access (`tunnel`) per platform
 
 `claude-web-chat tunnel` never installs cloudflared; `tunnel up` and `doctor`

@@ -261,6 +261,10 @@ tunnel [verb]       EXPERIMENTAL and unstable (use it at your own risk):
                     remote-access.md); mirror on | off | status shows (or
                     stops showing) this project's conversation to remote
                     viewers, who otherwise see only Claude's status
+connect [verb]      pair this machine with a hub and run its connector, in
+                    manual mode: <hub-url> | run | status | offer | withdraw |
+                    folders | attach | ceiling | cap | ls | open | shell |
+                    code | disconnect | rotate | help (see below)
 identity [verb]     set the project's name, logo and favicon (show | name |
                     show-name | logo | favicon | clear): the topbar lockup, the
                     tab title, the tab's favicon and the home-screen icon; logo
@@ -269,6 +273,29 @@ identity [verb]     set the project's name, logo and favicon (show | name |
 ```
 
 Inside Claude Code, `/web-chat <subcommand>` runs any of these without leaving the chat, and bare `/web-chat` is the guided start above.
+
+## Connect this machine to a hub
+
+A hub is a separate web app where you see your chats on every machine you pair with it. The **connector** is the process on this machine that keeps one outbound link to one hub and relays the hub's requests to the surfaces it supervises. It opens no port: the CLI reaches it over a Unix socket in `~/.web-chat/connector/`, and every request it relays still meets the daemon's own checks. `claude-web-chat connect help` prints every subcommand.
+
+This build is **manual mode**: a chat's Claude Code session starts when you run `claude-web-chat connect attach <chat-label>` at this machine. Connector mode, where the connector starts a chat's session itself under tmux, is not in 0.9.0-alpha.7.
+
+- `claude-web-chat connect <hub-url>` pairs this machine: it prints one line with the pairing code, the key's fingerprint and when the code expires; you confirm the code on the hub, and it prints `bound` with the machine's id and name. Then it writes and starts the start-at-login service (what that is on each platform: `platform-support.md`) and waits up to 15 seconds for the hub to acknowledge the connector. It runs only from the managed install (`install.sh`, or `claude-web-chat update`): from a git checkout or any other copy it refuses, naming the installer, and writes nothing. It is safe to run again: on a paired machine (after an `update`, say) it rewrites the unit and restarts the service without pairing again, and `--re-pair` pairs anew. `--workdir <dir>` picks where the hub's new chats live (first pairing only); `--json` prints each step as one JSON line.
+- If the service manager cannot start the unit (a Linux container without a running systemd, say), `connect <hub-url>` exits 1 after the `bound` line, with the key saved and the record paired: run `claude-web-chat connect run` in a terminal instead. Where there is no start at login at all, it says so and exits 0.
+- `--insecure-loopback` admits a plain-http hub on this machine's loopback (127.0.0.1, localhost or ::1), for development only, and refuses any other host. It holds for that one command and is written nowhere, so the unit it writes cannot run that record: run `claude-web-chat connect run --insecure-loopback` in a terminal.
+- `connect run` is the connector in the foreground: what the unit runs. It never pairs.
+- `connect status` shows the pairing: the hub, the credential's state and fingerprint, the machine, the ceiling, the settings (paused, agents at once, the local cap, whether new chats are accepted), the offered folders, the chats and the service. `claude-web-chat status` carries one `Connector:` line, which reads `Connector: not paired` until you pair.
+- `connect offer <path> [--label <text>]` offers a folder to the hub (running `claude-web-chat init` there first when it has no `.web-chat/`), `connect withdraw <path|id>` takes one back (its chat is refused and its daemon released) and `connect folders` lists them.
+- `connect ceiling [read|full]` shows, or sets at this machine, the most any hub principal reaches here; running daemons follow it at once. `connect cap <n>` sets a local cap on agents at once (0 to 64), which lowers the hub's cap and never raises it.
+- `connect attach <chat-label>` starts the chat's Claude Code session here, in its folder, with the web-chat channel.
+- `connect ls` lists your chats on every machine the hub knows, numbered; `connect open [<chat>]` opens a chat's live session in this terminal, `connect shell [<chat>]` a login shell in its folder, and `connect code [<chat>]` its folder in VS Code — here, or over ssh for a chat on another machine. These ask the running connector over its local socket: the CLI holds no credential.
+- `connect rotate [--no-wait]` has the running connector offer the hub a new key now.
+- `connect disconnect` releases every hold, stops the daemons the connector started, deletes the machine's key, marks the record revoked and removes the unit. With the connector running it tells the hub first; otherwise the hub keeps this machine until you revoke it there. Chat roots, offered folders and the workdir stay on disk. `claude-web-chat uninstall --self` does the same local half (the running connector releases its holds), and the hub keeps the machine until you revoke it there.
+- `connect help` prints the usage.
+
+Pause is the hub's setting for this machine, not a subcommand: set it on the hub, and `connect status` shows it. There is no `connect install`.
+
+Through the hub, a refusal names the hub's sharing and this machine's ceiling, or says the action is not available through the hub, never a host command. A viewer the hub relays at full may report where its annotations resolved, as a remote viewer at full through the tunnel may; a relayed request stamped read, or not stamped, is refused. The machine's facts tell the hub the MCP server and skill names Claude Code has at user scope and those of the enabled plugins: names only, never a server's command or settings.
 
 ## Who can reach it
 

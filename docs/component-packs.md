@@ -623,7 +623,8 @@ review checks each (`lib/packs/elements.js`'s header is the field reference):
 - `"input": "strokes"` makes it a drawing tool: a press draws, with the
   pointer's coalesced samples, instead of tapping or selecting (`"taps"`, the
   default, and `"selection"` are the others). Its strokes are committed through
-  the engine's stroke path, on the target they were drawn over.
+  the engine's stroke path, on the frame they were drawn on: a fixed-aspect
+  target, a pane, or the page.
 - `"place": "box"` sizes the type's marker to the element it is anchored to
   (the default, `"glyph"`, draws a small glyph at the anchor); it is refused
   unless `"anchors"` includes `"element"`. There is no third placement mode.
