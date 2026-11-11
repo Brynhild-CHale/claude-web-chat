@@ -339,3 +339,20 @@ test('start --daemon alone on a fresh root spawns through the lock and prints th
   assert.equal(out.lines.length, 1, out.lines.join('\n'));
   assert.match(out.lines[0], new RegExp(`^web-chat server started as daemon at http://localhost:6102 \\(pid ${w.children[0]}, log .*server\\.log\\)$`));
 });
+
+test("start --daemon whose wait for another caller's start runs out spawns nothing and exits 1", async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  // A holder whose child never comes up, holding the lock past start's wait.
+  const w = lockWorld(t, { upAfterMs: 60000 });
+  const holder = spawnDaemon(root, { maxMs: 1500, spawn: w.spawn, daemonFor: w.daemonFor });
+  await waitUntil(() => w.children.length === 1, { what: 'the holder to spawn under the lock' });
+
+  const out = { lines: [], errs: [], exits: [] };
+  await start(['--daemon'], { ...lockedStartDeps(root, w, out), startWithinMs: 200 });
+  assert.equal(w.children.length, 1, 'start spawned nothing beside the holder');
+  assert.deepEqual(out.exits, [1]);
+  assert.deepEqual(out.lines, []);
+  assert.match(out.errs.join('\n'), /held its spawn lock and no daemon is up yet — nothing spawned/);
+  assert.equal(await holder, null, "the holder's child never came up");
+});

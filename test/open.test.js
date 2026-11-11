@@ -549,3 +549,26 @@ test('open alone on a fresh root spawns through the lock and prints the started 
   assert.deepEqual(calls.browsed, ['http://localhost:6101']);
   assert.deepEqual(calls.exits, []);
 });
+
+test("open whose wait for another caller's start runs out spawns nothing and says the other start did not finish", async (t) => {
+  withTempHome(t);
+  const root = project(t);
+  // A holder whose child never comes up, holding the lock past open's wait.
+  const w = lockWorld(t, { upAfterMs: 60000 });
+  const holder = spawnDaemon(root, { maxMs: 1500, spawn: w.spawn, daemonFor: w.daemonFor });
+  await waitUntil(() => w.children.length === 1, { what: 'the holder to spawn under the lock' });
+
+  const { calls, deps: d } = deps(root, {
+    daemonFor: w.daemonFor,
+    spawnDaemonProcess: w.spawn,
+    waitForDaemon: undefined,
+    startWithinMs: 200,
+  });
+  await open([], d);
+  assert.equal(w.children.length, 1, 'open spawned nothing beside the holder');
+  assert.deepEqual(calls.exits, [1]);
+  assert.deepEqual(calls.browsed, []);
+  assert.match(calls.errs.join('\n'), /another start of this project's web-chat server did not finish within/);
+  assert.doesNotMatch(calls.errs.join('\n'), /failed to start/);
+  assert.equal(await holder, null, "the holder's child never came up");
+});
