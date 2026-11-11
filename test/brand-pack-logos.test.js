@@ -379,11 +379,12 @@ test('chrome: Settings → Brand never shows the fill, and follows a theme chang
   }
 
   // A global theme change arrives as a `brand` frame for the theme now on — the
-  // daemon sends one with every global theme change, just ahead of the theme
-  // frame — so Settings names that theme with no round trip of its own.
+  // daemon sends one with every global theme change, just after the theme
+  // frame (ring order, U750b) — so Settings names that theme with no round trip
+  // of its own.
   const before = calls.filter((u) => u === '/api/brand').length;
-  frame({ type: 'brand', theme: { key: 'earthy', name: 'earthy', title: 'Earthy' }, slots: empty, fill: empty });
   frame({ type: 'theme', scope: 'global', theme: { name: 'earthy', tokens: {} } });
+  frame({ type: 'brand', theme: { key: 'earthy', name: 'earthy', title: 'Earthy' }, slots: empty, fill: empty });
   await tick();
   assert.equal(doc.getElementById('brand-theme').textContent, 'Images for the Earthy theme');
   assert.equal(calls.filter((u) => u === '/api/brand').length, before, 'the frame carried all of it');

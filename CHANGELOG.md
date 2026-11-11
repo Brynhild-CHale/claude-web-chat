@@ -538,6 +538,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `wake-ack` entry took its Push's `seq`, so two entries shared one and the
   next position was never served; it now has its own, and a reader that
   matched the ack event to its wake by `seq` reads `wake_seq`.
+- **The live event stream is in the log's order.** A capture's (or a shared
+  pin's, or a declared signal's) queue item reached a live stream, and the
+  page, before the capture itself, so a reader that checks for gaps saw one
+  where nothing was lost; an event raised while another is being delivered
+  now waits for it.
 - **The first boot after the migration reads clean.** The migration wrote a
   commit record only for nodes that held a pin, so that boot adopted every
   other node and reported it; it now records every node.
